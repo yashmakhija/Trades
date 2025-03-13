@@ -14,14 +14,15 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
+  id        String     @id @default(uuid())
+  email     String     @unique
   password  String
   name      String?
-  balance   Int      @default(0)
+  balance   Int        @default(0)
   orders    Order[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  positions Position[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
 }
 
 model Symbol {
@@ -30,25 +31,73 @@ model Symbol {
   description String?
   currentPrice Int?
   orders      Order[]
+  ohlcv       OHLCV[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
 
 model Order {
-  id        String    @id @default(uuid())
+  id            String      @id @default(uuid())
+  symbolId      String
+  symbol        Symbol      @relation(fields: [symbolId], references: [id])
+  userId        String
+  user          User        @relation(fields: [userId], references: [id])
+  stopLoss      Int?
+  takeProfit    Int?        // Renamed from target for clarity
+  price         Int
+  quantity      Int
+  filled        Int         @default(0)
+  remaining     Int         // Amount left to be filled
+  avgFillPrice  Int?        // Average price of filled portions
+  exitPrice     Int?
+  status        OrderStatus @default(CLOSED)
+  type          OrderType
+  isShort       Boolean     @default(false)
+  parentOrderId String?     // For linked orders (stop loss/take profit)
+  parentOrder   Order?      @relation("LinkedOrders", fields: [parentOrderId], references: [id])
+  childOrders   Order[]     @relation("LinkedOrders")
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([userId])
+  @@index([symbolId])
+  @@index([status])
+}
+
+
+model Position {
+  id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id])
+  symbol        String
+  amount        Int
+  avgPrice      Int
+  isShort       Boolean  @default(false)
+  unrealizedPnL Int      @default(0)
+  realizedPnL   Int      @default(0)
+  stopLoss      Int?
+  takeProfit    Int?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([userId])
+  @@index([symbol])
+}
+
+
+model OHLCV {
+  id        String   @id @default(uuid())
   symbolId  String
-  symbol    Symbol    @relation(fields: [symbolId], references: [id])
-  userId    String
-  user      User      @relation(fields: [userId], references: [id])
-  stopLoss  Int?
-  target    Int?
-  price     Int
-  quantity  Int
-  exitPrice Int?
-  status    OrderStatus @default(CLOSED)
-  type      OrderType
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt 
+  symbol    Symbol   @relation(fields: [symbolId], references: [id])
+  open      Int
+  high      Int
+  low       Int
+  close     Int
+  volume    Int
+  timestamp DateTime @default(now())
+
+  @@index([timestamp])
+  @@index([symbolId])
 }
 
 enum OrderType {
@@ -57,7 +106,9 @@ enum OrderType {
 }
 
 enum OrderStatus {
+  PENDING
   OPEN
+  FILLED
   CLOSED
   CANCELLED
 }

@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Trading App WebSocket Client Example</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      .container {
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+      }
+      .card {
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        padding: 20px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      }
+      .ticker-container {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+        gap: 15px;
+      }
+      .ticker {
+        border: 1px solid #eee;
+        border-radius: 6px;
+        padding: 15px;
+        background-color: #f9f9f9;
+      }
+      .price-up {
+        color: green;
+      }
+      .price-down {
+        color: red;
+      }
+      pre {
+        background-color: #f5f5f5;
+        padding: 10px;
+        border-radius: 4px;
+        overflow-x: auto;
+        max-height: 300px;
+        overflow-y: auto;
+      }
+      button {
+        padding: 8px 16px;
+        background-color: #4caf50;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        margin-right: 8px;
+      }
+      button:hover {
+        background-color: #45a049;
+      }
+      button:disabled {
+        background-color: #cccccc;
+        cursor: not-allowed;
+      }
+      .status {
+        padding: 10px;
+        border-radius: 4px;
+        margin-bottom: 10px;
+      }
+      .connected {
+        background-color: #dff0d8;
+        color: #3c763d;
+      }
+      .disconnected {
+        background-color: #f2dede;
+        color: #a94442;
+      }
+      .controls {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 10px;
+      }
+      select {
+        padding: 8px;
+        border-radius: 4px;
+        border: 1px solid #ddd;
+      }
+      .subscribed-symbols {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 10px;
+      }
+      .symbol-tag {
+        background-color: #e7f3ff;
+        border: 1px solid #b3d7ff;
+        border-radius: 4px;
+        padding: 4px 8px;
+        display: flex;
+        align-items: center;
+      }
+      .symbol-tag button {
+        background: none;
+        border: none;
+        color: #dc3545;
+        cursor: pointer;
+        padding: 0 0 0 5px;
+        margin: 0;
+        font-size: 14px;
+      }
+      .tabs {
+        display: flex;
+        border-bottom: 1px solid #ddd;
+        margin-bottom: 15px;
+      }
+      .tab {
+        padding: 8px 16px;
+        cursor: pointer;
+        border: 1px solid transparent;
+        border-bottom: none;
+        margin-right: 5px;
+      }
+      .tab.active {
+        background-color: #f5f5f5;
+        border-color: #ddd;
+        border-radius: 4px 4px 0 0;
+      }
+      .tab-content {
+        display: none;
+      }
+      .tab-content.active {
+        display: block;
+      }
+      .raw-data-container {
+        max-height: 400px;
+        overflow-y: auto;
+      }
+      .raw-data-item {
+        margin-bottom: 10px;
+        padding: 10px;
+        border: 1px solid #eee;
+        border-radius: 4px;
+      }
+      .raw-data-item:nth-child(odd) {
+        background-color: #f9f9f9;
+      }
+      .raw-data-item pre {
+        margin: 0;
+        background-color: transparent;
+        padding: 0;
+      }
+      .raw-data-time {
+        font-size: 12px;
+        color: #666;
+        margin-bottom: 5px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Trading App WebSocket Client Example</h1>
+
+      <div class="card">
+        <h2>Connection Status</h2>
+        <div id="status" class="status disconnected">Disconnected</div>
+        <button id="connect">Connect</button>
+        <button id="disconnect" disabled>Disconnect</button>
+      </div>
+
+      <div class="card">
+        <h2>Symbol Subscription</h2>
+        <div class="controls">
+          <select id="symbol-select">
+            <option value="btcusdt">BTCUSDT</option>
+            <option value="ethusdt">ETHUSDT</option>
+            <option value="bnbusdt">BNBUSDT</option>
+            <option value="solusdt">SOLUSDT</option>
+            <option value="adausdt">ADAUSDT</option>
+          </select>
+          <button id="subscribe" disabled>Subscribe</button>
+        </div>
+        <div>
+          <h3>Subscribed Symbols:</h3>
+          <div id="subscribed-symbols" class="subscribed-symbols">
+            <div class="symbol-tag">None</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Data View</h2>
+        <div class="tabs">
+          <div class="tab active" data-tab="ticker-tab">Ticker Data</div>
+          <div class="tab" data-tab="raw-tab">Raw Data</div>
+          <div class="tab" data-tab="message-tab">Latest Message</div>
+        </div>
+
+        <div id="ticker-tab" class="tab-content active">
+          <h3>Live Ticker Data</h3>
+          <div id="ticker-container" class="ticker-container">
+            <div class="ticker">No data available</div>
+          </div>
+        </div>
+
+        <div id="raw-tab" class="tab-content">
+          <h3>Raw Binance Data</h3>
+          <button id="clear-raw-data">Clear</button>
+          <div id="raw-data-container" class="raw-data-container">
+            <div class="raw-data-item">No raw data available yet</div>
+          </div>
+        </div>
+
+        <div id="message-tab" class="tab-content">
+          <h3>Latest Message</h3>
+          <pre id="latest-message">No messages received yet</pre>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>WebSocket Client Code Example</h2>
+        <pre>
+const ws = new WebSocket('ws://localhost:3001');
+
+// Connection opened
+ws.addEventListener('open', (event) => {
+    console.log('Connected to WebSocket server');
+});
+
+// Listen for messages
+ws.addEventListener('message', (event) => {
+    const data = JSON.parse(event.data);
+    console.log('Message from server:', data);
+    
+    // Handle different message types
+    if (data.type === 'TICKER_UPDATE') {
+        updateTickerUI(data.symbol, data.data);
+    } else if (data.type === 'OHLCV_UPDATE') {
+        updateChartUI(data.symbol, data.data);
+    } else if (data.type === 'RAW_DATA') {
+        displayRawData(data.symbol, data.data);
+    }
+});
+
+// Subscribe to a specific symbol
+function subscribeToSymbol(symbol) {
+    try {
+        const message = JSON.stringify({
+            type: 'SUBSCRIBE',
+            symbol: symbol
+        });
+        console.log('Sending:', message);
+        ws.send(message);
+    } catch (error) {
+        console.error('Error sending subscription:', error);
+    }
+}
+
+// Unsubscribe from a symbol
+function unsubscribeFromSymbol(symbol) {
+    try {
+        const message = JSON.stringify({
+            type: 'UNSUBSCRIBE',
+            symbol: symbol
+        });
+        console.log('Sending:', message);
+        ws.send(message);
+    } catch (error) {
+        console.error('Error sending unsubscription:', error);
+    }
+}
+
+// Connection closed
+ws.addEventListener('close', (event) => {
+    console.log('Disconnected from WebSocket server');
+});
+
+// Handle errors
+ws.addEventListener('error', (error) => {
+    console.error('WebSocket error:', error);
+});
+        </pre>
+      </div>
+    </div>
+
+    <script>
+      let ws = null;
+      const tickerData = {};
+      const subscribedSymbols = new Set();
+      const rawDataHistory = [];
+      const MAX_RAW_DATA_ITEMS = 50;
+
+      // DOM elements
+      const connectBtn = document.getElementById("connect");
+      const disconnectBtn = document.getElementById("disconnect");
+      const subscribeBtn = document.getElementById("subscribe");
+      const symbolSelect = document.getElementById("symbol-select");
+      const subscribedSymbolsContainer =
+        document.getElementById("subscribed-symbols");
+      const rawDataContainer = document.getElementById("raw-data-container");
+      const clearRawDataBtn = document.getElementById("clear-raw-data");
+
+      // Event listeners
+      connectBtn.addEventListener("click", connectWebSocket);
+      disconnectBtn.addEventListener("click", disconnectWebSocket);
+      subscribeBtn.addEventListener("click", subscribeToSymbol);
+      clearRawDataBtn.addEventListener("click", clearRawData);
+
+      // Tab functionality
+      document.querySelectorAll(".tab").forEach((tab) => {
+        tab.addEventListener("click", () => {
+          // Remove active class from all tabs and content
+          document
+            .querySelectorAll(".tab")
+            .forEach((t) => t.classList.remove("active"));
+          document
+            .querySelectorAll(".tab-content")
+            .forEach((c) => c.classList.remove("active"));
+
+          // Add active class to clicked tab
+          tab.classList.add("active");
+
+          // Show corresponding content
+          const tabId = tab.getAttribute("data-tab");
+          document.getElementById(tabId).classList.add("active");
+        });
+      });
+
+      function connectWebSocket() {
+        if (ws) return;
+
+        // Create WebSocket connection
+        ws = new WebSocket(
+          `ws://${window.location.hostname}:${window.location.port}`
+        );
+
+        // Connection opened
+        ws.addEventListener("open", (event) => {
+          document.getElementById("status").textContent = "Connected";
+          document.getElementById("status").className = "status connected";
+          connectBtn.disabled = true;
+          disconnectBtn.disabled = false;
+          subscribeBtn.disabled = false;
+          console.log("Connected to WebSocket server");
+        });
+
+        // Listen for messages
+        ws.addEventListener("message", (event) => {
+          const message = JSON.parse(event.data);
+          document.getElementById("latest-message").textContent =
+            JSON.stringify(message, null, 2);
+
+          if (message.type === "INITIAL_DATA") {
+            Object.entries(message.data).forEach(([symbol, data]) => {
+              if (
+                subscribedSymbols.has(symbol) ||
+                subscribedSymbols.size === 0
+              ) {
+                tickerData[symbol] = {
+                  ...data,
+                  displayPrice: data.price / 100,
+                };
+              }
+            });
+            updateTickersUI();
+          } else if (message.type === "TICKER_UPDATE") {
+            if (
+              subscribedSymbols.has(message.symbol) ||
+              subscribedSymbols.size === 0
+            ) {
+              tickerData[message.symbol] = {
+                ...message.data,
+              };
+              updateTickersUI();
+            }
+          } else if (message.type === "RAW_DATA") {
+            // Handle raw data from Binance
+            addRawDataItem(message.symbol, message.data);
+          }
+        });
+
+        // Connection closed
+        ws.addEventListener("close", (event) => {
+          document.getElementById("status").textContent = "Disconnected";
+          document.getElementById("status").className = "status disconnected";
+          connectBtn.disabled = false;
+          disconnectBtn.disabled = true;
+          subscribeBtn.disabled = true;
+          console.log("Disconnected from WebSocket server");
+          ws = null;
+        });
+
+        // Handle errors
+        ws.addEventListener("error", (error) => {
+          console.error("WebSocket error:", error);
+          document.getElementById("status").textContent =
+            "Error: " + error.message;
+          document.getElementById("status").className = "status disconnected";
+        });
+      }
+
+      function disconnectWebSocket() {
+        if (ws) {
+          ws.close();
+        }
+      }
+
+      function subscribeToSymbol() {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+        const symbol = symbolSelect.value.toLowerCase();
+
+        if (subscribedSymbols.has(symbol)) {
+          alert(`Already subscribed to ${symbol.toUpperCase()}`);
+          return;
+        }
+
+        // Send subscription message to server as properly formatted JSON
+        try {
+          const subscriptionMessage = JSON.stringify({
+            type: "SUBSCRIBE",
+            symbol: symbol,
+          });
+          console.log("Sending subscription message:", subscriptionMessage);
+          ws.send(subscriptionMessage);
+        } catch (error) {
+          console.error("Error sending subscription:", error);
+        }
+
+        // Add to local subscribed symbols set
+        subscribedSymbols.add(symbol);
+
+        // Update UI
+        updateSubscribedSymbolsUI();
+      }
+
+      function unsubscribeFromSymbol(symbol) {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+        // Send unsubscribe message to server as properly formatted JSON
+        try {
+          const unsubscriptionMessage = JSON.stringify({
+            type: "UNSUBSCRIBE",
+            symbol: symbol,
+          });
+          console.log("Sending unsubscription message:", unsubscriptionMessage);
+          ws.send(unsubscriptionMessage);
+        } catch (error) {
+          console.error("Error sending unsubscription:", error);
+        }
+
+        // Remove from local subscribed symbols set
+        subscribedSymbols.delete(symbol);
+
+        // Remove from ticker data if exists
+        delete tickerData[symbol];
+
+        // Update UI
+        updateSubscribedSymbolsUI();
+        updateTickersUI();
+      }
+
+      function updateSubscribedSymbolsUI() {
+        subscribedSymbolsContainer.innerHTML = "";
+
+        if (subscribedSymbols.size === 0) {
+          subscribedSymbolsContainer.innerHTML =
+            '<div class="symbol-tag">None</div>';
+          return;
+        }
+
+        subscribedSymbols.forEach((symbol) => {
+          const tag = document.createElement("div");
+          tag.className = "symbol-tag";
+          tag.innerHTML = `
+            ${symbol.toUpperCase()}
+            <button onclick="unsubscribeFromSymbol('${symbol}')">×</button>
+          `;
+          subscribedSymbolsContainer.appendChild(tag);
+        });
+      }
+
+      function updateTickersUI() {
+        const container = document.getElementById("ticker-container");
+        container.innerHTML = "";
+
+        if (Object.keys(tickerData).length === 0) {
+          container.innerHTML = '<div class="ticker">No data available</div>';
+          return;
+        }
+
+        Object.entries(tickerData).forEach(([symbol, data]) => {
+          // Skip if we're filtering by subscribed symbols and this one isn't subscribed
+          if (subscribedSymbols.size > 0 && !subscribedSymbols.has(symbol)) {
+            return;
+          }
+
+          const tickerElement = document.createElement("div");
+          tickerElement.className = "ticker";
+
+          const priceClass =
+            data.priceChangePercent >= 0 ? "price-up" : "price-down";
+          const priceChange =
+            data.priceChangePercent >= 0
+              ? "+" + data.priceChangePercent.toFixed(2)
+              : data.priceChangePercent.toFixed(2);
+
+          tickerElement.innerHTML = `
+            <h3>${symbol.toUpperCase()}</h3>
+            <div class="${priceClass}">
+                <strong>${
+                  data.displayPrice
+                    ? data.displayPrice.toFixed(2)
+                    : (data.price / 100).toFixed(2)
+                }</strong>
+                <span>${priceChange}%</span>
+            </div>
+            <div>Volume: ${data.volume.toFixed(2)}</div>
+          `;
+
+          container.appendChild(tickerElement);
+        });
+      }
+
+      function addRawDataItem(symbol, data) {
+        // Only process if we're subscribed to this symbol
+        if (!subscribedSymbols.has(symbol)) return;
+
+        // Add to history
+        rawDataHistory.unshift({
+          symbol,
+          data,
+          timestamp: new Date().toISOString(),
+        });
+
+        // Limit history size
+        if (rawDataHistory.length > MAX_RAW_DATA_ITEMS) {
+          rawDataHistory.pop();
+        }
+
+        // Update UI
+        updateRawDataUI();
+      }
+
+      function updateRawDataUI() {
+        rawDataContainer.innerHTML = "";
+
+        if (rawDataHistory.length === 0) {
+          rawDataContainer.innerHTML =
+            '<div class="raw-data-item">No raw data available yet</div>';
+          return;
+        }
+
+        rawDataHistory.forEach((item) => {
+          const element = document.createElement("div");
+          element.className = "raw-data-item";
+
+          const time = new Date(item.timestamp).toLocaleTimeString();
+
+          element.innerHTML = `
+            <div class="raw-data-time">${time} - ${item.symbol.toUpperCase()}</div>
+            <pre>${JSON.stringify(item.data, null, 2)}</pre>
+          `;
+
+          rawDataContainer.appendChild(element);
+        });
+      }
+
+      function clearRawData() {
+        rawDataHistory.length = 0;
+        updateRawDataUI();
+      }
+
+      // Auto-connect on page load
+      window.addEventListener("load", () => {
+        setTimeout(connectWebSocket, 1000);
+      });
+    </script>
+  </body>
+</html>
