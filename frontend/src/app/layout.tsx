@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/providers/theme-provider";
 import { QueryProvider } from "@/components/providers/query-provider";
+import { MainLayout } from "@/components/layout/main-layout";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -16,7 +17,8 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "100xTrading",
-  description: "100xTrading is a trading platform that allows you to trade cryptocurrencies with 100x leverage.",
+  description:
+    "100xTrading is a trading platform that allows you to trade cryptocurrencies with 100x leverage.",
 };
 
 export default function RootLayout({
@@ -35,7 +37,9 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <QueryProvider>{children}</QueryProvider>
+          <QueryProvider>
+            <MainLayout>{children}</MainLayout>
+          </QueryProvider>
         </ThemeProvider>
       </body>
     </html>
