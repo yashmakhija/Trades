@@ -5,7 +5,7 @@ import { initRoutes } from "./routes";
 import { startServer } from "./server";
 
 // Create Express application
-const app = express();
+export const app = express();
 
 // Apply middleware
 app.use(cors());
