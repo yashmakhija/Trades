@@ -152,4 +152,4 @@ const swaggerOptions = {
 /**
  * Generate Swagger specification
  */
-export const swaggerSpec = swaggerJsdoc(swaggerOptions); 
+export const swaggerSpec = swaggerJsdoc(swaggerOptions);
