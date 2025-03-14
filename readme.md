@@ -15,7 +15,7 @@ This platform provides:
 
 ## Recent Improvements
 
-I've made several key improvements to the codebase to make it production-ready:
+We've made several key improvements to the codebase to make it production-ready:
 
 1. **Standardized Database Connections**: Implemented a singleton pattern for Prisma client to prevent connection pool exhaustion and improve performance.
 
@@ -26,6 +26,42 @@ I've made several key improvements to the codebase to make it production-ready:
 4. **Code Cleanup**: Removed excessive comments and improved documentation for better maintainability.
 
 5. **API Documentation**: Added comprehensive Swagger documentation for all endpoints.
+
+6. **Comprehensive Testing**: Added extensive test suite covering all components and workflows.
+
+## Testing
+
+The platform includes a comprehensive test suite that covers all major components and workflows:
+
+### Test Structure
+
+- **Unit Tests**: Test individual components in isolation (auth, orders, symbols)
+- **Service Tests**: Test service layer functionality (OrderManager, BalanceManager)
+- **Integration Tests**: Test complete workflows across multiple components
+
+### Running Tests
+
+```bash
+# Run all tests
+bun test
+
+# Run tests in watch mode
+bun test --watch
+
+# Run a specific test file
+bun test src/tests/auth.test.ts
+```
+
+### Test Coverage
+
+The tests cover:
+
+- Authentication flows
+- Order management
+- Symbol information
+- Trading logic (stop-loss/take-profit)
+- Balance management
+- Complete trading workflows
 
 ## Areas to Focus On
 
