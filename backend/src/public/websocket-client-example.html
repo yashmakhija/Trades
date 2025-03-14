@@ -3,174 +3,189 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Trading App WebSocket Client Example</title>
+    <title>Trading App WebSocket Client</title>
     <style>
       body {
-        font-family: Arial, sans-serif;
-        max-width: 1200px;
-        margin: 0 auto;
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        margin: 0;
         padding: 20px;
+        background-color: #f5f5f5;
       }
       .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        background-color: white;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+      }
+      h1 {
+        color: #333;
+        margin-top: 0;
+      }
+      .section {
+        margin-bottom: 30px;
+        padding: 20px;
+        background-color: #f9f9f9;
+        border-radius: 8px;
+      }
+      .price-container {
         display: flex;
-        flex-direction: column;
+        flex-wrap: wrap;
         gap: 20px;
       }
-      .card {
-        border: 1px solid #ddd;
-        border-radius: 8px;
-        padding: 20px;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-      }
-      .ticker-container {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-        gap: 15px;
-      }
-      .ticker {
-        border: 1px solid #eee;
-        border-radius: 6px;
+      .price-card {
+        flex: 1;
+        min-width: 200px;
         padding: 15px;
-        background-color: #f9f9f9;
+        border-radius: 8px;
+        background-color: #fff;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
       }
-      .price-up {
-        color: green;
+      .price-card h3 {
+        margin-top: 0;
+        color: #444;
       }
-      .price-down {
-        color: red;
+      .price {
+        font-size: 24px;
+        font-weight: bold;
+        color: #2c3e50;
       }
-      pre {
-        background-color: #f5f5f5;
-        padding: 10px;
-        border-radius: 4px;
-        overflow-x: auto;
-        max-height: 300px;
-        overflow-y: auto;
+      .change {
+        font-size: 16px;
+        margin-left: 10px;
+      }
+      .positive {
+        color: #27ae60;
+      }
+      .negative {
+        color: #e74c3c;
+      }
+      .controls {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 20px;
       }
       button {
         padding: 8px 16px;
-        background-color: #4caf50;
+        background-color: #3498db;
         color: white;
         border: none;
         border-radius: 4px;
         cursor: pointer;
-        margin-right: 8px;
+        transition: background-color 0.3s;
       }
       button:hover {
-        background-color: #45a049;
+        background-color: #2980b9;
       }
-      button:disabled {
-        background-color: #cccccc;
-        cursor: not-allowed;
-      }
-      .status {
-        padding: 10px;
-        border-radius: 4px;
-        margin-bottom: 10px;
-      }
-      .connected {
-        background-color: #dff0d8;
-        color: #3c763d;
-      }
-      .disconnected {
-        background-color: #f2dede;
-        color: #a94442;
-      }
-      .controls {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        margin-top: 10px;
-      }
+      input,
       select {
         padding: 8px;
-        border-radius: 4px;
         border: 1px solid #ddd;
-      }
-      .subscribed-symbols {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        margin-top: 10px;
-      }
-      .symbol-tag {
-        background-color: #e7f3ff;
-        border: 1px solid #b3d7ff;
         border-radius: 4px;
-        padding: 4px 8px;
-        display: flex;
-        align-items: center;
       }
-      .symbol-tag button {
-        background: none;
-        border: none;
-        color: #dc3545;
-        cursor: pointer;
-        padding: 0 0 0 5px;
-        margin: 0;
-        font-size: 14px;
-      }
-      .tabs {
-        display: flex;
-        border-bottom: 1px solid #ddd;
-        margin-bottom: 15px;
-      }
-      .tab {
-        padding: 8px 16px;
-        cursor: pointer;
-        border: 1px solid transparent;
-        border-bottom: none;
-        margin-right: 5px;
-      }
-      .tab.active {
-        background-color: #f5f5f5;
-        border-color: #ddd;
-        border-radius: 4px 4px 0 0;
-      }
-      .tab-content {
-        display: none;
-      }
-      .tab-content.active {
-        display: block;
-      }
-      .raw-data-container {
-        max-height: 400px;
+      .log-container {
+        height: 300px;
         overflow-y: auto;
+        background-color: #2c3e50;
+        color: #ecf0f1;
+        padding: 15px;
+        border-radius: 8px;
+        font-family: monospace;
       }
-      .raw-data-item {
-        margin-bottom: 10px;
-        padding: 10px;
-        border: 1px solid #eee;
-        border-radius: 4px;
-      }
-      .raw-data-item:nth-child(odd) {
-        background-color: #f9f9f9;
-      }
-      .raw-data-item pre {
-        margin: 0;
-        background-color: transparent;
-        padding: 0;
-      }
-      .raw-data-time {
-        font-size: 12px;
-        color: #666;
+      .log-entry {
         margin-bottom: 5px;
+        border-bottom: 1px solid #34495e;
+        padding-bottom: 5px;
+      }
+      .timestamp {
+        color: #95a5a6;
+        margin-right: 10px;
+      }
+      .order-form {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 15px;
+        margin-bottom: 20px;
+      }
+      .form-group {
+        display: flex;
+        flex-direction: column;
+      }
+      .form-group label {
+        margin-bottom: 5px;
+        font-weight: bold;
+        color: #555;
+      }
+      .auth-section {
+        display: flex;
+        gap: 20px;
+      }
+      .auth-form {
+        flex: 1;
+        padding: 20px;
+        background-color: #fff;
+        border-radius: 8px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
       }
     </style>
   </head>
   <body>
     <div class="container">
-      <h1>Trading App WebSocket Client Example</h1>
+      <h1>Trading App WebSocket Client</h1>
 
-      <div class="card">
-        <h2>Connection Status</h2>
-        <div id="status" class="status disconnected">Disconnected</div>
-        <button id="connect">Connect</button>
-        <button id="disconnect" disabled>Disconnect</button>
+      <div class="section">
+        <h2>Authentication</h2>
+        <div class="auth-section">
+          <div class="auth-form">
+            <h3>Register</h3>
+            <div class="form-group">
+              <label for="register-email">Email</label>
+              <input type="email" id="register-email" placeholder="Email" />
+            </div>
+            <div class="form-group">
+              <label for="register-password">Password</label>
+              <input
+                type="password"
+                id="register-password"
+                placeholder="Password"
+              />
+            </div>
+            <div class="form-group">
+              <label for="register-name">Name</label>
+              <input type="text" id="register-name" placeholder="Name" />
+            </div>
+            <button onclick="register()">Register</button>
+          </div>
+
+          <div class="auth-form">
+            <h3>Login</h3>
+            <div class="form-group">
+              <label for="login-email">Email</label>
+              <input type="email" id="login-email" placeholder="Email" />
+            </div>
+            <div class="form-group">
+              <label for="login-password">Password</label>
+              <input
+                type="password"
+                id="login-password"
+                placeholder="Password"
+              />
+            </div>
+            <button onclick="login()">Login</button>
+          </div>
+        </div>
+
+        <div id="user-info" style="margin-top: 20px; display: none">
+          <h3>User Information</h3>
+          <p><strong>Name:</strong> <span id="user-name"></span></p>
+          <p><strong>Email:</strong> <span id="user-email"></span></p>
+          <p><strong>Balance:</strong> $<span id="user-balance"></span></p>
+        </div>
       </div>
 
-      <div class="card">
-        <h2>Symbol Subscription</h2>
+      <div class="section">
+        <h2>Live Prices</h2>
         <div class="controls">
           <select id="symbol-select">
             <option value="btcusdt">BTCUSDT</option>
@@ -179,403 +194,609 @@
             <option value="solusdt">SOLUSDT</option>
             <option value="adausdt">ADAUSDT</option>
           </select>
-          <button id="subscribe" disabled>Subscribe</button>
-        </div>
-        <div>
-          <h3>Subscribed Symbols:</h3>
-          <div id="subscribed-symbols" class="subscribed-symbols">
-            <div class="symbol-tag">None</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2>Data View</h2>
-        <div class="tabs">
-          <div class="tab active" data-tab="ticker-tab">Ticker Data</div>
-          <div class="tab" data-tab="raw-tab">Raw Data</div>
-          <div class="tab" data-tab="message-tab">Latest Message</div>
+          <button onclick="subscribeToSymbol()">Subscribe</button>
+          <button onclick="unsubscribeFromSymbol()">Unsubscribe</button>
         </div>
 
-        <div id="ticker-tab" class="tab-content active">
-          <h3>Live Ticker Data</h3>
-          <div id="ticker-container" class="ticker-container">
-            <div class="ticker">No data available</div>
-          </div>
-        </div>
-
-        <div id="raw-tab" class="tab-content">
-          <h3>Raw Binance Data</h3>
-          <button id="clear-raw-data">Clear</button>
-          <div id="raw-data-container" class="raw-data-container">
-            <div class="raw-data-item">No raw data available yet</div>
-          </div>
-        </div>
-
-        <div id="message-tab" class="tab-content">
-          <h3>Latest Message</h3>
-          <pre id="latest-message">No messages received yet</pre>
+        <div class="price-container" id="price-container">
+          <!-- Price cards will be added here dynamically -->
         </div>
       </div>
 
-      <div class="card">
-        <h2>WebSocket Client Code Example</h2>
-        <pre>
-const ws = new WebSocket('ws://localhost:3001');
+      <div class="section">
+        <h2>Place Order</h2>
+        <div class="order-form">
+          <div class="form-group">
+            <label for="order-symbol">Symbol</label>
+            <select id="order-symbol">
+              <option value="btcusdt">BTCUSDT</option>
+              <option value="ethusdt">ETHUSDT</option>
+              <option value="bnbusdt">BNBUSDT</option>
+              <option value="solusdt">SOLUSDT</option>
+              <option value="adausdt">ADAUSDT</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="order-type">Type</label>
+            <select id="order-type">
+              <option value="BUY">BUY</option>
+              <option value="SELL">SELL</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="order-price">Price</label>
+            <input type="number" id="order-price" placeholder="Price" />
+          </div>
+          <div class="form-group">
+            <label for="order-quantity">Quantity</label>
+            <input type="number" id="order-quantity" placeholder="Quantity" />
+          </div>
+          <div class="form-group">
+            <label for="order-stop-loss">Stop Loss (optional)</label>
+            <input type="number" id="order-stop-loss" placeholder="Stop Loss" />
+          </div>
+          <div class="form-group">
+            <label for="order-take-profit">Take Profit (optional)</label>
+            <input
+              type="number"
+              id="order-take-profit"
+              placeholder="Take Profit"
+            />
+          </div>
+          <div class="form-group">
+            <label for="order-is-short">Is Short</label>
+            <select id="order-is-short">
+              <option value="false">No</option>
+              <option value="true">Yes</option>
+            </select>
+          </div>
+        </div>
+        <button onclick="placeOrder()">Place Order</button>
+      </div>
 
-// Connection opened
-ws.addEventListener('open', (event) => {
-    console.log('Connected to WebSocket server');
-});
+      <div class="section">
+        <h2>Orders</h2>
+        <button onclick="getOrders()">Refresh Orders</button>
 
-// Listen for messages
-ws.addEventListener('message', (event) => {
-    const data = JSON.parse(event.data);
-    console.log('Message from server:', data);
-    
-    // Handle different message types
-    if (data.type === 'TICKER_UPDATE') {
-        updateTickerUI(data.symbol, data.data);
-    } else if (data.type === 'OHLCV_UPDATE') {
-        updateChartUI(data.symbol, data.data);
-    } else if (data.type === 'RAW_DATA') {
-        displayRawData(data.symbol, data.data);
-    }
-});
+        <h3>Open Orders</h3>
+        <div id="open-orders">
+          <!-- Open orders will be displayed here -->
+          <p>No open orders</p>
+        </div>
 
-// Subscribe to a specific symbol
-function subscribeToSymbol(symbol) {
-    try {
-        const message = JSON.stringify({
-            type: 'SUBSCRIBE',
-            symbol: symbol
-        });
-        console.log('Sending:', message);
-        ws.send(message);
-    } catch (error) {
-        console.error('Error sending subscription:', error);
-    }
-}
+        <h3>Closed Orders</h3>
+        <div id="closed-orders">
+          <!-- Closed orders will be displayed here -->
+          <p>No closed orders</p>
+        </div>
+      </div>
 
-// Unsubscribe from a symbol
-function unsubscribeFromSymbol(symbol) {
-    try {
-        const message = JSON.stringify({
-            type: 'UNSUBSCRIBE',
-            symbol: symbol
-        });
-        console.log('Sending:', message);
-        ws.send(message);
-    } catch (error) {
-        console.error('Error sending unsubscription:', error);
-    }
-}
-
-// Connection closed
-ws.addEventListener('close', (event) => {
-    console.log('Disconnected from WebSocket server');
-});
-
-// Handle errors
-ws.addEventListener('error', (error) => {
-    console.error('WebSocket error:', error);
-});
-        </pre>
+      <div class="section">
+        <h2>WebSocket Log</h2>
+        <div class="log-container" id="log-container">
+          <!-- Log entries will be added here dynamically -->
+        </div>
       </div>
     </div>
 
     <script>
-      let ws = null;
-      const tickerData = {};
-      const subscribedSymbols = new Set();
-      const rawDataHistory = [];
-      const MAX_RAW_DATA_ITEMS = 50;
+      // Global variables
+      let ws;
+      let token = localStorage.getItem("token");
+      let userId = localStorage.getItem("userId");
+      let symbolIdMap = {};
 
-      // DOM elements
-      const connectBtn = document.getElementById("connect");
-      const disconnectBtn = document.getElementById("disconnect");
-      const subscribeBtn = document.getElementById("subscribe");
-      const symbolSelect = document.getElementById("symbol-select");
-      const subscribedSymbolsContainer =
-        document.getElementById("subscribed-symbols");
-      const rawDataContainer = document.getElementById("raw-data-container");
-      const clearRawDataBtn = document.getElementById("clear-raw-data");
+      // Initialize WebSocket connection
+      function initWebSocket() {
+        const wsUrl = `ws://${window.location.hostname}:${window.location.port}`;
+        ws = new WebSocket(wsUrl);
 
-      // Event listeners
-      connectBtn.addEventListener("click", connectWebSocket);
-      disconnectBtn.addEventListener("click", disconnectWebSocket);
-      subscribeBtn.addEventListener("click", subscribeToSymbol);
-      clearRawDataBtn.addEventListener("click", clearRawData);
+        ws.onopen = function () {
+          logMessage("WebSocket connection established");
 
-      // Tab functionality
-      document.querySelectorAll(".tab").forEach((tab) => {
-        tab.addEventListener("click", () => {
-          // Remove active class from all tabs and content
-          document
-            .querySelectorAll(".tab")
-            .forEach((t) => t.classList.remove("active"));
-          document
-            .querySelectorAll(".tab-content")
-            .forEach((c) => c.classList.remove("active"));
-
-          // Add active class to clicked tab
-          tab.classList.add("active");
-
-          // Show corresponding content
-          const tabId = tab.getAttribute("data-tab");
-          document.getElementById(tabId).classList.add("active");
-        });
-      });
-
-      function connectWebSocket() {
-        if (ws) return;
-
-        // Create WebSocket connection
-        ws = new WebSocket(
-          `ws://${window.location.hostname}:${window.location.port}`
-        );
-
-        // Connection opened
-        ws.addEventListener("open", (event) => {
-          document.getElementById("status").textContent = "Connected";
-          document.getElementById("status").className = "status connected";
-          connectBtn.disabled = true;
-          disconnectBtn.disabled = false;
-          subscribeBtn.disabled = false;
-          console.log("Connected to WebSocket server");
-        });
-
-        // Listen for messages
-        ws.addEventListener("message", (event) => {
-          const message = JSON.parse(event.data);
-          document.getElementById("latest-message").textContent =
-            JSON.stringify(message, null, 2);
-
-          if (message.type === "INITIAL_DATA") {
-            Object.entries(message.data).forEach(([symbol, data]) => {
-              if (
-                subscribedSymbols.has(symbol) ||
-                subscribedSymbols.size === 0
-              ) {
-                tickerData[symbol] = {
-                  ...data,
-                  displayPrice: data.price / 100,
-                };
-              }
-            });
-            updateTickersUI();
-          } else if (message.type === "TICKER_UPDATE") {
-            if (
-              subscribedSymbols.has(message.symbol) ||
-              subscribedSymbols.size === 0
-            ) {
-              tickerData[message.symbol] = {
-                ...message.data,
-              };
-              updateTickersUI();
-            }
-          } else if (message.type === "RAW_DATA") {
-            // Handle raw data from Binance
-            addRawDataItem(message.symbol, message.data);
+          // Authenticate if token exists
+          if (token && userId) {
+            authenticateWebSocket();
+            displayUserInfo();
+            getOrders();
           }
-        });
 
-        // Connection closed
-        ws.addEventListener("close", (event) => {
-          document.getElementById("status").textContent = "Disconnected";
-          document.getElementById("status").className = "status disconnected";
-          connectBtn.disabled = false;
-          disconnectBtn.disabled = true;
-          subscribeBtn.disabled = true;
-          console.log("Disconnected from WebSocket server");
-          ws = null;
-        });
+          // Subscribe to default symbol
+          subscribeToSymbol();
+        };
 
-        // Handle errors
-        ws.addEventListener("error", (error) => {
-          console.error("WebSocket error:", error);
-          document.getElementById("status").textContent =
-            "Error: " + error.message;
-          document.getElementById("status").className = "status disconnected";
-        });
+        ws.onmessage = function (event) {
+          const message = JSON.parse(event.data);
+          handleWebSocketMessage(message);
+        };
+
+        ws.onclose = function () {
+          logMessage("WebSocket connection closed");
+          // Attempt to reconnect after 5 seconds
+          setTimeout(initWebSocket, 5000);
+        };
+
+        ws.onerror = function (error) {
+          logMessage("WebSocket error: " + error.message);
+        };
       }
 
-      function disconnectWebSocket() {
-        if (ws) {
-          ws.close();
+      // Handle WebSocket messages
+      function handleWebSocketMessage(message) {
+        switch (message.type) {
+          case "INITIAL_DATA":
+            logMessage("Received initial data");
+            updatePriceCards(message.data);
+            break;
+
+          case "TICKER_UPDATE":
+            updatePriceCard(message.symbol, message.data);
+            break;
+
+          case "SUBSCRIPTION_SUCCESS":
+            logMessage(`Subscribed to ${message.symbol.toUpperCase()}`);
+            break;
+
+          case "UNSUBSCRIPTION_SUCCESS":
+            logMessage(`Unsubscribed from ${message.symbol.toUpperCase()}`);
+            break;
+
+          case "AUTHENTICATION_SUCCESS":
+            logMessage(`WebSocket authenticated for user ${message.userId}`);
+            break;
+
+          case "ORDER_UPDATE":
+            logMessage(
+              `Order update: ${message.data.id} - ${message.data.status}`
+            );
+            getOrders(); // Refresh orders
+            break;
+
+          default:
+            logMessage(`Received message: ${JSON.stringify(message)}`);
         }
       }
 
+      // Subscribe to a symbol
       function subscribeToSymbol() {
-        if (!ws || ws.readyState !== WebSocket.OPEN) return;
-
-        const symbol = symbolSelect.value.toLowerCase();
-
-        if (subscribedSymbols.has(symbol)) {
-          alert(`Already subscribed to ${symbol.toUpperCase()}`);
-          return;
+        const symbol = document.getElementById("symbol-select").value;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(
+            JSON.stringify({
+              type: "SUBSCRIBE",
+              symbol: symbol,
+            })
+          );
         }
-
-        // Send subscription message to server as properly formatted JSON
-        try {
-          const subscriptionMessage = JSON.stringify({
-            type: "SUBSCRIBE",
-            symbol: symbol,
-          });
-          console.log("Sending subscription message:", subscriptionMessage);
-          ws.send(subscriptionMessage);
-        } catch (error) {
-          console.error("Error sending subscription:", error);
-        }
-
-        // Add to local subscribed symbols set
-        subscribedSymbols.add(symbol);
-
-        // Update UI
-        updateSubscribedSymbolsUI();
       }
 
-      function unsubscribeFromSymbol(symbol) {
-        if (!ws || ws.readyState !== WebSocket.OPEN) return;
-
-        // Send unsubscribe message to server as properly formatted JSON
-        try {
-          const unsubscriptionMessage = JSON.stringify({
-            type: "UNSUBSCRIBE",
-            symbol: symbol,
-          });
-          console.log("Sending unsubscription message:", unsubscriptionMessage);
-          ws.send(unsubscriptionMessage);
-        } catch (error) {
-          console.error("Error sending unsubscription:", error);
+      // Unsubscribe from a symbol
+      function unsubscribeFromSymbol() {
+        const symbol = document.getElementById("symbol-select").value;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(
+            JSON.stringify({
+              type: "UNSUBSCRIBE",
+              symbol: symbol,
+            })
+          );
         }
-
-        // Remove from local subscribed symbols set
-        subscribedSymbols.delete(symbol);
-
-        // Remove from ticker data if exists
-        delete tickerData[symbol];
-
-        // Update UI
-        updateSubscribedSymbolsUI();
-        updateTickersUI();
       }
 
-      function updateSubscribedSymbolsUI() {
-        subscribedSymbolsContainer.innerHTML = "";
-
-        if (subscribedSymbols.size === 0) {
-          subscribedSymbolsContainer.innerHTML =
-            '<div class="symbol-tag">None</div>';
-          return;
+      // Authenticate WebSocket connection
+      function authenticateWebSocket() {
+        if (ws && ws.readyState === WebSocket.OPEN && userId) {
+          ws.send(
+            JSON.stringify({
+              type: "AUTHENTICATE",
+              userId: userId,
+            })
+          );
         }
-
-        subscribedSymbols.forEach((symbol) => {
-          const tag = document.createElement("div");
-          tag.className = "symbol-tag";
-          tag.innerHTML = `
-            ${symbol.toUpperCase()}
-            <button onclick="unsubscribeFromSymbol('${symbol}')">×</button>
-          `;
-          subscribedSymbolsContainer.appendChild(tag);
-        });
       }
 
-      function updateTickersUI() {
-        const container = document.getElementById("ticker-container");
+      // Update price cards with initial data
+      function updatePriceCards(data) {
+        const container = document.getElementById("price-container");
         container.innerHTML = "";
 
-        if (Object.keys(tickerData).length === 0) {
-          container.innerHTML = '<div class="ticker">No data available</div>';
+        for (const symbol in data) {
+          const symbolData = data[symbol];
+          createPriceCard(symbol, symbolData);
+        }
+      }
+
+      // Update a single price card
+      function updatePriceCard(symbol, data) {
+        const cardId = `price-card-${symbol}`;
+        let card = document.getElementById(cardId);
+
+        if (!card) {
+          createPriceCard(symbol, data);
           return;
         }
 
-        Object.entries(tickerData).forEach(([symbol, data]) => {
-          // Skip if we're filtering by subscribed symbols and this one isn't subscribed
-          if (subscribedSymbols.size > 0 && !subscribedSymbols.has(symbol)) {
+        const priceElement = card.querySelector(".price");
+        const changeElement = card.querySelector(".change");
+
+        priceElement.textContent = `$${data.displayPrice.toFixed(2)}`;
+
+        const changePercent = data.priceChangePercent;
+        changeElement.textContent = `${
+          changePercent >= 0 ? "+" : ""
+        }${changePercent.toFixed(2)}%`;
+        changeElement.className = `change ${
+          changePercent >= 0 ? "positive" : "negative"
+        }`;
+      }
+
+      // Create a price card for a symbol
+      function createPriceCard(symbol, data) {
+        const container = document.getElementById("price-container");
+        const card = document.createElement("div");
+        card.className = "price-card";
+        card.id = `price-card-${symbol}`;
+
+        const displayPrice = data.displayPrice || data.price / 100;
+        const changePercent = data.priceChangePercent || 0;
+
+        card.innerHTML = `
+          <h3>${symbol.toUpperCase()}</h3>
+          <div>
+            <span class="price">$${displayPrice.toFixed(2)}</span>
+            <span class="change ${
+              changePercent >= 0 ? "positive" : "negative"
+            }">
+              ${changePercent >= 0 ? "+" : ""}${changePercent.toFixed(2)}%
+            </span>
+          </div>
+        `;
+
+        container.appendChild(card);
+      }
+
+      // Log a message to the UI
+      function logMessage(message) {
+        const container = document.getElementById("log-container");
+        const entry = document.createElement("div");
+        entry.className = "log-entry";
+
+        const timestamp = new Date().toLocaleTimeString();
+        entry.innerHTML = `<span class="timestamp">[${timestamp}]</span> ${message}`;
+
+        container.appendChild(entry);
+        container.scrollTop = container.scrollHeight;
+      }
+
+      // Register a new user
+      async function register() {
+        const email = document.getElementById("register-email").value;
+        const password = document.getElementById("register-password").value;
+        const name = document.getElementById("register-name").value;
+
+        if (!email || !password) {
+          logMessage("Email and password are required");
+          return;
+        }
+
+        try {
+          const response = await fetch("/api/auth/register", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ email, password, name }),
+          });
+
+          const data = await response.json();
+
+          if (response.ok) {
+            logMessage("Registration successful");
+
+            // Store token and user info
+            localStorage.setItem("token", data.token);
+            localStorage.setItem("userId", data.user.id);
+            localStorage.setItem("userEmail", data.user.email);
+            localStorage.setItem("userName", data.user.name || "");
+            localStorage.setItem("userBalance", data.user.usdcBalance / 100); // Convert from cents
+
+            token = data.token;
+            userId = data.user.id;
+
+            // Update UI
+            displayUserInfo();
+            authenticateWebSocket();
+          } else {
+            logMessage(`Registration failed: ${data.error}`);
+          }
+        } catch (error) {
+          logMessage(`Error during registration: ${error.message}`);
+        }
+      }
+
+      // Login an existing user
+      async function login() {
+        const email = document.getElementById("login-email").value;
+        const password = document.getElementById("login-password").value;
+
+        if (!email || !password) {
+          logMessage("Email and password are required");
+          return;
+        }
+
+        try {
+          const response = await fetch("/api/auth/login", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ email, password }),
+          });
+
+          const data = await response.json();
+
+          if (response.ok) {
+            logMessage("Login successful");
+
+            // Store token and user info
+            localStorage.setItem("token", data.token);
+            localStorage.setItem("userId", data.user.id);
+            localStorage.setItem("userEmail", data.user.email);
+            localStorage.setItem("userName", data.user.name || "");
+            localStorage.setItem("userBalance", data.user.usdcBalance / 100); // Convert from cents
+
+            token = data.token;
+            userId = data.user.id;
+
+            // Update UI
+            displayUserInfo();
+            authenticateWebSocket();
+            getOrders();
+          } else {
+            logMessage(`Login failed: ${data.error}`);
+          }
+        } catch (error) {
+          logMessage(`Error during login: ${error.message}`);
+        }
+      }
+
+      // Display user information
+      function displayUserInfo() {
+        if (!token) return;
+
+        const userInfo = document.getElementById("user-info");
+        userInfo.style.display = "block";
+
+        document.getElementById("user-name").textContent =
+          localStorage.getItem("userName") || "N/A";
+        document.getElementById("user-email").textContent =
+          localStorage.getItem("userEmail") || "N/A";
+        document.getElementById("user-balance").textContent =
+          localStorage.getItem("userBalance") || "0.00";
+      }
+
+      // Fetch symbol IDs for order placement
+      async function fetchSymbolIds() {
+        try {
+          const response = await fetch("/api/symbols");
+          const symbols = await response.json();
+
+          symbols.forEach((symbol) => {
+            symbolIdMap[symbol.name.toLowerCase()] = symbol.id;
+          });
+
+          logMessage("Fetched symbol IDs");
+        } catch (error) {
+          logMessage(`Error fetching symbols: ${error.message}`);
+        }
+      }
+
+      // Place an order
+      async function placeOrder() {
+        if (!token) {
+          logMessage("You must be logged in to place orders");
+          return;
+        }
+
+        const symbolName = document.getElementById("order-symbol").value;
+        const symbolId = symbolIdMap[symbolName];
+
+        if (!symbolId) {
+          logMessage("Symbol ID not found. Fetching symbols...");
+          await fetchSymbolIds();
+
+          if (!symbolIdMap[symbolName]) {
+            logMessage(`Symbol ID for ${symbolName} not found`);
             return;
           }
-
-          const tickerElement = document.createElement("div");
-          tickerElement.className = "ticker";
-
-          const priceClass =
-            data.priceChangePercent >= 0 ? "price-up" : "price-down";
-          const priceChange =
-            data.priceChangePercent >= 0
-              ? "+" + data.priceChangePercent.toFixed(2)
-              : data.priceChangePercent.toFixed(2);
-
-          tickerElement.innerHTML = `
-            <h3>${symbol.toUpperCase()}</h3>
-            <div class="${priceClass}">
-                <strong>${
-                  data.displayPrice
-                    ? data.displayPrice.toFixed(2)
-                    : (data.price / 100).toFixed(2)
-                }</strong>
-                <span>${priceChange}%</span>
-            </div>
-            <div>Volume: ${data.volume.toFixed(2)}</div>
-          `;
-
-          container.appendChild(tickerElement);
-        });
-      }
-
-      function addRawDataItem(symbol, data) {
-        // Only process if we're subscribed to this symbol
-        if (!subscribedSymbols.has(symbol)) return;
-
-        // Add to history
-        rawDataHistory.unshift({
-          symbol,
-          data,
-          timestamp: new Date().toISOString(),
-        });
-
-        // Limit history size
-        if (rawDataHistory.length > MAX_RAW_DATA_ITEMS) {
-          rawDataHistory.pop();
         }
 
-        // Update UI
-        updateRawDataUI();
-      }
+        const type = document.getElementById("order-type").value;
+        const price =
+          parseFloat(document.getElementById("order-price").value) * 100; // Convert to cents
+        const quantity = parseInt(
+          document.getElementById("order-quantity").value
+        );
+        const stopLoss = document.getElementById("order-stop-loss").value
+          ? parseFloat(document.getElementById("order-stop-loss").value) * 100
+          : null;
+        const takeProfit = document.getElementById("order-take-profit").value
+          ? parseFloat(document.getElementById("order-take-profit").value) * 100
+          : null;
+        const isShort =
+          document.getElementById("order-is-short").value === "true";
 
-      function updateRawDataUI() {
-        rawDataContainer.innerHTML = "";
-
-        if (rawDataHistory.length === 0) {
-          rawDataContainer.innerHTML =
-            '<div class="raw-data-item">No raw data available yet</div>';
+        if (!price || !quantity) {
+          logMessage("Price and quantity are required");
           return;
         }
 
-        rawDataHistory.forEach((item) => {
-          const element = document.createElement("div");
-          element.className = "raw-data-item";
+        try {
+          const response = await fetch("/api/orders", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              symbolId: symbolIdMap[symbolName],
+              type,
+              price,
+              quantity,
+              stopLoss,
+              takeProfit,
+              isShort,
+            }),
+          });
 
-          const time = new Date(item.timestamp).toLocaleTimeString();
+          const data = await response.json();
 
-          element.innerHTML = `
-            <div class="raw-data-time">${time} - ${item.symbol.toUpperCase()}</div>
-            <pre>${JSON.stringify(item.data, null, 2)}</pre>
-          `;
-
-          rawDataContainer.appendChild(element);
-        });
+          if (response.ok) {
+            logMessage(`Order placed successfully: ${data.order.id}`);
+            getOrders();
+          } else {
+            logMessage(`Order placement failed: ${data.error}`);
+          }
+        } catch (error) {
+          logMessage(`Error placing order: ${error.message}`);
+        }
       }
 
-      function clearRawData() {
-        rawDataHistory.length = 0;
-        updateRawDataUI();
+      // Get user orders
+      async function getOrders() {
+        if (!token) {
+          logMessage("You must be logged in to view orders");
+          return;
+        }
+
+        try {
+          const response = await fetch("/api/orders", {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          });
+
+          const data = await response.json();
+
+          if (response.ok) {
+            displayOrders(data.openOrders, data.closedOrders);
+
+            // Update balance
+            if (data.balance) {
+              localStorage.setItem("userBalance", data.balance / 100); // Convert from cents
+              displayUserInfo();
+            }
+          } else {
+            logMessage(`Failed to fetch orders: ${data.error}`);
+          }
+        } catch (error) {
+          logMessage(`Error fetching orders: ${error.message}`);
+        }
       }
 
-      // Auto-connect on page load
-      window.addEventListener("load", () => {
-        setTimeout(connectWebSocket, 1000);
-      });
+      // Display orders in the UI
+      function displayOrders(openOrders, closedOrders) {
+        const openOrdersContainer = document.getElementById("open-orders");
+        const closedOrdersContainer = document.getElementById("closed-orders");
+
+        // Display open orders
+        if (openOrders.length === 0) {
+          openOrdersContainer.innerHTML = "<p>No open orders</p>";
+        } else {
+          openOrdersContainer.innerHTML = "";
+
+          openOrders.forEach((order) => {
+            const orderElement = document.createElement("div");
+            orderElement.className = "order-item";
+            orderElement.innerHTML = `
+              <p>
+                <strong>${order.symbolName.toUpperCase()}</strong> - 
+                ${order.type} ${order.isShort ? "(Short)" : ""} - 
+                ${order.quantity} @ $${(order.price / 100).toFixed(2)} - 
+                <button onclick="cancelOrder('${order.id}')">Cancel</button>
+              </p>
+            `;
+
+            openOrdersContainer.appendChild(orderElement);
+          });
+        }
+
+        // Display closed orders
+        if (closedOrders.length === 0) {
+          closedOrdersContainer.innerHTML = "<p>No closed orders</p>";
+        } else {
+          closedOrdersContainer.innerHTML = "";
+
+          closedOrders.forEach((order) => {
+            const orderElement = document.createElement("div");
+            orderElement.className = "order-item";
+
+            const pnl = order.pnl / 100; // Convert from cents
+            const pnlText =
+              order.pnl !== null
+                ? `PnL: ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}`
+                : "";
+            const pnlClass = pnl > 0 ? "positive" : pnl < 0 ? "negative" : "";
+
+            orderElement.innerHTML = `
+              <p>
+                <strong>${order.symbolName.toUpperCase()}</strong> - 
+                ${order.type} ${order.isShort ? "(Short)" : ""} - 
+                ${order.quantity} @ $${(order.price / 100).toFixed(2)} - 
+                ${order.status} - 
+                <span class="${pnlClass}">${pnlText}</span>
+              </p>
+            `;
+
+            closedOrdersContainer.appendChild(orderElement);
+          });
+        }
+      }
+
+      // Cancel an order
+      async function cancelOrder(orderId) {
+        if (!token) {
+          logMessage("You must be logged in to cancel orders");
+          return;
+        }
+
+        try {
+          const response = await fetch(`/api/orders/${orderId}`, {
+            method: "DELETE",
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          });
+
+          const data = await response.json();
+
+          if (response.ok) {
+            logMessage(`Order cancelled successfully: ${orderId}`);
+            getOrders();
+          } else {
+            logMessage(`Order cancellation failed: ${data.error}`);
+          }
+        } catch (error) {
+          logMessage(`Error cancelling order: ${error.message}`);
+        }
+      }
+
+      // Initialize the application
+      async function init() {
+        // Fetch symbol IDs
+        await fetchSymbolIds();
+
+        // Initialize WebSocket connection
+        initWebSocket();
+
+        // Display user info if logged in
+        if (token) {
+          displayUserInfo();
+        }
+      }
+
+      // Start the application
+      init();
     </script>
   </body>
 </html>

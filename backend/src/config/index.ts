@@ -11,6 +11,8 @@ const configSchema = z.object({
   binanceApiSecret: z.string().optional(),
   binanceWebSocketUrl: z.string().default("wss://stream.binance.com:9443/ws"),
   tradingSymbols: z.string().default("btcusdt,ethusdt,bnbusdt,solusdt,adausdt"),
+  jwtSecret: z.string().default("trading-app-secret-key"),
+  jwtExpiresIn: z.string().default("7d"),
 });
 
 export const config = {
@@ -23,6 +25,8 @@ export const config = {
     process.env.BINANCE_WEBSOCKET_URL || "wss://stream.binance.com:9443/ws",
   tradingSymbols:
     process.env.TRADING_SYMBOLS || "btcusdt,ethusdt,bnbusdt,solusdt,adausdt",
+  jwtSecret: process.env.JWT_SECRET || "trading-app-secret-key",
+  jwtExpiresIn: process.env.JWT_EXPIRES_IN || "7d",
 };
 
 try {

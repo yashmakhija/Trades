@@ -1,3 +1,13 @@
+/**
+ * WebSocket Service
+ *
+ * Manages WebSocket connections with clients, handling:
+ * - Client connection management
+ * - Symbol subscription system
+ * - Real-time data broadcasting
+ * - User authentication for private channels
+ * - Order and balance updates broadcasting
+ */
 import { Server } from "http";
 import WebSocket from "ws";
 import {
@@ -6,13 +16,15 @@ import {
   addSymbolToTracking,
   removeSymbolFromTracking,
 } from "./binanceService";
+import { prisma } from "../server";
+import { orderManager } from "./orderManager";
 
 let wss: WebSocket.Server | null = null;
 
-// Store clients with their subscribed symbols
 interface ClientInfo {
   ws: WebSocket;
   subscribedSymbols: Set<string>;
+  userId?: string;
 }
 
 const clients = new Map<WebSocket, ClientInfo>();
@@ -23,13 +35,11 @@ export function initWebSocketServer(server: Server): void {
   wss.on("connection", (ws: WebSocket) => {
     console.log("Client connected to WebSocket");
 
-    // Initialize client info
     clients.set(ws, {
       ws,
       subscribedSymbols: new Set<string>(),
     });
 
-    // Send initial data to the client
     sendInitialData(ws);
 
     ws.on("message", (message: WebSocket.Data) => {
@@ -66,16 +76,17 @@ function sendInitialData(ws: WebSocket): void {
   }
 }
 
-function handleClientMessage(ws: WebSocket, message: WebSocket.Data): void {
+async function handleClientMessage(
+  ws: WebSocket,
+  message: WebSocket.Data
+): Promise<void> {
   try {
     let data;
     const messageStr = message.toString();
 
-    // Try to parse as JSON, but handle plain text if it fails
     try {
       data = JSON.parse(messageStr);
     } catch (parseError) {
-      // If it's not valid JSON, treat it as a symbol name for subscription
       console.log(`Received plain text message: ${messageStr}`);
       data = {
         type: "SUBSCRIBE",
@@ -93,15 +104,12 @@ function handleClientMessage(ws: WebSocket, message: WebSocket.Data): void {
     if (data.type === "SUBSCRIBE" && data.symbol) {
       const symbol = data.symbol.toLowerCase();
 
-      // Add symbol to client's subscriptions
       clientInfo.subscribedSymbols.add(symbol);
 
-      // Add to active tracking in Binance service
       addSymbolToTracking(symbol);
 
       console.log(`Client subscribed to ${symbol}`);
 
-      // Send the latest data for this symbol
       const tickerData = getLatestTickerData(symbol);
       if (tickerData) {
         ws.send(
@@ -116,7 +124,6 @@ function handleClientMessage(ws: WebSocket, message: WebSocket.Data): void {
         );
       }
 
-      // Send confirmation
       ws.send(
         JSON.stringify({
           type: "SUBSCRIPTION_SUCCESS",
@@ -127,10 +134,8 @@ function handleClientMessage(ws: WebSocket, message: WebSocket.Data): void {
     } else if (data.type === "UNSUBSCRIBE" && data.symbol) {
       const symbol = data.symbol.toLowerCase();
 
-      // Remove symbol from client's subscriptions
       clientInfo.subscribedSymbols.delete(symbol);
 
-      // Check if any other clients are still subscribed to this symbol
       let stillSubscribed = false;
       clients.forEach((info) => {
         if (info.subscribedSymbols.has(symbol)) {
@@ -138,14 +143,12 @@ function handleClientMessage(ws: WebSocket, message: WebSocket.Data): void {
         }
       });
 
-      // If no clients are subscribed, remove from active tracking
       if (!stillSubscribed) {
         removeSymbolFromTracking(symbol);
       }
 
       console.log(`Client unsubscribed from ${symbol}`);
 
-      // Send confirmation
       ws.send(
         JSON.stringify({
           type: "UNSUBSCRIPTION_SUCCESS",
@@ -153,6 +156,40 @@ function handleClientMessage(ws: WebSocket, message: WebSocket.Data): void {
           message: `Successfully unsubscribed from ${symbol.toUpperCase()}`,
         })
       );
+    } else if (data.type === "AUTHENTICATE" && data.userId) {
+      try {
+        const user = await prisma.user.findUnique({
+          where: { id: data.userId },
+        });
+
+        if (user) {
+          clientInfo.userId = user.id;
+          console.log(`Client authenticated as user ${user.id}`);
+
+          ws.send(
+            JSON.stringify({
+              type: "AUTHENTICATION_SUCCESS",
+              userId: user.id,
+              message: "Successfully authenticated",
+            })
+          );
+        } else {
+          ws.send(
+            JSON.stringify({
+              type: "AUTHENTICATION_ERROR",
+              message: "User not found",
+            })
+          );
+        }
+      } catch (error) {
+        console.error("Error authenticating client:", error);
+        ws.send(
+          JSON.stringify({
+            type: "AUTHENTICATION_ERROR",
+            message: "Authentication failed",
+          })
+        );
+      }
     }
   } catch (error) {
     console.error("Error handling client message:", error);
@@ -184,11 +221,9 @@ export function broadcastTickerUpdate(symbol: string, data: any): void {
     data,
   });
 
-  // Send to all clients or only to those subscribed to this symbol
   clients.forEach((clientInfo) => {
     const { ws, subscribedSymbols } = clientInfo;
 
-    // Send if client is subscribed to this symbol or has no specific subscriptions
     if (
       ws.readyState === WebSocket.OPEN &&
       (subscribedSymbols.size === 0 || subscribedSymbols.has(symbol))
@@ -244,18 +279,58 @@ export function broadcastRawData(symbol: string, data: any): void {
   });
 }
 
+/**
+ * Broadcast order updates to the specific user
+ */
+export function broadcastOrderUpdate(userId: string, orderData: any): void {
+  if (!wss || clients.size === 0) return;
+
+  const message = JSON.stringify({
+    type: "ORDER_UPDATE",
+    data: orderData,
+  });
+
+  // Send only to clients authenticated as this user
+  clients.forEach((clientInfo) => {
+    const { ws, userId: clientUserId } = clientInfo;
+
+    if (ws.readyState === WebSocket.OPEN && clientUserId === userId) {
+      ws.send(message);
+    }
+  });
+}
+
+/**
+ * Broadcast balance updates to the specific user
+ */
+export function broadcastBalanceUpdate(userId: string, balanceData: any): void {
+  if (!wss || clients.size === 0) return;
+
+  const message = JSON.stringify({
+    type: "BALANCE_UPDATE",
+    data: balanceData,
+  });
+
+  // Send only to clients authenticated as this user
+  clients.forEach((clientInfo) => {
+    const { ws, userId: clientUserId } = clientInfo;
+
+    if (ws.readyState === WebSocket.OPEN && clientUserId === userId) {
+      ws.send(message);
+    }
+  });
+}
+
 export function getConnectedClientsCount(): number {
   return clients.size;
 }
 
-export function getSubscribedSymbolsCount(): Record<string, number> {
-  const counts: Record<string, number> = {};
-
+export function getAuthenticatedClientsCount(): number {
+  let count = 0;
   clients.forEach((clientInfo) => {
-    clientInfo.subscribedSymbols.forEach((symbol) => {
-      counts[symbol] = (counts[symbol] || 0) + 1;
-    });
+    if (clientInfo.userId) {
+      count++;
+    }
   });
-
-  return counts;
+  return count;
 }

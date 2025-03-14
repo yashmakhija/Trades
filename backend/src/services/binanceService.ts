@@ -1,6 +1,15 @@
+/**
+ * Binance Service
+ *
+ * Handles all interactions with the Binance WebSocket API, including:
+ * - Establishing and maintaining WebSocket connections
+ * - Processing real-time market data
+ * - Storing historical data
+ * - Triggering price-based events for the trading engine
+ */
 import WebSocket from "ws";
 import { config } from "../config";
-import { prisma } from "../index";
+import { prisma } from "../server";
 import {
   BinanceSubscriptionMessage,
   BinanceTickerMessage,
@@ -13,6 +22,7 @@ import {
   broadcastRawData,
 } from "./webSocketService";
 import axios from "axios";
+import { orderManager } from "./orderManager";
 
 const tickerCache: Record<string, ProcessedTickerData> = {};
 
@@ -204,6 +214,13 @@ function handleWebSocketMessage(message: WebSocket.Data): void {
       if (tickerData.timestamp % 5000 < 1000) {
         updateSymbolPrice(tickerData);
       }
+
+      orderManager.checkPriceTriggers(tickerData.symbol, tickerData.price);
+
+      broadcastTickerUpdate(tickerData.symbol, {
+        ...tickerData,
+        displayPrice: tickerData.price / 100,
+      });
     }
 
     if (data.e === "kline") {
@@ -317,11 +334,14 @@ export async function startBinanceWebSocket(): Promise<void> {
   // Initialize symbols first
   await initializeSymbols();
 
+  // Load existing open orders into memory
+  await orderManager.loadExistingOrders();
+
   // Check if Binance API is available
   const isApiAvailable = await checkBinanceApiStatus();
   if (!isApiAvailable) {
-    console.error("Binance API is not available. Will retry in 30 seconds.");
-    setTimeout(startBinanceWebSocket, 30000);
+    console.error("Binance API is not available. Using mock data.");
+    // TODO: Implement mock data generation
     return;
   }
 

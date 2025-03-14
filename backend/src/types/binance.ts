@@ -1,3 +1,7 @@
+import { OrderType } from "@prisma/client";
+
+import { OrderStatus } from "@prisma/client";
+
 export interface BinanceWebSocketMessage {
   e: string;
   E: number;
@@ -51,4 +55,23 @@ export interface BinanceSubscriptionMessage {
   method: string;
   params: string[];
   id: number;
+}
+
+
+export interface Order {
+  id: string;
+  userId: string;
+  symbolId: string;
+  symbolName: string;
+  price: number;
+  quantity: number;
+  type: OrderType;
+  isShort: boolean;
+  stopLoss?: number | null;
+  takeProfit?: number | null;
+  status: OrderStatus;
+  exitPrice?: number | null;
+  pnl?: number | null;
+  createdAt: Date;
+  closedAt?: Date | null;
 }

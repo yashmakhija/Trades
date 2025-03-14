@@ -1,3 +1,9 @@
+/**
+ * Database Initialization Script
+ *
+ * This script initializes the database with default trading symbols.
+ * It's meant to be run once during initial setup or when adding new symbols.
+ */
 import { PrismaClient } from "@prisma/client";
 import dotenv from "dotenv";
 
