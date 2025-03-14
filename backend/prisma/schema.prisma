@@ -18,9 +18,8 @@ model User {
   email     String     @unique
   password  String
   name      String?
-  balance   Int        @default(0)
+  usdcBalance   Int        @default(1000000)
   orders    Order[]
-  positions Position[]
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 }
@@ -43,13 +42,11 @@ model Order {
   userId        String
   user          User        @relation(fields: [userId], references: [id])
   stopLoss      Int?
-  takeProfit    Int?        // Renamed from target for clarity
-  price         Int
-  quantity      Int
-  filled        Int         @default(0)
-  remaining     Int         // Amount left to be filled
-  avgFillPrice  Int?        // Average price of filled portions
-  exitPrice     Int?
+  takeProfit    Int?
+  price         Int         // Entry price
+  quantity      Int         // Always fully filled in our case
+  exitPrice     Int?        // Price when closed
+  pnl           Int?        // Realized profit/loss
   status        OrderStatus @default(CLOSED)
   type          OrderType
   isShort       Boolean     @default(false)
@@ -58,31 +55,13 @@ model Order {
   childOrders   Order[]     @relation("LinkedOrders")
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
+  closedAt      DateTime?   // When the order was closed
 
   @@index([userId])
   @@index([symbolId])
   @@index([status])
 }
 
-
-model Position {
-  id            String   @id @default(uuid())
-  userId        String
-  user          User     @relation(fields: [userId], references: [id])
-  symbol        String
-  amount        Int
-  avgPrice      Int
-  isShort       Boolean  @default(false)
-  unrealizedPnL Int      @default(0)
-  realizedPnL   Int      @default(0)
-  stopLoss      Int?
-  takeProfit    Int?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  @@index([userId])
-  @@index([symbol])
-}
 
 
 model OHLCV {
