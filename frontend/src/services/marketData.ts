@@ -1,5 +1,6 @@
 import { CandleData } from "./websocket";
-import { API_BASE_URL, DEFAULT_TIMEFRAME } from "@/config";
+import { DEFAULT_TIMEFRAME } from "@/config/index";
+import { apiClient } from "@/lib/api/api-client";
 
 // Timeframe options
 export type Timeframe = "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d" | "1w";
@@ -17,13 +18,7 @@ export interface SymbolData {
  */
 export async function fetchSymbols(): Promise<SymbolData[]> {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/symbols`);
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch symbols: ${response.statusText}`);
-    }
-
-    return await response.json();
+    return await apiClient.get<SymbolData[]>("/symbols");
   } catch (error) {
     console.error("Error fetching symbols:", error);
     return [];
@@ -37,15 +32,9 @@ export async function fetchSymbolDetails(
   symbolName: string
 ): Promise<SymbolData | null> {
   try {
-    const response = await fetch(
-      `${API_BASE_URL}/api/symbols/${symbolName.toLowerCase()}`
+    return await apiClient.get<SymbolData>(
+      `/symbols/${symbolName.toLowerCase()}`
     );
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch symbol details: ${response.statusText}`);
-    }
-
-    return await response.json();
   } catch (error) {
     console.error(`Error fetching symbol details for ${symbolName}:`, error);
     return null;
@@ -57,13 +46,7 @@ export async function fetchSymbolDetails(
  */
 export async function fetchLatestPrices(): Promise<Record<string, number>> {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/symbols/prices`);
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch latest prices: ${response.statusText}`);
-    }
-
-    return await response.json();
+    return await apiClient.get<Record<string, number>>("/symbols/prices");
   } catch (error) {
     console.error("Error fetching latest prices:", error);
     return {};
@@ -79,17 +62,13 @@ export async function fetchHistoricalData(
   limit: number = 100
 ): Promise<CandleData[]> {
   try {
-    const response = await fetch(
-      `${API_BASE_URL}/api/market/history?symbol=${symbol.toLowerCase()}&timeframe=${timeframe}&limit=${limit}`
-    );
-
-    if (!response.ok) {
-      throw new Error(
-        `Failed to fetch historical data: ${response.statusText}`
-      );
-    }
-
-    const data = await response.json();
+    const data = await apiClient.get<any[]>("/market/history", {
+      params: {
+        symbol: symbol.toLowerCase(),
+        timeframe,
+        limit: limit.toString(),
+      },
+    });
 
     // Transform data to match CandleData interface
     return data.map(

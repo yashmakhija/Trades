@@ -2,7 +2,17 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 
 interface TypographyProps extends React.HTMLAttributes<HTMLElement> {
-  variant?: "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "p" | "span" | "div";
+  variant?:
+    | "h1"
+    | "h2"
+    | "h3"
+    | "h4"
+    | "h5"
+    | "h6"
+    | "p"
+    | "span"
+    | "div"
+    | "small";
   children: React.ReactNode;
 }
 
@@ -16,6 +26,7 @@ const variantStyles = {
   p: "leading-7 [&:not(:first-child)]:mt-6",
   span: "leading-7",
   div: "leading-7",
+  small: "text-sm leading-tight",
 };
 
 export function Typography({
@@ -24,7 +35,7 @@ export function Typography({
   children,
   ...props
 }: TypographyProps) {
-  const Component = variant;
+  const Component = variant === "small" ? "span" : variant;
   return (
     <Component className={cn(variantStyles[variant], className)} {...props}>
       {children}

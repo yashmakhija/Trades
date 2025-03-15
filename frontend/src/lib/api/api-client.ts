@@ -1,6 +1,7 @@
 import { useAuthStore } from "@/store/use-auth-store";
+import { API_BASE_URL } from "@/config";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api";
+const API_URL = `${API_BASE_URL}/api`;
 
 interface FetchOptions extends RequestInit {
   params?: Record<string, string>;
@@ -20,8 +21,18 @@ async function fetchApi<T>(
     });
   }
 
-  // Get auth token from store
-  const token = useAuthStore.getState().token;
+  // Get auth token from store or localStorage
+  let token = useAuthStore.getState().token;
+
+  // If token is not in store, try to get it from localStorage
+  if (!token && typeof window !== "undefined") {
+    token = localStorage.getItem("auth_token");
+
+    // If token is found in localStorage but not in store, update the store
+    if (token) {
+      useAuthStore.getState().setToken(token);
+    }
+  }
 
   // Set default headers
   const headers = new Headers(options.headers);
@@ -39,8 +50,23 @@ async function fetchApi<T>(
 
   // Handle non-2xx responses
   if (!response.ok) {
+    // Handle 401 Unauthorized - token expired or invalid
+    if (response.status === 401) {
+      // Clear auth state
+      useAuthStore.getState().logout();
+
+      // Remove token from localStorage
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("auth_token");
+      }
+
+      throw new Error("Your session has expired. Please log in again.");
+    }
+
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.error || `API error: ${response.status}`);
+    throw new Error(
+      error.error || error.message || `API error: ${response.status}`
+    );
   }
 
   // Parse JSON response

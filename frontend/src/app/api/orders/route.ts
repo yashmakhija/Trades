@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        // Add authentication headers if needed
+        "Authorization": `Bearer ${token}`,
       },
       body: JSON.stringify(backendOrderData),
     });

@@ -1,4 +1,5 @@
-import { API_BASE_URL, ORDER_POLLING_INTERVAL_MS } from "@/config";
+import { ORDER_POLLING_INTERVAL_MS } from "@/config/index";
+import { apiClient } from "@/lib/api/api-client";
 
 // Order types
 export type OrderSide = "buy" | "sell";
@@ -32,15 +33,7 @@ export interface CreateOrderParams {
  */
 export async function fetchOrders(): Promise<Order[]> {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/orders`, {
-      credentials: "include",
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch orders: ${response.statusText}`);
-    }
-
-    return await response.json();
+    return await apiClient.get<Order[]>("/orders");
   } catch (error) {
     console.error("Error fetching orders:", error);
     return [];
@@ -54,23 +47,7 @@ export async function createOrder(
   params: CreateOrderParams
 ): Promise<Order | null> {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/orders`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      credentials: "include",
-      body: JSON.stringify(params),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(
-        errorData.message || `Failed to create order: ${response.statusText}`
-      );
-    }
-
-    return await response.json();
+    return await apiClient.post<Order>("/orders", params);
   } catch (error) {
     console.error("Error creating order:", error);
     throw error;
@@ -82,18 +59,7 @@ export async function createOrder(
  */
 export async function cancelOrder(orderId: string): Promise<boolean> {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/orders/${orderId}`, {
-      method: "DELETE",
-      credentials: "include",
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(
-        errorData.message || `Failed to cancel order: ${response.statusText}`
-      );
-    }
-
+    await apiClient.delete<void>(`/orders/${orderId}`);
     return true;
   } catch (error) {
     console.error(`Error cancelling order ${orderId}:`, error);
