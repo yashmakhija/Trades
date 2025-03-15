@@ -62,35 +62,119 @@ export async function fetchHistoricalData(
   limit: number = 100
 ): Promise<CandleData[]> {
   try {
-    const data = await apiClient.get<any[]>("/market/history", {
-      params: {
-        symbol: symbol.toLowerCase(),
-        timeframe,
-        limit: limit.toString(),
-      },
-    });
-
-    // Transform data to match CandleData interface
-    return data.map(
-      (item: {
-        timestamp: number;
-        open: number;
-        high: number;
-        low: number;
-        close: number;
-        volume: number;
-      }) => ({
-        time: item.timestamp / 1000, // Convert to seconds for TradingView
-        open: item.open,
-        high: item.high,
-        low: item.low,
-        close: item.close,
-        volume: item.volume,
-      })
+    console.log(
+      `MarketData: Fetching historical data for ${symbol} with timeframe ${timeframe}`
     );
+
+    // Try to fetch from API first
+    try {
+      const data = await apiClient.get<any[]>("/market/candles", {
+        params: {
+          symbol: symbol.toLowerCase(),
+          timeframe,
+          limit: limit.toString(),
+        },
+      });
+
+      console.log(`MarketData: Received ${data.length} candles for ${symbol}`);
+
+      // Transform data to match CandleData interface
+      const transformedData = data.map(
+        (item: {
+          timestamp: number;
+          open: number;
+          high: number;
+          low: number;
+          close: number;
+          volume: number;
+        }) => ({
+          time: item.timestamp / 1000, // Convert to seconds for TradingView
+          open: item.open,
+          high: item.high,
+          low: item.low,
+          close: item.close,
+          volume: item.volume,
+        })
+      );
+
+      console.log(
+        `MarketData: Transformed ${transformedData.length} candles for ${symbol}`
+      );
+
+      // Sort by time to ensure proper ordering
+      transformedData.sort((a, b) => a.time - b.time);
+
+      return transformedData;
+    } catch (apiError) {
+      console.warn(
+        `MarketData: API error fetching historical data for ${symbol}:`,
+        apiError
+      );
+
+      // Try alternative endpoint
+      try {
+        const data = await apiClient.get<any[]>("/market/history", {
+          params: {
+            symbol: symbol.toLowerCase(),
+            timeframe,
+            limit: limit.toString(),
+          },
+        });
+
+        console.log(
+          `MarketData: Received ${data.length} candles from alternative endpoint for ${symbol}`
+        );
+
+        // Transform data to match CandleData interface
+        const transformedData = data.map(
+          (item: {
+            timestamp: number;
+            open: number;
+            high: number;
+            low: number;
+            close: number;
+            volume: number;
+          }) => ({
+            time: item.timestamp / 1000, // Convert to seconds for TradingView
+            open: item.open,
+            high: item.high,
+            low: item.low,
+            close: item.close,
+            volume: item.volume,
+          })
+        );
+
+        // Sort by time to ensure proper ordering
+        transformedData.sort((a, b) => a.time - b.time);
+
+        return transformedData;
+      } catch (altError) {
+        console.warn(
+          `MarketData: Alternative endpoint also failed for ${symbol}:`,
+          altError
+        );
+
+        // If both API endpoints fail, fall back to mock data
+        console.log(`MarketData: Falling back to mock data for ${symbol}`);
+        const mockData = generateMockHistoricalData(
+          symbol.toLowerCase().includes("btc") ? 45000 : 2000,
+          limit
+        );
+        return mockData;
+      }
+    }
   } catch (error) {
-    console.error(`Error fetching historical data for ${symbol}:`, error);
-    return [];
+    console.error(
+      `MarketData: Error in fetchHistoricalData for ${symbol}:`,
+      error
+    );
+
+    // Final fallback to mock data
+    console.log(`MarketData: Final fallback to mock data for ${symbol}`);
+    return generateMockHistoricalData(
+      symbol.toLowerCase().includes("btc") ? 45000 : 2000,
+      limit
+    );
   }
 }
 

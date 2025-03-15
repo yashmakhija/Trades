@@ -15,14 +15,27 @@ export const WS_BASE_URL = (() => {
     if (API_BASE_URL.startsWith("http")) {
       const url = new URL(API_BASE_URL);
       const protocol = url.protocol === "https:" ? "wss:" : "ws:";
-      return `${protocol}//${url.host}/ws`;
+      const wsUrl = `${protocol}//${url.host}/ws`;
+      console.log(
+        `Configured WebSocket URL: ${wsUrl} (derived from API_BASE_URL: ${API_BASE_URL})`
+      );
+      return wsUrl;
     }
 
     // If it's just a host or path, assume ws://
-    return `ws://${API_BASE_URL.replace(/^\//, "")}/ws`;
+    const wsUrl = `ws://${API_BASE_URL.replace(/^\//, "")}/ws`;
+    console.log(
+      `Configured WebSocket URL: ${wsUrl} (derived from API_BASE_URL: ${API_BASE_URL})`
+    );
+    return wsUrl;
   } catch (e) {
     // Fallback to default WebSocket URL
-    return "ws://localhost:3001/ws";
+    const defaultWsUrl = "ws://localhost:3001/ws";
+    console.log(
+      `Using default WebSocket URL: ${defaultWsUrl} (error deriving from API_BASE_URL: ${API_BASE_URL})`,
+      e
+    );
+    return defaultWsUrl;
   }
 })();
 

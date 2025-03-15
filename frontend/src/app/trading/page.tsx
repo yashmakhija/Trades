@@ -8,16 +8,16 @@ import { SymbolSelector } from "@/components/trading/SymbolSelector";
 import { OrderForm } from "@/components/trading/OrderForm";
 import { OrderList } from "@/components/trading/OrderList";
 import { ConnectionStatus } from "@/components/trading/ConnectionStatus";
+import { WebSocketDebug } from "@/components/trading/WebSocketDebug";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Typography } from "@/components/ui/typography";
-import { useWebSocketStore } from "@/services/websocket";
+import { websocketService } from "@/services/websocket";
 import { Toaster } from "sonner";
 import { DEFAULT_SYMBOLS } from "@/config";
 
 export default function TradingPage() {
   const searchParams = useSearchParams();
-  const { connect } = useWebSocketStore();
 
   // Get symbol from URL or use default
   const symbolParam = searchParams.get("symbol");
@@ -25,11 +25,37 @@ export default function TradingPage() {
 
   // State for active tab
   const [activeTab, setActiveTab] = useState("chart");
+  const [showDebug, setShowDebug] = useState(false);
 
   // Ensure WebSocket connection is established
   useEffect(() => {
-    connect();
-  }, [connect]);
+    console.log("TradingPage: Initializing WebSocket connection");
+
+    // Connect to WebSocket if not already connected
+    websocketService.connect();
+
+    // Set the current symbol as active for optimized updates
+    websocketService.setActiveSymbol(selectedSymbol);
+
+    // Return cleanup function
+    return () => {
+      console.log("TradingPage: Cleaning up");
+      // We don't disconnect here to maintain the connection for other pages
+    };
+  }, [selectedSymbol]);
+
+  // Toggle debug panel with keyboard shortcut
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+Shift+D to toggle debug panel
+      if (e.ctrlKey && e.shiftKey && e.key === "D") {
+        setShowDebug((prev) => !prev);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   return (
     <main className="container mx-auto py-6 px-4">
@@ -105,6 +131,9 @@ export default function TradingPage() {
             <MarketTicker symbol={selectedSymbol} />
             <OrderForm symbol={selectedSymbol} />
             <OrderList symbol={selectedSymbol} />
+
+            {/* WebSocket Debug Panel - Press Ctrl+Shift+D to toggle */}
+            {showDebug && <WebSocketDebug />}
           </div>
         </div>
       </div>

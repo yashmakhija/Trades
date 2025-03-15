@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { useWebSocketStore, TickerData } from "@/services/websocket";
+import { useEffect } from "react";
+import { useWebSocketStore } from "@/services/websocket";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ArrowUp, ArrowDown } from "lucide-react";
@@ -52,11 +52,18 @@ export function MarketTicker({ symbol, className = "" }: MarketTickerProps) {
 
   // Subscribe to symbol updates
   useEffect(() => {
-    subscribeToSymbol(symbol);
+    const normalizedSymbol = symbol.toLowerCase();
+    console.log(`MarketTicker: Subscribing to symbol ${normalizedSymbol}`);
+
+    // Subscribe to the symbol
+    subscribeToSymbol(normalizedSymbol);
+
+    // No need to set as active symbol here, as that's handled by the PriceChart component
   }, [symbol, subscribeToSymbol]);
 
   // Get ticker data for the symbol
-  const ticker = tickerData[symbol.toLowerCase()];
+  const normalizedSymbol = symbol.toLowerCase();
+  const ticker = tickerData[normalizedSymbol];
 
   // Determine price change direction
   const priceChangeDirection = ticker?.priceChangePercent >= 0 ? "up" : "down";
@@ -82,52 +89,47 @@ export function MarketTicker({ symbol, className = "" }: MarketTickerProps) {
         </div>
       </CardHeader>
 
-      <CardContent className="p-4 pt-2">
+      <CardContent className="p-4 pt-0">
         <div className="grid grid-cols-2 gap-4">
+          {/* Price */}
           <div className="space-y-1">
             <div className="text-sm text-muted-foreground">Price</div>
+            <div className="text-2xl font-bold">
+              {formatPrice(ticker?.price)}
+            </div>
+          </div>
+
+          {/* 24h Change */}
+          <div className="space-y-1">
+            <div className="text-sm text-muted-foreground">24h Change</div>
             <div
-              className={`text-2xl font-bold ${
+              className={`text-2xl font-bold flex items-center ${
                 priceChangeDirection === "up"
                   ? "text-green-500"
                   : "text-red-500"
               }`}
             >
-              ${formatPrice(ticker?.price)}
+              {priceChangeDirection === "up" ? (
+                <ArrowUp className="mr-1 h-5 w-5" />
+              ) : (
+                <ArrowDown className="mr-1 h-5 w-5" />
+              )}
+              {formatPercentChange(ticker?.priceChangePercent)}
             </div>
           </div>
 
-          <div className="space-y-1">
-            <div className="text-sm text-muted-foreground">24h Change</div>
-            <div className="flex items-center">
-              <div
-                className={`text-lg font-semibold ${
-                  priceChangeDirection === "up"
-                    ? "text-green-500"
-                    : "text-red-500"
-                }`}
-              >
-                {formatPercentChange(ticker?.priceChangePercent)}
-              </div>
-              {ticker?.priceChangePercent !== undefined &&
-                (priceChangeDirection === "up" ? (
-                  <ArrowUp className="ml-1 h-4 w-4 text-green-500" />
-                ) : (
-                  <ArrowDown className="ml-1 h-4 w-4 text-red-500" />
-                ))}
-            </div>
-          </div>
-
+          {/* 24h Volume */}
           <div className="space-y-1">
             <div className="text-sm text-muted-foreground">24h Volume</div>
-            <div className="text-lg font-semibold">
+            <div className="text-lg font-medium">
               {formatVolume(ticker?.volume)}
             </div>
           </div>
 
+          {/* Last Updated */}
           <div className="space-y-1">
-            <div className="text-sm text-muted-foreground">Last Update</div>
-            <div className="text-sm">
+            <div className="text-sm text-muted-foreground">Last Updated</div>
+            <div className="text-lg font-medium">
               {ticker?.timestamp
                 ? new Date(ticker.timestamp).toLocaleTimeString()
                 : "--:--:--"}

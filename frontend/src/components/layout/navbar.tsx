@@ -18,11 +18,19 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { LogOut, User, BarChart2, Settings } from "lucide-react";
+import { useEffect, useState } from "react";
 
 export function Navbar() {
   const pathname = usePathname();
   const { isAuthenticated, user } = useAuthStore();
   const { logout, demoAccount } = useDemoAuth();
+  // Add client-side only state to prevent hydration mismatch
+  const [isMounted, setIsMounted] = useState(false);
+
+  // Set isMounted to true after component mounts on the client
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   const navItems = [
     { label: "Home", href: "/" },
@@ -33,10 +41,10 @@ export function Navbar() {
 
   // Get user initials for avatar fallback
   const getUserInitials = () => {
-    if (!user?.name) return "U";
-    return user.name
+    if (!user?.username) return "U";
+    return user.username
       .split(" ")
-      .map((n) => n[0])
+      .map((n: string) => n[0])
       .join("")
       .toUpperCase()
       .substring(0, 2);
@@ -71,87 +79,96 @@ export function Navbar() {
             </nav>
           </div>
 
+          {/* Only render auth-dependent content after client-side hydration */}
           <div className="flex items-center gap-4">
-            {isAuthenticated && user ? (
-              <div className="flex items-center gap-4">
-                {demoAccount && (
-                  <div className="hidden md:flex flex-col items-end">
-                    <span className="text-sm font-medium">
-                      ${demoAccount.balance.toLocaleString()}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      Demo Balance
-                    </span>
-                  </div>
-                )}
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      className="relative h-10 w-10 rounded-full"
-                    >
-                      <Avatar>
-                        <AvatarImage
-                          src={`https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(
-                            user.name
-                          )}`}
-                          alt={user.name}
-                        />
-                        <AvatarFallback>{getUserInitials()}</AvatarFallback>
-                      </Avatar>
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuLabel>
-                      <div className="flex flex-col space-y-1">
-                        <p className="text-sm font-medium leading-none">
-                          {user.name}
-                        </p>
-                        <p className="text-xs leading-none text-muted-foreground">
-                          {user.email}
-                        </p>
-                      </div>
-                    </DropdownMenuLabel>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem asChild>
-                      <Link href="/profile" className="cursor-pointer">
-                        <User className="mr-2 h-4 w-4" />
-                        <span>Profile</span>
-                      </Link>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem asChild>
-                      <Link href="/trading" className="cursor-pointer">
-                        <BarChart2 className="mr-2 h-4 w-4" />
-                        <span>Trading</span>
-                      </Link>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem asChild>
-                      <Link href="/settings" className="cursor-pointer">
-                        <Settings className="mr-2 h-4 w-4" />
-                        <span>Settings</span>
-                      </Link>
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      className="text-destructive focus:text-destructive cursor-pointer"
-                      onClick={logout}
-                    >
-                      <LogOut className="mr-2 h-4 w-4" />
-                      <span>Logout</span>
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            ) : (
-              <>
-                <Button variant="outline" size="sm" asChild>
-                  <Link href="/login">Login</Link>
-                </Button>
+            {isMounted ? (
+              isAuthenticated && user ? (
+                <>
+                  {demoAccount && (
+                    <div className="hidden md:flex flex-col items-end">
+                      <span className="text-sm font-medium">
+                        ${demoAccount.balance.toLocaleString()}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        Demo Balance
+                      </span>
+                    </div>
+                  )}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        className="relative h-10 w-10 rounded-full"
+                      >
+                        <Avatar>
+                          <AvatarImage
+                            src={`https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(
+                              user.username
+                            )}`}
+                            alt={user.username}
+                          />
+                          <AvatarFallback>{getUserInitials()}</AvatarFallback>
+                        </Avatar>
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuLabel>
+                        <div className="flex flex-col space-y-1">
+                          <p className="text-sm font-medium leading-none">
+                            {user.username}
+                          </p>
+                          <p className="text-xs leading-none text-muted-foreground">
+                            {user.email}
+                          </p>
+                        </div>
+                      </DropdownMenuLabel>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem asChild>
+                        <Link href="/profile" className="cursor-pointer">
+                          <User className="mr-2 h-4 w-4" />
+                          <span>Profile</span>
+                        </Link>
+                      </DropdownMenuItem>
+                      <DropdownMenuItem asChild>
+                        <Link href="/trading" className="cursor-pointer">
+                          <BarChart2 className="mr-2 h-4 w-4" />
+                          <span>Trading</span>
+                        </Link>
+                      </DropdownMenuItem>
+                      <DropdownMenuItem asChild>
+                        <Link href="/settings" className="cursor-pointer">
+                          <Settings className="mr-2 h-4 w-4" />
+                          <span>Settings</span>
+                        </Link>
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        className="text-destructive focus:text-destructive cursor-pointer"
+                        onClick={logout}
+                      >
+                        <LogOut className="mr-2 h-4 w-4" />
+                        <span>Logout</span>
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </>
+              ) : (
+                <>
+                  <Button variant="outline" size="sm" asChild>
+                    <Link href="/login">Login</Link>
+                  </Button>
 
-                <Button size="sm" asChild>
-                  <Link href="/register">Register</Link>
-                </Button>
-              </>
+                  <Button size="sm" asChild>
+                    <Link href="/register">Register</Link>
+                  </Button>
+                </>
+              )
+            ) : (
+              // Skeleton loader while client is hydrating
+              <div className="flex items-center gap-4">
+                <div className="w-20 h-9 bg-muted rounded-md animate-pulse"></div>
+                <div className="w-24 h-9 bg-muted rounded-md animate-pulse"></div>
+              </div>
             )}
           </div>
         </div>
