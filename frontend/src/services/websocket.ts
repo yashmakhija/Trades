@@ -31,6 +31,7 @@ interface WebSocketMessage {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   data: any;
   symbol?: string;
+  timeframe?: string;
 }
 
 // WebSocket connection states
@@ -45,11 +46,13 @@ interface WebSocketStore {
 
   // Market data
   tickerData: Record<string, TickerData>;
-  candleData: Record<string, CandleData[]>;
+  candleData: Record<string, Record<string, CandleData[]>>;
 
   // Subscriptions
   subscribedSymbols: Set<string>;
+  subscribedCandles: Map<string, Set<string>>;
   activeSymbol: string | null;
+  activeTimeframe: string;
 
   // Connection methods
   connect: () => void;
@@ -58,13 +61,25 @@ interface WebSocketStore {
   // Subscription methods
   subscribeToSymbol: (symbol: string) => void;
   unsubscribeFromSymbol: (symbol: string) => void;
+  subscribeToCandles: (symbol: string, timeframe: string) => void;
+  unsubscribeFromCandles: (symbol: string, timeframe: string) => void;
   setActiveSymbol: (symbol: string) => void;
+  setActiveTimeframe: (timeframe: string) => void;
 
   // Internal methods
   setConnectionState: (state: ConnectionState) => void;
   setLastError: (error: string | null) => void;
   updateTickerData: (data: Record<string, TickerData>) => void;
-  updateCandleData: (symbol: string, data: CandleData[]) => void;
+  updateCandleData: (
+    symbol: string,
+    timeframe: string,
+    data: CandleData[]
+  ) => void;
+  appendCandleData: (
+    symbol: string,
+    timeframe: string,
+    candle: CandleData
+  ) => void;
 }
 
 // Create a singleton WebSocket instance
@@ -137,15 +152,17 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
 
               // Create a candle update from the ticker data
               const now = Math.floor(Date.now() / 1000);
-              const existingData = get().candleData[symbolKey] || [];
+              const existingData = get().candleData[symbolKey] || {};
 
               // Only update if this is the active symbol or we don't have many candles yet
               // This prevents unnecessary updates for non-viewed symbols
               if (
                 symbolKey === get().activeSymbol ||
-                existingData.length < 10
+                existingData[get().activeTimeframe].length < 10
               ) {
-                let updatedCandleData = [...existingData];
+                let updatedCandleData = [
+                  ...existingData[get().activeTimeframe],
+                ];
 
                 // If we have existing candles, update the latest one
                 if (updatedCandleData.length > 0) {
@@ -170,10 +187,13 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
                   set((state) => ({
                     candleData: {
                       ...state.candleData,
-                      [symbolKey]: updatedCandleData,
+                      [symbolKey]: {
+                        ...existingData,
+                        [get().activeTimeframe]: updatedCandleData,
+                      },
                     },
                   }));
-                } else if (existingData.length === 0) {
+                } else if (existingData[get().activeTimeframe].length === 0) {
                   // If we don't have any candles yet, create a new one
                   const currentPrice = parseFloat(rawData.c);
                   const newCandle: CandleData = {
@@ -191,7 +211,10 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
                   set((state) => ({
                     candleData: {
                       ...state.candleData,
-                      [symbolKey]: updatedCandleData,
+                      [symbolKey]: {
+                        ...existingData,
+                        [get().activeTimeframe]: updatedCandleData,
+                      },
                     },
                   }));
                 }
@@ -213,21 +236,16 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
                   };
 
                   set((state) => {
-                    const existingData = state.candleData[symbolKey] || [];
+                    const existingData = state.candleData[symbolKey] || {};
 
                     // Update existing candle or add new one
-                    const updatedData = [...existingData];
-                    const existingIndex = updatedData.findIndex(
-                      (c) => c.time === candle.time
-                    );
-
-                    if (existingIndex >= 0) {
-                      updatedData[existingIndex] = candle;
-                    } else {
-                      updatedData.push(candle);
-                      // Sort by time
-                      updatedData.sort((a, b) => a.time - b.time);
-                    }
+                    const updatedData = {
+                      ...existingData,
+                      [get().activeTimeframe]: [
+                        ...existingData[get().activeTimeframe],
+                        candle,
+                      ],
+                    };
 
                     return {
                       candleData: {
@@ -295,21 +313,16 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
               }
 
               set((state) => {
-                const existingData = state.candleData[symbolKey] || [];
+                const existingData = state.candleData[symbolKey] || {};
 
                 // Update existing candle or add new one
-                const updatedData = [...existingData];
-                const existingIndex = updatedData.findIndex(
-                  (candle) => candle.time === candleData.time
-                );
-
-                if (existingIndex >= 0) {
-                  updatedData[existingIndex] = candleData;
-                } else {
-                  updatedData.push(candleData);
-                  // Sort by time
-                  updatedData.sort((a, b) => a.time - b.time);
-                }
+                const updatedData = {
+                  ...existingData,
+                  [get().activeTimeframe]: [
+                    ...existingData[get().activeTimeframe],
+                    candleData,
+                  ],
+                };
 
                 return {
                   candleData: {
@@ -342,6 +355,68 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
 
         case "PONG":
           // Heartbeat response received - already updated lastHeartbeat
+          break;
+
+        case "CANDLE_HISTORY":
+          if (message.symbol && message.data && message.timeframe) {
+            const symbolKey = message.symbol.toLowerCase();
+            const timeframe = message.timeframe;
+            const candleData = message.data as CandleData[];
+
+            console.log(
+              `WebSocket: Received candle history for ${symbolKey} (${timeframe}), ${candleData.length} candles`
+            );
+
+            // Update candle data for this symbol and timeframe
+            set((state) => {
+              const symbolCandles = state.candleData[symbolKey] || {};
+
+              return {
+                candleData: {
+                  ...state.candleData,
+                  [symbolKey]: {
+                    ...symbolCandles,
+                    [timeframe]: candleData,
+                  },
+                },
+              };
+            });
+          }
+          break;
+
+        case "CANDLE_UPDATE":
+          if (message.symbol && message.data && message.timeframe) {
+            const symbolKey = message.symbol.toLowerCase();
+            const timeframe = message.timeframe;
+            let candle: CandleData;
+
+            // Handle different possible formats of the candle data
+            if (message.data.candle) {
+              // Old format: { candle: {...}, timeframe: "1m" }
+              candle = message.data.candle as CandleData;
+            } else {
+              // New format: direct candle data
+              candle = message.data as CandleData;
+            }
+
+            // Ensure time is in the correct format (seconds since epoch)
+            if (typeof candle.time === "string") {
+              candle.time = Math.floor(new Date(candle.time).getTime() / 1000);
+            } else if (
+              typeof candle.time === "number" &&
+              candle.time > 10000000000
+            ) {
+              // If timestamp is in milliseconds, convert to seconds
+              candle.time = Math.floor(candle.time / 1000);
+            }
+
+            console.log(
+              `WebSocket: Received candle update for ${symbolKey} (${timeframe})`
+            );
+
+            // Append or update the candle
+            get().appendCandleData(symbolKey, timeframe, candle);
+          }
           break;
 
         default:
@@ -514,7 +589,9 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
     tickerData: {},
     candleData: {},
     subscribedSymbols: new Set<string>(),
+    subscribedCandles: new Map<string, Set<string>>(),
     activeSymbol: null,
+    activeTimeframe: "1m",
 
     // Connection methods
     connect: () => {
@@ -627,20 +704,81 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
       }
     },
 
-    setActiveSymbol: (symbol) => {
-      const normalizedSymbol = symbol.toLowerCase();
-      const { subscribedSymbols } = get();
+    subscribeToCandles: (symbol: string, timeframe: string) => {
+      const { connectionState, subscribedCandles } = get();
+      const symbolKey = symbol.toLowerCase();
 
-      // Make sure we're subscribed to this symbol
-      if (!subscribedSymbols.has(normalizedSymbol)) {
+      // Add to subscribed candles
+      const timeframes = subscribedCandles.get(symbolKey) || new Set<string>();
+      timeframes.add(timeframe);
+      subscribedCandles.set(symbolKey, timeframes);
+
+      set({ subscribedCandles });
+
+      // Send subscription message if connected
+      if (connectionState === "connected" && socketInstance) {
         console.log(
-          `WebSocket: Auto-subscribing to new active symbol: ${normalizedSymbol}`
+          `WebSocket: Subscribing to ${symbolKey} candles with timeframe ${timeframe}`
         );
-        get().subscribeToSymbol(normalizedSymbol);
+        socketInstance.send(
+          JSON.stringify({
+            type: "SUBSCRIBE_CANDLES",
+            symbol: symbolKey,
+            timeframe,
+          })
+        );
+      }
+    },
+
+    unsubscribeFromCandles: (symbol: string, timeframe: string) => {
+      const { connectionState, subscribedCandles } = get();
+      const symbolKey = symbol.toLowerCase();
+
+      // Remove from subscribed candles
+      const timeframes = subscribedCandles.get(symbolKey);
+      if (timeframes) {
+        timeframes.delete(timeframe);
+        if (timeframes.size === 0) {
+          subscribedCandles.delete(symbolKey);
+        } else {
+          subscribedCandles.set(symbolKey, timeframes);
+        }
       }
 
-      console.log(`WebSocket: Setting active symbol to ${normalizedSymbol}`);
-      set({ activeSymbol: normalizedSymbol });
+      set({ subscribedCandles });
+
+      // Send unsubscription message if connected
+      if (connectionState === "connected" && socketInstance) {
+        console.log(
+          `WebSocket: Unsubscribing from ${symbolKey} candles with timeframe ${timeframe}`
+        );
+        socketInstance.send(
+          JSON.stringify({
+            type: "UNSUBSCRIBE_CANDLES",
+            symbol: symbolKey,
+            timeframe,
+          })
+        );
+      }
+    },
+
+    setActiveSymbol: (symbol: string) => {
+      const symbolKey = symbol.toLowerCase();
+      set({ activeSymbol: symbolKey });
+
+      // Subscribe to candles for the active symbol and timeframe
+      const { activeTimeframe, subscribeToCandles } = get();
+      subscribeToCandles(symbolKey, activeTimeframe);
+    },
+
+    setActiveTimeframe: (timeframe: string) => {
+      set({ activeTimeframe: timeframe });
+
+      // Subscribe to candles for the active symbol and new timeframe
+      const { activeSymbol, subscribeToCandles } = get();
+      if (activeSymbol) {
+        subscribeToCandles(activeSymbol, timeframe);
+      }
     },
 
     // Internal methods
@@ -656,37 +794,101 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
       set({ tickerData: data });
     },
 
-    updateCandleData: (symbol: string, data: CandleData[]) => {
-      set((state) => ({
-        candleData: {
-          ...state.candleData,
-          [symbol]: data,
-        },
-      }));
+    updateCandleData: (
+      symbol: string,
+      timeframe: string,
+      data: CandleData[]
+    ) => {
+      const symbolKey = symbol.toLowerCase();
+
+      set((state) => {
+        const symbolCandles = state.candleData[symbolKey] || {};
+
+        return {
+          candleData: {
+            ...state.candleData,
+            [symbolKey]: {
+              ...symbolCandles,
+              [timeframe]: data,
+            },
+          },
+        };
+      });
+    },
+
+    appendCandleData: (
+      symbol: string,
+      timeframe: string,
+      candle: CandleData
+    ) => {
+      const symbolKey = symbol.toLowerCase();
+
+      set((state) => {
+        const symbolCandles = state.candleData[symbolKey] || {};
+        const timeframeCandles = symbolCandles[timeframe] || [];
+
+        // Check if this candle already exists (same timestamp)
+        const existingIndex = timeframeCandles.findIndex(
+          (c) => c.time === candle.time
+        );
+
+        let updatedCandles: CandleData[];
+
+        if (existingIndex >= 0) {
+          // Update existing candle
+          updatedCandles = [...timeframeCandles];
+          updatedCandles[existingIndex] = candle;
+        } else {
+          // Add new candle
+          updatedCandles = [...timeframeCandles, candle];
+          // Sort by time
+          updatedCandles.sort((a, b) => a.time - b.time);
+
+          // Limit to 100 candles
+          if (updatedCandles.length > 100) {
+            updatedCandles = updatedCandles.slice(-100);
+          }
+        }
+
+        return {
+          candleData: {
+            ...state.candleData,
+            [symbolKey]: {
+              ...symbolCandles,
+              [timeframe]: updatedCandles,
+            },
+          },
+        };
+      });
     },
   };
 });
 
-// Export singleton instance
-export const websocketService = {
+// Auto-connect when this module is imported
+if (typeof window !== "undefined") {
+  console.log("WebSocket: Auto-connecting on module import");
+  setTimeout(() => {
+    console.log("WebSocket: Initializing connection");
+    useWebSocketStore.getState().connect();
+  }, 0);
+}
+
+// Export the WebSocket service
+const websocketService = {
   connect: () => useWebSocketStore.getState().connect(),
   disconnect: () => useWebSocketStore.getState().disconnect(),
   subscribeToSymbol: (symbol: string) =>
     useWebSocketStore.getState().subscribeToSymbol(symbol),
   unsubscribeFromSymbol: (symbol: string) =>
     useWebSocketStore.getState().unsubscribeFromSymbol(symbol),
+  subscribeToCandles: (symbol: string, timeframe: string) =>
+    useWebSocketStore.getState().subscribeToCandles(symbol, timeframe),
+  unsubscribeFromCandles: (symbol: string, timeframe: string) =>
+    useWebSocketStore.getState().unsubscribeFromCandles(symbol, timeframe),
   setActiveSymbol: (symbol: string) =>
     useWebSocketStore.getState().setActiveSymbol(symbol),
-  getConnectionState: () => useWebSocketStore.getState().connectionState,
-  getLastError: () => useWebSocketStore.getState().lastError,
+  setActiveTimeframe: (timeframe: string) =>
+    useWebSocketStore.getState().setActiveTimeframe(timeframe),
 };
 
-// Auto-connect when this module is imported
-if (typeof window !== "undefined") {
-  console.log("WebSocket: Auto-connecting on module import");
-  // Use a small delay to ensure the module is fully loaded
-  setTimeout(() => {
-    console.log("WebSocket: Initializing connection");
-    websocketService.connect();
-  }, 100);
-}
+export default websocketService;

@@ -5,7 +5,7 @@ import {
   broadcastBalanceUpdate,
 } from "./webSocketService";
 import { balanceManager } from "./balanceManager";
-import { prisma } from "../server";
+import { prisma } from "../lib/prisma";
 import { Order } from "../types/binance";
 
 /**

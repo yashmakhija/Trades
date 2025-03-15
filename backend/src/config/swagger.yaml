@@ -30,6 +30,8 @@ tags:
     description: Order placement, cancellation, and management
   - name: Portfolio
     description: User portfolio and balance information
+  - name: Candles
+    description: Historical and real-time candle data
   - name: WebSocket
     description: Real-time data streaming
 
@@ -443,6 +445,241 @@ paths:
                     type: string
                     format: date-time
 
+  #
+  # Candle Endpoints
+  #
+  /api/candles:
+    get:
+      tags:
+        - Candles
+      summary: Get historical candle data
+      description: Returns historical OHLCV candle data for a specific symbol and timeframe
+      operationId: getCandles
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          description: Symbol name (e.g., btcusdt)
+          schema:
+            type: string
+        - name: timeframe
+          in: query
+          required: false
+          description: Candle timeframe (1m, 5m, 15m, 1h, etc.)
+          schema:
+            type: string
+            default: "1m"
+            enum: ["1m", "5m", "10m", "15m", "30m", "1h", "4h", "1d"]
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of candles to return (max 100)
+          schema:
+            type: integer
+            default: 100
+            maximum: 100
+      responses:
+        "200":
+          description: Historical candle data
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Candle"
+        "400":
+          description: Invalid input parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Symbol not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      tags:
+        - Candles
+      summary: Store a new candle
+      description: Store a new OHLCV candle for a specific symbol
+      operationId: storeCandle
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - symbol
+                - open
+                - high
+                - low
+                - close
+                - volume
+              properties:
+                symbol:
+                  type: string
+                  example: "btcusdt"
+                open:
+                  type: integer
+                  example: 45000
+                high:
+                  type: integer
+                  example: 45500
+                low:
+                  type: integer
+                  example: 44800
+                close:
+                  type: integer
+                  example: 45200
+                volume:
+                  type: integer
+                  example: 1000
+                timeframe:
+                  type: string
+                  default: "1m"
+                  enum: ["1m", "5m", "10m", "15m", "30m", "1h", "4h", "1d"]
+      responses:
+        "201":
+          description: Candle stored successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OHLCV"
+        "400":
+          description: Invalid input parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/candles/aggregate:
+    get:
+      tags:
+        - Candles
+      summary: Aggregate candles to a larger timeframe
+      description: Aggregates candles from a source timeframe to a target timeframe
+      operationId: aggregateCandles
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          description: Symbol name (e.g., btcusdt)
+          schema:
+            type: string
+        - name: sourceTimeframe
+          in: query
+          required: false
+          description: Source candle timeframe
+          schema:
+            type: string
+            default: "1m"
+            enum: ["1m", "5m", "10m", "15m", "30m", "1h", "4h", "1d"]
+        - name: targetTimeframe
+          in: query
+          required: true
+          description: Target candle timeframe
+          schema:
+            type: string
+            enum: ["5m", "10m", "15m", "30m", "1h", "4h", "1d"]
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of candles to return (max 100)
+          schema:
+            type: integer
+            default: 100
+            maximum: 100
+      responses:
+        "200":
+          description: Aggregated candle data
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Candle"
+        "400":
+          description: Invalid input parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Symbol not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/candles/latest:
+    get:
+      tags:
+        - Candles
+      summary: Get the latest candle
+      description: Returns the latest candle for a specific symbol and timeframe
+      operationId: getLatestCandle
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          description: Symbol name (e.g., btcusdt)
+          schema:
+            type: string
+        - name: timeframe
+          in: query
+          required: false
+          description: Candle timeframe
+          schema:
+            type: string
+            default: "1m"
+            enum: ["1m", "5m", "10m", "15m", "30m", "1h", "4h", "1d"]
+      responses:
+        "200":
+          description: Latest candle data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Candle"
+        "400":
+          description: Invalid input parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Symbol or candle not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
 components:
   schemas:
     User:
@@ -738,6 +975,35 @@ components:
             details:
               type: object
               nullable: true
+
+    Candle:
+      type: object
+      properties:
+        time:
+          type: integer
+          format: int64
+          example: 1647352800
+          description: Unix timestamp in seconds
+        open:
+          type: integer
+          example: 45000
+          description: Opening price
+        high:
+          type: integer
+          example: 45500
+          description: Highest price
+        low:
+          type: integer
+          example: 44800
+          description: Lowest price
+        close:
+          type: integer
+          example: 45200
+          description: Closing price
+        volume:
+          type: integer
+          example: 1000
+          description: Trading volume
 
   securitySchemes:
     bearerAuth:

@@ -1,212 +1,150 @@
 # Trading App Backend
 
-A Node.js backend for a trading application that connects to Binance WebSocket API to get real-time market data.
+This is the backend for the Trading App, a platform for simulating cryptocurrency trading with real-time market data.
 
 ## Features
 
-- Real-time market data from Binance WebSocket API
-- PostgreSQL database with Prisma ORM
-- RESTful API endpoints for symbols and prices
-- WebSocket server for real-time updates to clients
-- TypeScript for type safety
-- Bun for fast runtime performance
-- Swagger API documentation
+- Real-time market data via WebSocket
+- User authentication and account management
+- Order management (market, limit, stop-loss, take-profit)
+- Historical candle data with TimescaleDB integration
+- RESTful API with Swagger documentation
+
+## Tech Stack
+
+- Node.js with TypeScript
+- Express.js for API routes
+- PostgreSQL with Prisma ORM
+- TimescaleDB for time-series data
+- WebSocket for real-time communication
 
 ## Getting Started
 
 ### Prerequisites
 
-- [Bun](https://bun.sh/) (>= 1.0.0)
-- PostgreSQL database (or use the provided Neon DB connection)
+- Node.js 18+ or Bun
+- PostgreSQL 14+ with TimescaleDB extension
+- Docker (optional, for containerized deployment)
 
 ### Installation
 
 1. Clone the repository
 2. Install dependencies:
-
-```bash
-cd backend
-bun install
-```
-
+   ```
+   npm install
+   # or
+   bun install
+   ```
 3. Set up environment variables:
 
-   - Copy `.env.example` to `.env` (if not already done)
-   - Update the `DATABASE_URL` if needed
+   ```
+   cp .env.example .env
+   ```
 
-4. Run the setup script to initialize the database:
+   Edit the `.env` file with your database credentials and other settings.
 
-```bash
-bun setup
+4. Set up the database:
+
+   ```
+   npm run setup
+   # or
+   bun run setup
+   ```
+
+   This will:
+
+   - Generate Prisma client
+   - Run database migrations
+   - Initialize the database with seed data
+   - Check if TimescaleDB is available
+
+5. Set up TimescaleDB (if available):
+   ```
+   npm run db:timescale
+   # or
+   bun run db:timescale
+   ```
+   This will:
+   - Enable the TimescaleDB extension
+   - Convert the OHLCV table to a hypertable
+   - Create indexes for better query performance
+
+### Development
+
+Start the development server:
+
 ```
-
-This will:
-
-- Generate the Prisma client
-- Push the database schema
-- Initialize the database with trading symbols
-
-### Running the Application
-
-Development mode with hot reload:
-
-```bash
+npm run dev
+# or
 bun dev
 ```
 
-Production mode:
+The server will start on port 3001 (or the port specified in your `.env` file).
 
-```bash
+### Production
+
+Build the project:
+
+```
+npm run build
+# or
+bun run build
+```
+
+Start the production server:
+
+```
+npm start
+# or
 bun start
-```
-
-## Troubleshooting
-
-### Symbol Not Found Errors
-
-If you see errors like `Symbol btcusdt not found in database` in the logs, it means the symbols haven't been initialized in the database before the WebSocket connection starts processing data.
-
-To fix this issue, run:
-
-```bash
-./fix.sh
-```
-
-This script will:
-
-1. Stop any running processes
-2. Generate the Prisma client
-3. Push the schema to the database
-4. Initialize the database with symbols
-5. Start the application
-
-Alternatively, you can run the setup steps manually:
-
-```bash
-bun db:generate
-bun db:push
-bun db:init
-bun dev
 ```
 
 ## API Documentation
 
-The API is documented using OpenAPI (Swagger). You can access the documentation at:
+API documentation is available at `/api-docs` when the server is running. For detailed documentation, see the [API Documentation](./docs/api/README.md).
+
+## Project Structure
 
 ```
-http://localhost:3001/api-docs
+backend/
+├── docs/                  # Documentation files
+│   ├── api/               # API documentation
+│   ├── features/          # Feature-specific documentation
+│   └── timescaledb/       # TimescaleDB documentation
+├── prisma/                # Prisma schema and migrations
+├── scripts/               # Setup and utility scripts
+│   └── timescaledb/       # TimescaleDB setup scripts
+├── src/
+│   ├── config/            # Configuration files
+│   ├── controllers/       # API controllers
+│   ├── lib/               # Shared libraries
+│   ├── middlewares/       # Express middlewares
+│   ├── public/            # Static files
+│   ├── routes/            # API routes
+│   ├── services/          # Business logic
+│   ├── types/             # TypeScript type definitions
+│   ├── utils/             # Utility functions
+│   ├── index.ts           # Application entry point
+│   └── server.ts          # Server setup
+└── tests/                 # Test files
 ```
 
-## API Endpoints
+## Documentation
 
-### Symbols
+The project includes comprehensive documentation:
 
-- `GET /api/symbols` - Get all available trading symbols
-- `GET /api/symbols/prices` - Get latest prices for all symbols
-- `GET /api/symbols/:name` - Get details for a specific symbol
+- [API Documentation](./docs/api/README.md): REST API endpoints and WebSocket API
+- [Candle Data System](./docs/features/candle-data.md): Candle data management system
+- [TimescaleDB Implementation](./docs/timescaledb/README.md): TimescaleDB setup and usage
 
-## WebSocket API
+## Contributing
 
-The application provides a WebSocket server for real-time updates. Connect to:
-
-```
-ws://localhost:3001
-```
-
-### WebSocket Messages
-
-#### Server to Client
-
-1. **INITIAL_DATA** - Sent when a client connects
-
-   ```json
-   {
-     "type": "INITIAL_DATA",
-     "data": {
-       "btcusdt": {
-         "symbol": "btcusdt",
-         "price": 65432.1,
-         "priceChangePercent": 2.5,
-         "volume": 1234.56,
-         "timestamp": 1647352800000
-       }
-       // Other symbols...
-     }
-   }
-   ```
-
-2. **TICKER_UPDATE** - Real-time price updates
-
-   ```json
-   {
-     "type": "TICKER_UPDATE",
-     "symbol": "btcusdt",
-     "data": {
-       "symbol": "btcusdt",
-       "price": 65500.25,
-       "priceChangePercent": 2.7,
-       "volume": 1240.56,
-       "timestamp": 1647352860000
-     }
-   }
-   ```
-
-3. **OHLCV_UPDATE** - Candlestick data updates
-   ```json
-   {
-     "type": "OHLCV_UPDATE",
-     "symbol": "btcusdt",
-     "data": {
-       "id": "123e4567-e89b-12d3-a456-426614174000",
-       "symbol": "btcusdt",
-       "open": 65000.0,
-       "high": 65500.0,
-       "low": 64800.0,
-       "close": 65200.0,
-       "volume": 123.45,
-       "timestamp": "2023-03-15T12:00:00Z"
-     }
-   }
-   ```
-
-#### Client to Server
-
-1. **SUBSCRIBE** - Subscribe to updates for a specific symbol
-   ```json
-   {
-     "type": "SUBSCRIBE",
-     "symbol": "btcusdt"
-   }
-   ```
-
-## WebSocket Example
-
-A simple WebSocket client example is available at:
-
-```
-http://localhost:3001/websocket-client-example.html
-```
-
-## Database Schema
-
-The database schema includes:
-
-- `User` - User information and balance
-- `Symbol` - Trading symbols with current prices
-- `Order` - Trading orders with status
-- `Position` - User positions
-- `OHLCV` - Historical price data
-
-## Configuration
-
-Configuration is managed through environment variables in the `.env` file:
-
-- `PORT` - Server port (default: 3001)
-- `NODE_ENV` - Environment (development, production, test)
-- `DATABASE_URL` - PostgreSQL connection string
-- `BINANCE_WEBSOCKET_URL` - Binance WebSocket URL
-- `TRADING_SYMBOLS` - Comma-separated list of trading symbols to track
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
 ## License
 
-MIT
+This project is licensed under the MIT License - see the LICENSE file for details.

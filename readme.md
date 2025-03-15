@@ -11,7 +11,8 @@ This platform provides:
 - Trading capabilities with stop-loss and take-profit
 - In-memory order management
 - User balance tracking
-- Historical data storage
+- Historical data storage with TimescaleDB
+- Efficient time-series data aggregation
 
 ## Recent Improvements
 
@@ -23,11 +24,17 @@ We've made several key improvements to the codebase to make it production-ready:
 
 3. **Optimized Trading Engine**: Streamlined the order management system with efficient in-memory data structures.
 
-4. **Code Cleanup**: Removed excessive comments and improved documentation for better maintainability.
+4. **TimescaleDB Integration**: Implemented a robust historical candle data system with TimescaleDB for efficient time-series storage and aggregation.
 
-5. **API Documentation**: Added comprehensive Swagger documentation for all endpoints.
+5. **Retention Policies**: Added both application-level (last 100 candles) and database-level (7-day) retention policies for optimal data management.
 
-6. **Comprehensive Testing**: Added extensive test suite covering all components and workflows.
+6. **Continuous Aggregates**: Created pre-computed views for different timeframes (5m, 15m, 1h, 1d) to optimize query performance.
+
+7. **Code Cleanup**: Removed excessive comments and improved documentation for better maintainability.
+
+8. **API Documentation**: Added comprehensive Swagger documentation for all endpoints.
+
+9. **Comprehensive Testing**: Added extensive test suite covering all components and workflows.
 
 ## Testing
 
@@ -38,6 +45,7 @@ The platform includes a comprehensive test suite that covers all major component
 - **Unit Tests**: Test individual components in isolation (auth, orders, symbols)
 - **Service Tests**: Test service layer functionality (OrderManager, BalanceManager)
 - **Integration Tests**: Test complete workflows across multiple components
+- **Candle Data Tests**: Verify TimescaleDB integration and data aggregation
 
 ### Running Tests
 
@@ -50,6 +58,9 @@ bun test --watch
 
 # Run a specific test file
 bun test src/tests/auth.test.ts
+
+# Test candle data system
+bun run test:candles
 ```
 
 ### Test Coverage
@@ -62,6 +73,8 @@ The tests cover:
 - Trading logic (stop-loss/take-profit)
 - Balance management
 - Complete trading workflows
+- Historical candle data storage and retrieval
+- Time-series data aggregation
 
 ## Areas to Focus On
 
@@ -77,6 +90,8 @@ The following areas require additional attention:
 
 5. **Monitoring and Logging**: Enhance logging and add monitoring for critical system components.
 
+6. **Data Compression**: Configure TimescaleDB compression for older candle data to optimize storage.
+
 ## Most Challenging Components
 
 During development, these components presented the greatest challenges:
@@ -91,6 +106,8 @@ During development, these components presented the greatest challenges:
 
 5. **Database Connection Pooling**: Standardizing the Prisma client usage across the application to prevent connection pool exhaustion was critical for stability.
 
+6. **TimescaleDB Integration**: Setting up and optimizing TimescaleDB for efficient time-series data storage and aggregation required careful configuration.
+
 ## Backend Architecture
 
 The backend is built with:
@@ -99,6 +116,7 @@ The backend is built with:
 - **Express**: Web server framework
 - **WebSockets**: For real-time data streaming
 - **Prisma**: Database ORM for PostgreSQL
+- **TimescaleDB**: For efficient time-series data storage
 - **Binance API**: For market data
 - **Bun**: Fast JavaScript runtime and package manager
 
@@ -112,6 +130,7 @@ The backend is built with:
 - Manages client connections and message broadcasting
 - Supports user authentication for private channels
 - Broadcasts order updates and balance changes
+- Provides real-time candle data updates
 
 #### 2. Trading Engine
 
@@ -124,7 +143,8 @@ The backend is built with:
 
 - Processes raw Binance data into usable formats
 - Creates OHLCV candles from trade data
-- Stores historical data in the database
+- Stores historical data in TimescaleDB
+- Aggregates candles to different timeframes
 
 #### 4. API Endpoints
 
@@ -132,7 +152,16 @@ The backend is built with:
 - Symbol information endpoints
 - User management endpoints
 - Order placement and cancellation
+- Candle data retrieval and aggregation
 - Swagger documentation
+
+#### 5. Candle Data System
+
+- Efficient storage of 1-minute candles as base data
+- Automatic aggregation to larger timeframes (5m, 15m, 1h, 1d)
+- Retention policy to keep only the last 100 candles per symbol/timeframe
+- TimescaleDB continuous aggregates for optimized queries
+- Fallback to manual aggregation when needed
 
 ## Current Progress (100% Complete)
 
@@ -151,6 +180,7 @@ The backend is built with:
 - Real-time data broadcasting
 - User authentication
 - Order updates broadcasting
+- Candle data subscription system
 
 ✅ **Trading Engine**
 
@@ -166,20 +196,28 @@ The backend is built with:
 - Balance management
 - Trade history
 
+✅ **Historical Data Management**
+
+- TimescaleDB integration for efficient time-series storage
+- Candle data aggregation to different timeframes
+- Retention policies for optimal data management
+- Continuous aggregates for optimized queries
+
 ✅ **API Documentation**
 
 - Swagger UI for API endpoints
 - WebSocket client example
+- Comprehensive README documentation
 
 ## Technical Architecture
 
 ### Database Schema
 
-The database uses PostgreSQL with Prisma ORM and includes the following models:
+The database uses PostgreSQL with TimescaleDB extension and Prisma ORM, including the following models:
 
 - **User**: Stores user information and balances (USDC, BTC)
 - **Symbol**: Trading pairs available on the platform
-- **OHLCV**: Historical candlestick data for each symbol
+- **OHLCV**: Historical candlestick data for each symbol, optimized as a TimescaleDB hypertable
 - **Order**: Historical record of executed orders
 
 ### WebSocket Communication
@@ -201,6 +239,30 @@ The platform uses a custom WebSocket protocol for real-time updates:
   "timestamp": 1629483627000
 }
 
+// Candle subscription message
+{
+  "type": "SUBSCRIBE_CANDLES",
+  "symbol": "btcusdt",
+  "timeframe": "1m"
+}
+
+// Candle update message
+{
+  "type": "CANDLE_UPDATE",
+  "data": {
+    "symbol": "btcusdt",
+    "timeframe": "1m",
+    "candle": {
+      "time": 1647352800,
+      "open": 45000,
+      "high": 45500,
+      "low": 44800,
+      "close": 45200,
+      "volume": 1000
+    }
+  }
+}
+
 // Order placement message
 {
   "type": "place_order",
@@ -217,8 +279,8 @@ The platform uses a custom WebSocket protocol for real-time updates:
 
 ### Prerequisites
 
-- Bun (v1.0+) or Node.js (v16+)
-- PostgreSQL database
+- Bun (v1.0+)
+- PostgreSQL 14+ with TimescaleDB extension
 - Binance API key (for production)
 
 ### Installation
@@ -234,8 +296,13 @@ The platform uses a custom WebSocket protocol for real-time updates:
    - Update database connection string
 4. Initialize the database:
    ```
-   bun run db:push
+   bun run setup
    ```
+   This will:
+   - Generate Prisma client
+   - Run database migrations
+   - Initialize the database with seed data
+   - Set up TimescaleDB for candle data
 5. Start the development server:
 
    ```
@@ -271,6 +338,7 @@ This example demonstrates:
 - Order placement and cancellation
 - Portfolio tracking
 - Stop-loss and take-profit functionality
+- Candle data visualization
 
 ## Development Roadmap
 
@@ -292,8 +360,18 @@ This example demonstrates:
 - ✅ Advanced charting
 - ✅ Mobile responsiveness
 
-### Phase 4: Advanced Features (Future)
+### Phase 4: Historical Data Management (Completed)
+
+- ✅ TimescaleDB integration
+- ✅ Efficient candle data storage
+- ✅ Time-series data aggregation
+- ✅ Retention policies
+- ✅ Continuous aggregates
+
+### Phase 5: Advanced Features (Future)
 
 - ⏳ Backtesting capabilities
 - ⏳ Trading bots integration
 - ⏳ Social trading features
+- ⏳ Data compression for older candles
+- ⏳ Redis caching for frequently accessed data

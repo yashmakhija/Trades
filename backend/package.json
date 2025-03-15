@@ -9,16 +9,20 @@
     "db:push": "prisma db push",
     "db:studio": "prisma studio",
     "db:init": "bun run src/scripts/initDb.ts",
-    "setup": "bun db:generate && bun db:push && bun db:init",
+    "db:check-timescale": "node scripts/timescaledb/index.js check",
+    "db:timescale": "node scripts/timescaledb/index.js setup",
+    "setup": "bun db:generate && bun db:push && bun db:init && bun db:check-timescale",
     "test": "bun test",
-    "test:watch": "bun test --watch"
+    "test:watch": "bun test --watch",
+    "test:candles": "node scripts/timescaledb/index.js test",
+    "docs:cleanup": "bash scripts/cleanup-docs.sh"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "@prisma/client": "6.5.0",
+    "@prisma/client": "^6.5.0",
     "@types/swagger-jsdoc": "^6.0.4",
     "@types/swagger-ui-express": "^4.1.8",
     "@types/yamljs": "^0.2.34",

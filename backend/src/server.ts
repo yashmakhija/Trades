@@ -3,16 +3,12 @@ import { Express } from "express";
 import { config } from "./config";
 import { initWebSocketServer } from "./services/webSocketService";
 import { startBinanceWebSocket } from "./services/binanceService";
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "./lib/prisma";
 
-// Initialize Prisma client
-export const prisma = new PrismaClient();
+// Export prisma for use in other modules
+export { prisma };
 
-/**
- * Initialize and start the HTTP server
- * @param app Express application
- * @returns HTTP server instance
- */
+// Initialize and start the HTTP server
 export function startServer(app: Express): http.Server {
   const server = http.createServer(app);
 
@@ -38,10 +34,6 @@ export function startServer(app: Express): http.Server {
   return server;
 }
 
-/**
- * Set up graceful shutdown handlers
- * @param server HTTP server instance
- */
 function setupGracefulShutdown(server: http.Server): void {
   const shutdown = async () => {
     console.log("Shutting down server...");

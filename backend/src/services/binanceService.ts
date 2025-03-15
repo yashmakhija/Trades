@@ -1,12 +1,3 @@
-/**
- * Binance Service
- *
- * Handles all interactions with the Binance WebSocket API, including:
- * - Establishing and maintaining WebSocket connections
- * - Processing real-time market data
- * - Storing historical data
- * - Triggering price-based events for the trading engine
- */
 import WebSocket from "ws";
 import { config } from "../config";
 import { prisma } from "../server";
@@ -169,7 +160,8 @@ async function processKlineData(data: BinanceKlineMessage): Promise<void> {
           low,
           close,
           volume,
-          timestamp: new Date(kline.T),
+          time: new Date(kline.T),
+          timeframe: "ONE_MINUTE",
         },
       });
 

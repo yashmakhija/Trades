@@ -9,12 +9,10 @@ import {
   IChartApi,
   CandlestickSeries,
   HistogramSeries,
+  Time,
 } from "lightweight-charts";
-import {
-  useWebSocketStore,
-  CandleData,
-  websocketService,
-} from "@/services/websocket";
+import { useWebSocketStore, CandleData } from "@/services/websocket";
+import websocketService from "@/services/websocket";
 import {
   fetchHistoricalData,
   generateMockHistoricalData,
@@ -46,22 +44,23 @@ export function PriceChart({
   const [timeframe, setTimeframe] = useState<Timeframe>(initialTimeframe);
   const [isLoading, setIsLoading] = useState(true);
 
-  const { candleData, subscribeToSymbol } = useWebSocketStore();
+  const { candleData } = useWebSocketStore();
 
   useEffect(() => {
     const normalizedSymbol = symbol.toLowerCase();
     console.log(`PriceChart: Setting up for symbol ${normalizedSymbol}`);
 
-    subscribeToSymbol(normalizedSymbol);
-
+    // Subscribe to symbol and candles
+    websocketService.subscribeToSymbol(normalizedSymbol);
     websocketService.setActiveSymbol(normalizedSymbol);
+    websocketService.setActiveTimeframe(timeframe);
+    websocketService.subscribeToCandles(normalizedSymbol, timeframe);
 
     return () => {
-      if (websocketService.getConnectionState() === "connected") {
-        console.log(`PriceChart: Component unmounting, clearing active symbol`);
-      }
+      // No need to unsubscribe on unmount as other components might need the data
+      console.log(`PriceChart: Component unmounting`);
     };
-  }, [symbol, subscribeToSymbol]);
+  }, [symbol, timeframe]);
 
   useEffect(() => {
     if (!chartContainerRef.current) return;
@@ -120,6 +119,7 @@ export function PriceChart({
       wickDownColor: "rgba(239, 83, 80, 1)",
     });
 
+    // The lightweight-charts library has incomplete TypeScript definitions for histogram series options
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     volumeSeries.current = chartRef.current.addSeries(HistogramSeries, {
       color: "rgba(56, 33, 110, 0.3)",
@@ -132,7 +132,7 @@ export function PriceChart({
         top: 0.8,
         bottom: 0,
       },
-    } as any);
+    } as any); // Using any is necessary due to incomplete TypeScript definitions
 
     const handleResize = () => {
       if (chartRef.current && chartContainerRef.current) {
@@ -229,91 +229,113 @@ export function PriceChart({
     }
 
     loadHistoricalData();
-  }, [symbol, timeframe, useMockData, subscribeToSymbol]);
+  }, [symbol, timeframe, useMockData]);
 
+  // Update chart with real-time data from WebSocket
   useEffect(() => {
     if (!candleSeries.current || !volumeSeries.current) return;
 
     const normalizedSymbol = symbol.toLowerCase();
     const symbolData = candleData[normalizedSymbol];
 
-    if (!symbolData || symbolData.length === 0) {
+    if (
+      !symbolData ||
+      !symbolData[timeframe] ||
+      symbolData[timeframe].length === 0
+    ) {
       return;
     }
 
     try {
-      const latestCandle = symbolData[symbolData.length - 1];
+      const timeframeData = symbolData[timeframe];
+      const latestCandle = timeframeData[timeframeData.length - 1];
 
-      if (!latestCandle || typeof latestCandle.time !== "number") {
+      if (!latestCandle) {
         console.warn(
-          `PriceChart: Invalid candle data for ${normalizedSymbol}:`,
-          latestCandle
+          `PriceChart: No candle data available for ${normalizedSymbol}`
         );
         return;
       }
 
-      const validCandle = {
-        time: latestCandle.time as UTCTimestamp,
-        open: typeof latestCandle.open === "number" ? latestCandle.open : 0,
-        high: typeof latestCandle.high === "number" ? latestCandle.high : 0,
-        low: typeof latestCandle.low === "number" ? latestCandle.low : 0,
-        close: typeof latestCandle.close === "number" ? latestCandle.close : 0,
-      };
+      // Ensure time is in the correct format (seconds since epoch)
+      let candleTime: Time;
+      if (typeof latestCandle.time === "string") {
+        candleTime = Math.floor(
+          new Date(latestCandle.time).getTime() / 1000
+        ) as UTCTimestamp;
+      } else if (
+        typeof latestCandle.time === "number" &&
+        latestCandle.time > 10000000000
+      ) {
+        // If timestamp is in milliseconds, convert to seconds
+        candleTime = Math.floor(latestCandle.time / 1000) as UTCTimestamp;
+      } else {
+        candleTime = latestCandle.time as UTCTimestamp;
+      }
 
-      const volume =
-        typeof latestCandle.volume === "number" ? latestCandle.volume : 0;
+      console.log(
+        `PriceChart: Updating chart with real-time data for ${normalizedSymbol}`
+      );
 
-      candleSeries.current.update(validCandle);
+      candleSeries.current.update({
+        time: candleTime,
+        open: latestCandle.open,
+        high: latestCandle.high,
+        low: latestCandle.low,
+        close: latestCandle.close,
+      });
 
       volumeSeries.current.update({
-        time: validCandle.time,
-        value: volume,
+        time: candleTime,
+        value: latestCandle.volume,
         color:
-          validCandle.close >= validCandle.open
+          latestCandle.close >= latestCandle.open
             ? "rgba(38, 166, 154, 0.5)"
             : "rgba(239, 83, 80, 0.5)",
       });
     } catch (error) {
       console.error(
-        `PriceChart: Error updating chart for ${normalizedSymbol}:`,
+        `PriceChart: Error updating chart with real-time data:`,
         error
       );
     }
-  }, [candleData, symbol]);
+  }, [candleData, symbol, timeframe]);
 
   const handleTimeframeChange = (value: string) => {
-    setTimeframe(value as Timeframe);
+    const newTimeframe = value as Timeframe;
+    console.log(`PriceChart: Changing timeframe to ${newTimeframe}`);
+    setTimeframe(newTimeframe);
+    websocketService.setActiveTimeframe(newTimeframe);
+    websocketService.subscribeToCandles(symbol.toLowerCase(), newTimeframe);
   };
 
   return (
     <Card className={`overflow-hidden ${className}`}>
-      <CardHeader className="pb-0">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+      <CardHeader className="p-4 pb-0">
+        <div className="flex justify-between items-center">
           <CardTitle className="text-lg font-semibold">
-            {symbol.toUpperCase()} Price Chart
+            {symbol.toUpperCase()} Chart
           </CardTitle>
           <Tabs
+            defaultValue={timeframe}
             value={timeframe}
             onValueChange={handleTimeframeChange}
             className="h-8"
           >
-            <TabsList className="h-8">
-              <TabsTrigger value="1m" className="text-xs px-2 h-6">
+            <TabsList className="h-8 bg-background/50">
+              <TabsTrigger value="1m" className="h-7 px-2 text-xs">
                 1m
               </TabsTrigger>
-              <TabsTrigger value="5m" className="text-xs px-2 h-6">
+              <TabsTrigger value="5m" className="h-7 px-2 text-xs">
                 5m
               </TabsTrigger>
-              <TabsTrigger value="15m" className="text-xs px-2 h-6">
+              <TabsTrigger value="15m" className="h-7 px-2 text-xs">
                 15m
               </TabsTrigger>
-              <TabsTrigger value="1h" className="text-xs px-2 h-6">
+              <TabsTrigger value="1h" className="h-7 px-2 text-xs">
                 1h
               </TabsTrigger>
-              <TabsTrigger value="4h" className="text-xs px-2 h-6">
-                4h
-              </TabsTrigger>
-              <TabsTrigger value="1d" className="text-xs px-2 h-6">
+              <TabsTrigger value="1d" className="h-7 px-2 text-xs">
                 1d
               </TabsTrigger>
             </TabsList>
@@ -321,18 +343,16 @@ export function PriceChart({
         </div>
       </CardHeader>
       <CardContent className="p-0 pt-4">
-        <div className="relative">
-          {isLoading && (
-            <div className="absolute inset-0 flex items-center justify-center bg-background/80 z-10">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-            </div>
-          )}
-          <div
-            ref={chartContainerRef}
-            className="w-full"
-            style={{ height: `${height}px` }}
-          />
-        </div>
+        <div
+          ref={chartContainerRef}
+          className="w-full"
+          style={{ height: `${height}px` }}
+        />
+        {isLoading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-background/50">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

@@ -66,9 +66,9 @@ export async function fetchHistoricalData(
       `MarketData: Fetching historical data for ${symbol} with timeframe ${timeframe}`
     );
 
-    // Try to fetch from API first
+    // Try to fetch from the new candles API endpoint first
     try {
-      const data = await apiClient.get<any[]>("/market/candles", {
+      const data = await apiClient.get<any[]>("/candles", {
         params: {
           symbol: symbol.toLowerCase(),
           timeframe,
@@ -81,14 +81,20 @@ export async function fetchHistoricalData(
       // Transform data to match CandleData interface
       const transformedData = data.map(
         (item: {
-          timestamp: number;
+          time: string | number;
           open: number;
           high: number;
           low: number;
           close: number;
           volume: number;
         }) => ({
-          time: item.timestamp / 1000, // Convert to seconds for TradingView
+          // Handle both timestamp formats (string ISO date or number)
+          time:
+            typeof item.time === "string"
+              ? Math.floor(new Date(item.time).getTime() / 1000)
+              : typeof item.time === "number" && item.time > 10000000000
+              ? Math.floor(item.time / 1000) // Convert ms to seconds if needed
+              : (item.time as number),
           open: item.open,
           high: item.high,
           low: item.low,
@@ -107,13 +113,13 @@ export async function fetchHistoricalData(
       return transformedData;
     } catch (apiError) {
       console.warn(
-        `MarketData: API error fetching historical data for ${symbol}:`,
+        `MarketData: New candles API error for ${symbol}:`,
         apiError
       );
 
-      // Try alternative endpoint
+      // Try legacy market/candles endpoint
       try {
-        const data = await apiClient.get<any[]>("/market/history", {
+        const data = await apiClient.get<any[]>("/market/candles", {
           params: {
             symbol: symbol.toLowerCase(),
             timeframe,
@@ -122,7 +128,7 @@ export async function fetchHistoricalData(
         });
 
         console.log(
-          `MarketData: Received ${data.length} candles from alternative endpoint for ${symbol}`
+          `MarketData: Received ${data.length} candles from legacy endpoint for ${symbol}`
         );
 
         // Transform data to match CandleData interface
@@ -148,19 +154,63 @@ export async function fetchHistoricalData(
         transformedData.sort((a, b) => a.time - b.time);
 
         return transformedData;
-      } catch (altError) {
+      } catch (legacyError) {
         console.warn(
-          `MarketData: Alternative endpoint also failed for ${symbol}:`,
-          altError
+          `MarketData: Legacy endpoint also failed for ${symbol}:`,
+          legacyError
         );
 
-        // If both API endpoints fail, fall back to mock data
-        console.log(`MarketData: Falling back to mock data for ${symbol}`);
-        const mockData = generateMockHistoricalData(
-          symbol.toLowerCase().includes("btc") ? 45000 : 2000,
-          limit
-        );
-        return mockData;
+        // Try alternative endpoint as last resort
+        try {
+          const data = await apiClient.get<any[]>("/market/history", {
+            params: {
+              symbol: symbol.toLowerCase(),
+              timeframe,
+              limit: limit.toString(),
+            },
+          });
+
+          console.log(
+            `MarketData: Received ${data.length} candles from alternative endpoint for ${symbol}`
+          );
+
+          // Transform data to match CandleData interface
+          const transformedData = data.map(
+            (item: {
+              timestamp: number;
+              open: number;
+              high: number;
+              low: number;
+              close: number;
+              volume: number;
+            }) => ({
+              time: item.timestamp / 1000, // Convert to seconds for TradingView
+              open: item.open,
+              high: item.high,
+              low: item.low,
+              close: item.close,
+              volume: item.volume,
+            })
+          );
+
+          // Sort by time to ensure proper ordering
+          transformedData.sort((a, b) => a.time - b.time);
+
+          return transformedData;
+        } catch (altError) {
+          console.warn(
+            `MarketData: All API endpoints failed for ${symbol}:`,
+            altError
+          );
+
+          // If all API endpoints fail, fall back to mock data
+          console.log(`MarketData: Falling back to mock data for ${symbol}`);
+          const mockData = generateMockHistoricalData(
+            symbol.toLowerCase().includes("btc") ? 45000 : 2000,
+            limit
+          );
+          return mockData;
+        }
       }
     }
   } catch (error) {

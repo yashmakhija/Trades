@@ -14,25 +14,25 @@ datasource db {
 }
 
 model User {
-  id        String     @id @default(uuid())
-  email     String     @unique
-  password  String
-  name      String?
-  usdcBalance   Int        @default(1000000)
-  orders    Order[]
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  id          String   @id @default(uuid())
+  email       String   @unique
+  password    String
+  name        String?
+  usdcBalance Int      @default(1000000)
+  orders      Order[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 model Symbol {
-  id          String   @id @default(uuid())
-  name        String   @unique
-  description String?
+  id           String   @id @default(uuid())
+  name         String   @unique
+  description  String?
   currentPrice Int?
-  orders      Order[]
-  ohlcv       OHLCV[]
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  orders       Order[]
+  ohlcv        OHLCV[]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }
 
 model Order {
@@ -62,21 +62,30 @@ model Order {
   @@index([status])
 }
 
-
-
+// Enhanced OHLCV model optimized for TimescaleDB
 model OHLCV {
-  id        String   @id @default(uuid())
+  id        String     @default(uuid())
   symbolId  String
-  symbol    Symbol   @relation(fields: [symbolId], references: [id])
+  symbol    Symbol     @relation(fields: [symbolId], references: [id])
   open      Int
   high      Int
   low       Int
   close     Int
   volume    Int
-  timestamp DateTime @default(now())
+  timeframe Timeframe  @default(ONE_MINUTE)
+  time      DateTime   @default(now())
 
-  @@index([timestamp])
+  // Composite primary key including time for TimescaleDB compatibility
+  @@id([id, time])
+  
+  // Compound index for efficient time-series queries
+  @@index([symbolId, timeframe, time(sort: Desc)])
+  // Index for range queries on time
+  @@index([time(sort: Desc)])
+  // Index for filtering by symbol
   @@index([symbolId])
+  // Index for filtering by timeframe
+  @@index([timeframe])
 }
 
 enum OrderType {
@@ -90,5 +99,17 @@ enum OrderStatus {
   FILLED
   CLOSED
   CANCELLED
+}
+
+// Timeframe enum for different candle periods
+enum Timeframe {
+  ONE_MINUTE
+  FIVE_MINUTES
+  TEN_MINUTES
+  FIFTEEN_MINUTES
+  THIRTY_MINUTES
+  ONE_HOUR
+  FOUR_HOURS
+  ONE_DAY
 }
 
