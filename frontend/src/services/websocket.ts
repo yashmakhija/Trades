@@ -1,4 +1,10 @@
 import { create } from "zustand";
+import {
+  WS_BASE_URL,
+  WS_RECONNECT_ATTEMPTS,
+  WS_RECONNECT_DELAY_MS,
+  WS_HEARTBEAT_INTERVAL_MS,
+} from "@/config";
 
 // Define types for market data
 export interface TickerData {
@@ -21,7 +27,10 @@ export interface CandleData {
 // WebSocket message types
 interface WebSocketMessage {
   type: string;
+  // Using any here is a pragmatic choice due to the varied message formats
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   data: any;
+  symbol?: string;
 }
 
 // WebSocket connection states
@@ -60,8 +69,8 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
 
   // Reconnection settings
   let reconnectAttempts = 0;
-  const MAX_RECONNECT_ATTEMPTS = 5;
-  const RECONNECT_DELAY = 3000;
+  const MAX_RECONNECT_ATTEMPTS = WS_RECONNECT_ATTEMPTS;
+  const RECONNECT_DELAY = WS_RECONNECT_DELAY_MS;
 
   // Heartbeat interval
   let heartbeatInterval: NodeJS.Timeout | null = null;
@@ -73,44 +82,64 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
 
       switch (message.type) {
         case "INITIAL_DATA":
-          set({ tickerData: message.data });
+          // Type assertion to ensure compatibility
+          set({ tickerData: message.data as Record<string, TickerData> });
           break;
 
         case "TICKER_UPDATE":
-          set((state) => ({
-            tickerData: {
-              ...state.tickerData,
-              [message.data.symbol]: message.data,
-            },
-          }));
+          if (message.symbol && message.data) {
+            const symbolKey = message.symbol as string;
+            set((state) => ({
+              tickerData: {
+                ...state.tickerData,
+                [symbolKey]: message.data as TickerData,
+              },
+            }));
+          }
           break;
 
         case "OHLCV_UPDATE":
-          const { symbol, data } = message.data;
-          set((state) => {
-            const existingData = state.candleData[symbol] || [];
+          if (message.symbol && message.data) {
+            const symbolKey = message.symbol as string;
+            const candleData = message.data as CandleData;
 
-            // Update existing candle or add new one
-            const updatedData = [...existingData];
-            const existingIndex = updatedData.findIndex(
-              (candle) => candle.time === data.time
-            );
+            set((state) => {
+              const existingData = state.candleData[symbolKey] || [];
 
-            if (existingIndex >= 0) {
-              updatedData[existingIndex] = data;
-            } else {
-              updatedData.push(data);
-              // Sort by time
-              updatedData.sort((a, b) => a.time - b.time);
-            }
+              // Update existing candle or add new one
+              const updatedData = [...existingData];
+              const existingIndex = updatedData.findIndex(
+                (candle) => candle.time === candleData.time
+              );
 
-            return {
-              candleData: {
-                ...state.candleData,
-                [symbol]: updatedData,
-              },
-            };
-          });
+              if (existingIndex >= 0) {
+                updatedData[existingIndex] = candleData;
+              } else {
+                updatedData.push(candleData);
+                // Sort by time
+                updatedData.sort((a, b) => a.time - b.time);
+              }
+
+              return {
+                candleData: {
+                  ...state.candleData,
+                  [symbolKey]: updatedData,
+                },
+              };
+            });
+          }
+          break;
+
+        case "SUBSCRIPTION_SUCCESS":
+          console.log(`Successfully subscribed to ${message.symbol}`);
+          break;
+
+        case "UNSUBSCRIPTION_SUCCESS":
+          console.log(`Successfully unsubscribed from ${message.symbol}`);
+          break;
+
+        case "PONG":
+          // Heartbeat response received
           break;
 
         default:
@@ -136,10 +165,8 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
       socket.close();
     }
 
-    // Create new WebSocket connection
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const host = process.env.NEXT_PUBLIC_API_URL || window.location.host;
-    socket = new WebSocket(`${protocol}//${host}/ws`);
+    // Create new WebSocket connection using the configured URL
+    socket = new WebSocket(WS_BASE_URL);
 
     // Setup event handlers
     socket.onopen = () => {
@@ -169,7 +196,7 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
         if (socket && socket.readyState === WebSocket.OPEN) {
           socket.send(JSON.stringify({ type: "PING" }));
         }
-      }, 30000);
+      }, WS_HEARTBEAT_INTERVAL_MS);
     };
 
     socket.onmessage = handleMessage;

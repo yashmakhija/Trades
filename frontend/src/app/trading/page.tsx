@@ -1,57 +1,52 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { PriceChart } from "@/components/trading/PriceChart";
 import { MarketTicker } from "@/components/trading/MarketTicker";
 import { SymbolSelector } from "@/components/trading/SymbolSelector";
+import { OrderForm } from "@/components/trading/OrderForm";
+import { OrderList } from "@/components/trading/OrderList";
+import { ConnectionStatus } from "@/components/trading/ConnectionStatus";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Typography } from "@/components/ui/typography";
+import { useWebSocketStore } from "@/services/websocket";
+import { Toaster } from "sonner";
+import { DEFAULT_SYMBOLS } from "@/config";
 
 export default function TradingPage() {
   const searchParams = useSearchParams();
-  const router = useRouter();
+  const { connect } = useWebSocketStore();
 
   // Get symbol from URL or use default
   const symbolParam = searchParams.get("symbol");
-
-  // State for selected symbol
-  const [selectedSymbol, setSelectedSymbol] = useState(
-    symbolParam?.toLowerCase() || "btcusdt"
-  );
+  const selectedSymbol = symbolParam?.toLowerCase() || DEFAULT_SYMBOLS[0];
 
   // State for active tab
   const [activeTab, setActiveTab] = useState("chart");
 
-  // Update symbol when URL parameter changes
+  // Ensure WebSocket connection is established
   useEffect(() => {
-    if (symbolParam) {
-      setSelectedSymbol(symbolParam.toLowerCase());
-    }
-  }, [symbolParam]);
-
-  // Handle symbol change
-  const handleSymbolChange = (symbol: string) => {
-    setSelectedSymbol(symbol);
-
-    // Update URL with new symbol
-    router.push(`/trading?symbol=${symbol}`);
-  };
+    connect();
+  }, [connect]);
 
   return (
     <main className="container mx-auto py-6 px-4">
+      {/* Toast provider for notifications */}
+      <Toaster position="top-right" richColors />
+
       <div className="flex flex-col space-y-6">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-          <Typography variant="h1" className="text-2xl font-bold">
-            Trading Dashboard
-          </Typography>
+          <div className="flex items-center gap-3">
+            <Typography variant="h1" className="text-2xl font-bold">
+              Trading Dashboard
+            </Typography>
+            <ConnectionStatus />
+          </div>
 
           <div className="w-full md:w-64">
-            <SymbolSelector
-              value={selectedSymbol}
-              onValueChange={handleSymbolChange}
-            />
+            <SymbolSelector />
           </div>
         </div>
 
@@ -73,7 +68,7 @@ export default function TradingPage() {
                 <PriceChart
                   symbol={selectedSymbol}
                   height={500}
-                  useMockData={true} // Use mock data until backend is connected
+                  useMockData={false} // Use real data from backend
                 />
               </TabsContent>
 
@@ -108,28 +103,8 @@ export default function TradingPage() {
           {/* Sidebar */}
           <div className="space-y-6">
             <MarketTicker symbol={selectedSymbol} />
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Place Order</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center justify-center h-[300px] text-muted-foreground">
-                  Order form will be implemented in a future update
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Open Orders</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center justify-center h-[200px] text-muted-foreground">
-                  No open orders
-                </div>
-              </CardContent>
-            </Card>
+            <OrderForm symbol={selectedSymbol} />
+            <OrderList symbol={selectedSymbol} />
           </div>
         </div>
       </div>

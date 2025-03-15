@@ -1,7 +1,5 @@
 import { CandleData } from "./websocket";
-
-// API base URL
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+import { API_BASE_URL, DEFAULT_TIMEFRAME } from "@/config";
 
 // Timeframe options
 export type Timeframe = "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d" | "1w";
@@ -57,7 +55,7 @@ export async function fetchSymbolDetails(
 /**
  * Fetch latest prices for all symbols
  */
-export async function fetchLatestPrices(): Promise<Record<string, any >> {
+export async function fetchLatestPrices(): Promise<Record<string, number>> {
   try {
     const response = await fetch(`${API_BASE_URL}/api/symbols/prices`);
 
@@ -77,7 +75,7 @@ export async function fetchLatestPrices(): Promise<Record<string, any >> {
  */
 export async function fetchHistoricalData(
   symbol: string,
-  timeframe: Timeframe = "1h",
+  timeframe: Timeframe = DEFAULT_TIMEFRAME as Timeframe,
   limit: number = 100
 ): Promise<CandleData[]> {
   try {
@@ -94,14 +92,23 @@ export async function fetchHistoricalData(
     const data = await response.json();
 
     // Transform data to match CandleData interface
-    return data.map((item: any) => ({
-      time: item.timestamp / 1000, // Convert to seconds for TradingView
-      open: item.open,
-      high: item.high,
-      low: item.low,
-      close: item.close,
-      volume: item.volume,
-    }));
+    return data.map(
+      (item: {
+        timestamp: number;
+        open: number;
+        high: number;
+        low: number;
+        close: number;
+        volume: number;
+      }) => ({
+        time: item.timestamp / 1000, // Convert to seconds for TradingView
+        open: item.open,
+        high: item.high,
+        low: item.low,
+        close: item.close,
+        volume: item.volume,
+      })
+    );
   } catch (error) {
     console.error(`Error fetching historical data for ${symbol}:`, error);
     return [];
