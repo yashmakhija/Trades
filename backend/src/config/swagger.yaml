@@ -1,0 +1,834 @@
+openapi: 3.0.0
+info:
+  title: 100x Trading Platform API
+  description: |
+    API documentation for the 100x Trading Platform, providing real-time market data and trading capabilities.
+
+    This API allows you to:
+    - Access real-time market data
+    - Manage user accounts and authentication
+    - Place and manage trading orders
+    - Track portfolio and balance
+    - Connect via WebSocket for live updates
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: support@100xtrading.com
+
+servers:
+  - url: http://localhost:3001
+    description: Development server
+  - url: https://api.100xtrading.com
+    description: Production server (Coming soon)
+
+tags:
+  - name: Authentication
+    description: User registration, login, and profile management
+  - name: Symbols
+    description: Market symbols and price information
+  - name: Orders
+    description: Order placement, cancellation, and management
+  - name: Portfolio
+    description: User portfolio and balance information
+  - name: WebSocket
+    description: Real-time data streaming
+
+paths:
+  #
+  # Authentication Endpoints
+  #
+  /api/auth/register:
+    post:
+      tags:
+        - Authentication
+      summary: Register a new user
+      description: Create a new user account with email and password
+      operationId: registerUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - password
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: user@example.com
+                password:
+                  type: string
+                  format: password
+                  example: SecurePassword123
+                name:
+                  type: string
+                  example: John Doe
+      responses:
+        "201":
+          description: User successfully registered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: "#/components/schemas/User"
+                  token:
+                    type: string
+                    example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        "400":
+          description: Invalid input or email already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/auth/login:
+    post:
+      tags:
+        - Authentication
+      summary: User login
+      description: Authenticate a user and get a JWT token
+      operationId: loginUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - password
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: user@example.com
+                password:
+                  type: string
+                  format: password
+                  example: SecurePassword123
+      responses:
+        "200":
+          description: Successful login
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: "#/components/schemas/User"
+                  token:
+                    type: string
+                    example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/auth/profile:
+    get:
+      tags:
+        - Authentication
+      summary: Get user profile
+      description: Retrieve the authenticated user's profile information
+      operationId: getUserProfile
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: User profile retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          description: Unauthorized - Invalid or expired token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  #
+  # Symbol Endpoints
+  #
+  /api/symbols:
+    get:
+      tags:
+        - Symbols
+      summary: Get all trading symbols
+      description: Returns a list of all available trading symbols with their current prices
+      operationId: getAllSymbols
+      responses:
+        "200":
+          description: A list of symbols
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Symbol"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/symbols/prices:
+    get:
+      tags:
+        - Symbols
+      summary: Get latest prices for all symbols
+      description: Returns the latest real-time prices for all trading symbols
+      operationId: getLatestPrices
+      responses:
+        "200":
+          description: Latest prices for all symbols
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  $ref: "#/components/schemas/TickerData"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/symbols/{name}:
+    get:
+      tags:
+        - Symbols
+      summary: Get a specific symbol by name
+      description: Returns detailed information about a specific trading symbol
+      operationId: getSymbolByName
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: Symbol name (e.g., btcusdt)
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Symbol details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SymbolDetail"
+        "404":
+          description: Symbol not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  #
+  # Order Endpoints
+  #
+  /api/orders:
+    post:
+      tags:
+        - Orders
+      summary: Place a new order
+      description: |
+        Place a new trading order with optional stop-loss and take-profit levels.
+        Supports market and limit orders for both long and short positions.
+      operationId: placeOrder
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderRequest"
+      responses:
+        "201":
+          description: Order placed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "400":
+          description: Invalid order parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized - Invalid or expired token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    get:
+      tags:
+        - Orders
+      summary: Get user orders
+      description: Retrieve all orders for the authenticated user
+      operationId: getUserOrders
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: Filter orders by status
+          schema:
+            type: string
+            enum: [OPEN, CLOSED, CANCELLED]
+        - name: symbol
+          in: query
+          required: false
+          description: Filter orders by symbol
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of user orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Order"
+        "401":
+          description: Unauthorized - Invalid or expired token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/orders/{orderId}:
+    delete:
+      tags:
+        - Orders
+      summary: Cancel an order
+      description: Cancel an existing open order
+      operationId: cancelOrder
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          description: Order ID to cancel
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Order cancelled successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Order cancelled successfully
+                  orderId:
+                    type: string
+        "401":
+          description: Unauthorized - Invalid or expired token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/orders/portfolio:
+    get:
+      tags:
+        - Portfolio
+      summary: Get user portfolio
+      description: Retrieve the authenticated user's portfolio including balances and positions
+      operationId: getUserPortfolio
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: User portfolio retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Portfolio"
+        "401":
+          description: Unauthorized - Invalid or expired token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  #
+  # Health Check
+  #
+  /health:
+    get:
+      summary: Health check endpoint
+      description: Returns the health status of the API
+      operationId: healthCheck
+      responses:
+        "200":
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  timestamp:
+                    type: string
+                    format: date-time
+
+components:
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        email:
+          type: string
+          format: email
+          example: "user@example.com"
+        name:
+          type: string
+          example: "John Doe"
+        usdcBalance:
+          type: number
+          format: float
+          example: 10000.00
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    Symbol:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        name:
+          type: string
+          example: "btcusdt"
+        description:
+          type: string
+          example: "Bitcoin / USDT"
+        currentPrice:
+          type: number
+          format: float
+          example: 65432.10
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    SymbolDetail:
+      type: object
+      allOf:
+        - $ref: "#/components/schemas/Symbol"
+        - type: object
+          properties:
+            latestData:
+              $ref: "#/components/schemas/TickerData"
+
+    TickerData:
+      type: object
+      properties:
+        symbol:
+          type: string
+          example: "btcusdt"
+        price:
+          type: number
+          format: float
+          example: 65432.10
+        priceChangePercent:
+          type: number
+          format: float
+          example: 2.5
+        volume:
+          type: number
+          format: float
+          example: 1234.56
+        timestamp:
+          type: integer
+          format: int64
+          example: 1647352800000
+
+    OHLCV:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        symbol:
+          type: string
+          example: "btcusdt"
+        open:
+          type: number
+          format: float
+          example: 65000.00
+        high:
+          type: number
+          format: float
+          example: 65500.00
+        low:
+          type: number
+          format: float
+          example: 64800.00
+        close:
+          type: number
+          format: float
+          example: 65200.00
+        volume:
+          type: number
+          format: float
+          example: 123.45
+        timestamp:
+          type: string
+          format: date-time
+
+    OrderRequest:
+      type: object
+      required:
+        - symbol
+        - side
+        - quantity
+      properties:
+        symbol:
+          type: string
+          example: "btcusdt"
+          description: Symbol to trade
+        side:
+          type: string
+          enum: [BUY, SELL]
+          example: "BUY"
+          description: Order side
+        type:
+          type: string
+          enum: [MARKET, LIMIT]
+          default: MARKET
+          example: "LIMIT"
+          description: Order type
+        quantity:
+          type: number
+          format: float
+          example: 0.1
+          description: Order quantity
+        price:
+          type: number
+          format: float
+          example: 65000
+          description: Limit price (required for LIMIT orders)
+        isShort:
+          type: boolean
+          default: false
+          example: false
+          description: Whether this is a short position
+        stopLoss:
+          type: number
+          format: float
+          example: 64000
+          description: Optional stop loss price
+        takeProfit:
+          type: number
+          format: float
+          example: 67000
+          description: Optional take profit price
+
+    Order:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        userId:
+          type: string
+          format: uuid
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        symbol:
+          type: string
+          example: "btcusdt"
+        side:
+          type: string
+          enum: [BUY, SELL]
+          example: "BUY"
+        type:
+          type: string
+          enum: [MARKET, LIMIT]
+          example: "LIMIT"
+        quantity:
+          type: number
+          format: float
+          example: 0.1
+        price:
+          type: number
+          format: float
+          example: 65000
+        executedPrice:
+          type: number
+          format: float
+          example: 65050
+        isShort:
+          type: boolean
+          example: false
+        stopLoss:
+          type: number
+          format: float
+          nullable: true
+          example: 64000
+        takeProfit:
+          type: number
+          format: float
+          nullable: true
+          example: 67000
+        status:
+          type: string
+          enum: [OPEN, FILLED, PARTIALLY_FILLED, CANCELLED]
+          example: "OPEN"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    Portfolio:
+      type: object
+      properties:
+        usdcBalance:
+          type: number
+          format: float
+          example: 10000.00
+        positions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Position"
+        totalValue:
+          type: number
+          format: float
+          example: 15000.00
+        pnl:
+          type: number
+          format: float
+          example: 500.00
+        pnlPercentage:
+          type: number
+          format: float
+          example: 5.0
+
+    Position:
+      type: object
+      properties:
+        symbol:
+          type: string
+          example: "btcusdt"
+        quantity:
+          type: number
+          format: float
+          example: 0.1
+        averageEntryPrice:
+          type: number
+          format: float
+          example: 64000
+        currentPrice:
+          type: number
+          format: float
+          example: 65000
+        value:
+          type: number
+          format: float
+          example: 6500
+        unrealizedPnl:
+          type: number
+          format: float
+          example: 100
+        unrealizedPnlPercentage:
+          type: number
+          format: float
+          example: 1.56
+        isShort:
+          type: boolean
+          example: false
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              example: "validation_error"
+            message:
+              type: string
+              example: "Invalid input parameters"
+            details:
+              type: object
+              nullable: true
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT token obtained from the /api/auth/login or /api/auth/register endpoints.
+        Example: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+
+# WebSocket Documentation
+x-websocket:
+  url: ws://localhost:3001
+  description: |
+    The WebSocket server provides real-time updates for market data, order status changes, and portfolio updates.
+
+    ## Connection
+    Connect to the WebSocket server at `ws://localhost:3001`
+
+    ## Authentication
+    After connecting, send an authentication message with your JWT token:
+    ```json
+    {
+      "type": "AUTH",
+      "token": "your-jwt-token"
+    }
+    ```
+
+    ## Subscribing to Symbols
+    Subscribe to updates for specific symbols:
+    ```json
+    {
+      "type": "SUBSCRIBE",
+      "symbols": ["btcusdt", "ethusdt"]
+    }
+    ```
+
+    ## Message Types
+    The server will send the following message types:
+
+    ### TICKER_UPDATE
+    Real-time price updates for subscribed symbols
+    ```json
+    {
+      "type": "TICKER_UPDATE",
+      "symbol": "btcusdt",
+      "data": {
+        "price": 65432.10,
+        "priceChangePercent": 2.5,
+        "volume": 1234.56,
+        "timestamp": 1647352800000
+      }
+    }
+    ```
+
+    ### OHLCV_UPDATE
+    Candlestick updates for subscribed symbols
+    ```json
+    {
+      "type": "OHLCV_UPDATE",
+      "symbol": "btcusdt",
+      "timeframe": "1m",
+      "data": {
+        "time": 1647352800000,
+        "open": 65000.00,
+        "high": 65500.00,
+        "low": 64800.00,
+        "close": 65200.00,
+        "volume": 123.45
+      }
+    }
+    ```
+
+    ### ORDER_UPDATE
+    Updates for your orders (requires authentication)
+    ```json
+    {
+      "type": "ORDER_UPDATE",
+      "orderId": "123e4567-e89b-12d3-a456-426614174000",
+      "status": "FILLED",
+      "executedPrice": 65050,
+      "timestamp": 1647352800000
+    }
+    ```
+
+    ### BALANCE_UPDATE
+    Updates for your account balance (requires authentication)
+    ```json
+    {
+      "type": "BALANCE_UPDATE",
+      "usdcBalance": 10000.00,
+      "timestamp": 1647352800000
+    }
+    ```

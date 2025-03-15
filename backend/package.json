@@ -21,6 +21,7 @@
     "@prisma/client": "6.5.0",
     "@types/swagger-jsdoc": "^6.0.4",
     "@types/swagger-ui-express": "^4.1.8",
+    "@types/yamljs": "^0.2.34",
     "bcrypt": "^5.1.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
@@ -29,6 +30,7 @@
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",
     "ws": "^8.16.0",
+    "yamljs": "^0.3.0",
     "zod": "^3.22.4"
   },
   "devDependencies": {

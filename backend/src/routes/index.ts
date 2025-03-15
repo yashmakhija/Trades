@@ -1,32 +1,43 @@
 import { Express, Request, Response } from "express";
 import path from "path";
 import swaggerUi from "swagger-ui-express";
-import { swaggerSpec } from "../config/swagger";
+import { swaggerSpec, swaggerUiSetup } from "../config/swagger";
 import symbolRoutes from "./symbolRoutes";
 import authRoutes from "./authRoutes";
 import orderRoutes from "./orderRoutes";
 import { orderManager } from "../services/orderManager";
 
 export function initRoutes(app: Express): void {
-  app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+  // Serve Swagger UI
+  app.use("/api-docs", swaggerUi.serve, swaggerUiSetup);
 
+  // Serve Swagger JSON
   app.get("/api-docs.json", (req: Request, res: Response) => {
     res.setHeader("Content-Type", "application/json");
     res.send(swaggerSpec);
   });
 
-  app.get("/openapi.yaml", (req: Request, res: Response) => {
-    res.sendFile(path.join(__dirname, "../../openapi.yaml"));
+  // Serve Swagger YAML
+  app.get("/swagger.yaml", (req: Request, res: Response) => {
+    res.sendFile(path.join(__dirname, "../config/swagger.yaml"));
   });
 
+  // API Routes
   app.use("/api/symbols", symbolRoutes);
   app.use("/api/auth", authRoutes);
   app.use("/api/orders", orderRoutes);
 
+  // Health Check
   app.get("/health", (req: Request, res: Response) => {
     res.status(200).json({
       status: "ok",
+      timestamp: new Date().toISOString(),
       orderManagerStats: orderManager.getStats(),
     });
+  });
+
+  // Root route - redirect to API documentation
+  app.get("/", (req: Request, res: Response) => {
+    res.sendFile(path.join(__dirname, "../public/swagger-test.html"));
   });
 }
