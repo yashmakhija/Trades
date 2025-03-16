@@ -12,7 +12,7 @@ import { WebSocketDebug } from "@/components/trading/WebSocketDebug";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Typography } from "@/components/ui/typography";
-import { websocketService } from "@/services/websocket";
+import websocketService from "@/services/websocket";
 import { Toaster } from "sonner";
 import { DEFAULT_SYMBOLS } from "@/config";
 

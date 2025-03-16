@@ -18,6 +18,20 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+## Recent Fixes
+
+### WebSocket and OrderList Fixes (March 2025)
+
+We've recently fixed critical issues with the WebSocket implementation and OrderList component:
+
+1. **WebSocket Data Handling**: Fixed an error where candle data wasn't properly initialized for new symbols or timeframes, causing `TypeError: existingData[get.activeTimeframe] is not iterable`.
+
+2. **OrderList Component**: Improved error handling in the OrderList component to properly handle invalid API responses, fixing `TypeError: allOrders.filter is not a function`.
+
+3. **API Response Validation**: Enhanced the orders service to validate API responses and ensure they always return the expected data format.
+
+For detailed information about these fixes, see [WebSocket Fixes Documentation](./docs/WEBSOCKET-FIXES.md).
+
 ## Application Architecture
 
 The frontend is built with a modern tech stack:

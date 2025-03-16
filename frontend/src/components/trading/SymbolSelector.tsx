@@ -8,7 +8,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { fetchSymbols, SymbolData } from "@/services/marketData";
-import { websocketService } from "@/services/websocket";
+import websocketService from "@/services/websocket";
 import { DEFAULT_SYMBOLS } from "@/config";
 import { Loader2 } from "lucide-react";
 

@@ -33,7 +33,31 @@ export interface CreateOrderParams {
  */
 export async function fetchOrders(): Promise<Order[]> {
   try {
-    return await apiClient.get<Order[]>("/orders");
+    const response = await apiClient.get<unknown>("/orders");
+
+    // Ensure the response is an array
+    if (!Array.isArray(response)) {
+      console.error("Expected array of orders but got:", response);
+      return [];
+    }
+
+    // Validate each order in the array
+    return response.filter((order): order is Order => {
+      const isValid =
+        typeof order === "object" &&
+        order !== null &&
+        "id" in order &&
+        "symbol" in order &&
+        "side" in order &&
+        "type" in order &&
+        "status" in order;
+
+      if (!isValid) {
+        console.warn("Received invalid order object:", order);
+      }
+
+      return isValid;
+    });
   } catch (error) {
     console.error("Error fetching orders:", error);
     return [];

@@ -30,6 +30,14 @@ export function OrderList({ symbol, className = "" }: OrderListProps) {
       // Fetch orders from service
       const allOrders = await fetchOrders();
 
+      // Ensure allOrders is an array
+      if (!Array.isArray(allOrders)) {
+        console.error("Expected array of orders but got:", allOrders);
+        setOrders([]);
+        setError("Invalid response format from server");
+        return;
+      }
+
       // Filter by symbol if provided
       const filteredOrders = symbol
         ? allOrders.filter(

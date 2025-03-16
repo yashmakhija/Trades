@@ -157,10 +157,10 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
               // Only update if this is the active symbol or we don't have many candles yet
               // This prevents unnecessary updates for non-viewed symbols
               if (
-                symbolKey === get().activeSymbol ||
-                existingData[get().activeTimeframe].length < 10
+                symbolKey === get().activeSymbol &&
+                existingData[get().activeTimeframe]
               ) {
-                let updatedCandleData = [
+                const updatedCandleData = [
                   ...existingData[get().activeTimeframe],
                 ];
 
@@ -193,31 +193,29 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
                       },
                     },
                   }));
-                } else if (existingData[get().activeTimeframe].length === 0) {
-                  // If we don't have any candles yet, create a new one
-                  const currentPrice = parseFloat(rawData.c);
-                  const newCandle: CandleData = {
-                    time: now,
-                    open: currentPrice,
-                    high: currentPrice,
-                    low: currentPrice,
-                    close: currentPrice,
-                    volume: parseFloat(rawData.v),
-                  };
-
-                  updatedCandleData = [newCandle];
-
-                  // Broadcast the new candle
-                  set((state) => ({
-                    candleData: {
-                      ...state.candleData,
-                      [symbolKey]: {
-                        ...existingData,
-                        [get().activeTimeframe]: updatedCandleData,
-                      },
-                    },
-                  }));
                 }
+              } else if (symbolKey === get().activeSymbol) {
+                // Initialize the timeframe data if it doesn't exist
+                const currentPrice = parseFloat(rawData.c);
+                const newCandle: CandleData = {
+                  time: now,
+                  open: currentPrice,
+                  high: currentPrice,
+                  low: currentPrice,
+                  close: currentPrice,
+                  volume: parseFloat(rawData.v),
+                };
+
+                // Broadcast the new candle
+                set((state) => ({
+                  candleData: {
+                    ...state.candleData,
+                    [symbolKey]: {
+                      ...existingData,
+                      [get().activeTimeframe]: [newCandle],
+                    },
+                  },
+                }));
               }
             } else if (rawData.e === "kline") {
               // Handle kline/candlestick data
@@ -237,14 +235,13 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
 
                   set((state) => {
                     const existingData = state.candleData[symbolKey] || {};
+                    const timeframeCandles =
+                      existingData[get().activeTimeframe] || [];
 
                     // Update existing candle or add new one
                     const updatedData = {
                       ...existingData,
-                      [get().activeTimeframe]: [
-                        ...existingData[get().activeTimeframe],
-                        candle,
-                      ],
+                      [get().activeTimeframe]: [...timeframeCandles, candle],
                     };
 
                     return {
