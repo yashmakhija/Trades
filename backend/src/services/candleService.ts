@@ -43,7 +43,7 @@ class CandleService {
       // Store the candle
       const candle = await prisma.oHLCV.create({
         data: {
-          symbol,
+          symbolId: symbolRecord.id,
           open,
           high,
           low,
@@ -57,7 +57,7 @@ class CandleService {
       // Apply retention policy - keep only the last 100 candles per symbol/timeframe
       const count = await prisma.oHLCV.count({
         where: {
-          symbol,
+          symbolId: symbolRecord.id,
           timeframe,
         },
       });
@@ -66,7 +66,7 @@ class CandleService {
         // Delete the oldest candles beyond the 100 limit
         const oldestCandles = await prisma.oHLCV.findMany({
           where: {
-            symbol,
+            symbolId: symbolRecord.id,
             timeframe,
           },
           orderBy: {
@@ -117,13 +117,16 @@ class CandleService {
       // Get the candles
       const candles = await prisma.oHLCV.findMany({
         where: {
-          symbol,
+          symbolId: symbolRecord.id,
           timeframe,
         },
         orderBy: {
           time: "desc",
         },
         take: Math.min(limit, 100), // Limit to 100 candles max
+        include: {
+          symbol: true, // Include symbol details for the response
+        },
       });
 
       return candles.reverse(); // Return in ascending order by time
@@ -153,11 +156,14 @@ class CandleService {
       // Get the latest candle
       const candle = await prisma.oHLCV.findFirst({
         where: {
-          symbol,
+          symbolId: symbolRecord.id,
           timeframe,
         },
         orderBy: {
           time: "desc",
+        },
+        include: {
+          symbol: true, // Include symbol details for the response
         },
       });
 
@@ -176,7 +182,7 @@ class CandleService {
     sourceTimeframe: Timeframe = Timeframe.ONE_MINUTE,
     targetTimeframe: Timeframe,
     limit: number = 100
-  ): Promise<any[]> {
+  ): Promise<OHLCV[]> {
     try {
       // Check if the symbol exists
       const symbolRecord = await prisma.symbol.findUnique({
@@ -186,9 +192,6 @@ class CandleService {
       if (!symbolRecord) {
         throw new Error(`Symbol ${symbol} not found`);
       }
-
-      // For TimescaleDB, we would use the continuous aggregates
-      // For now, we'll use a simple approach with raw SQL
 
       // Map timeframes to minutes
       const timeframeToMinutes: Record<Timeframe, number> = {
@@ -212,11 +215,23 @@ class CandleService {
       }
 
       // Get the source candles
-      const sourceCandles = await this.getCandles(
-        symbol,
-        sourceTimeframe,
-        limit * (targetMinutes / sourceMinutes)
-      );
+      const sourceCandles = await prisma.oHLCV.findMany({
+        where: {
+          symbolId: symbolRecord.id,
+          timeframe: sourceTimeframe,
+        },
+        orderBy: {
+          time: "desc",
+        },
+        take: Math.min(limit * (targetMinutes / sourceMinutes), 1000), // Reasonable upper limit
+        include: {
+          symbol: true,
+        },
+      });
+
+      if (sourceCandles.length === 0) {
+        return [];
+      }
 
       // Group candles by target timeframe
       const groupedCandles: Record<string, OHLCV[]> = {};
@@ -245,23 +260,30 @@ class CandleService {
       const aggregatedCandles = Object.entries(groupedCandles).map(
         ([key, candles]) => {
           const time = new Date(key);
+          const open = candles[0].open;
+          const close = candles[candles.length - 1].close;
+          const high = Math.max(...candles.map((c) => c.high));
+          const low = Math.min(...candles.map((c) => c.low));
+          const volume = candles.reduce((sum, c) => sum + c.volume, 0);
 
           return {
+            id: `${symbolRecord.id}-${targetTimeframe}-${time.getTime()}`,
+            symbolId: symbolRecord.id,
+            symbol: symbolRecord,
+            open,
+            high,
+            low,
+            close,
+            volume,
+            timeframe: targetTimeframe,
             time,
-            open: candles[0].open,
-            high: Math.max(...candles.map((c) => c.high)),
-            low: Math.min(...candles.map((c) => c.low)),
-            close: candles[candles.length - 1].close,
-            volume: candles.reduce((sum, c) => sum + c.volume, 0),
           };
         }
       );
 
-      // Sort by time
-      aggregatedCandles.sort((a, b) => a.time.getTime() - b.time.getTime());
-
-      // Limit the result
-      return aggregatedCandles.slice(-limit);
+      return aggregatedCandles.sort(
+        (a, b) => a.time.getTime() - b.time.getTime()
+      );
     } catch (error) {
       console.error("Error aggregating candles:", error);
       throw error;

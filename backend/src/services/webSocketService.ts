@@ -403,6 +403,27 @@ export function broadcastBalanceUpdate(userId: string, balanceData: any): void {
   });
 }
 
+/**
+ * Broadcast trade analytics update to the specific user
+ */
+export function broadcastTradeAnalytics(userId: string, data: any): void {
+  if (!wss || clients.size === 0) return;
+
+  const message = JSON.stringify({
+    type: "TRADE_ANALYTICS_UPDATE",
+    data,
+  });
+
+  // Send only to clients authenticated as this user
+  clients.forEach((clientInfo) => {
+    const { ws, userId: clientUserId } = clientInfo;
+
+    if (ws.readyState === WebSocket.OPEN && clientUserId === userId) {
+      ws.send(message);
+    }
+  });
+}
+
 export function getConnectedClientsCount(): number {
   return clients.size;
 }

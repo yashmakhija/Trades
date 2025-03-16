@@ -34,6 +34,8 @@ tags:
     description: Historical and real-time candle data
   - name: WebSocket
     description: Real-time data streaming
+  - name: Analytics
+    description: Trade analytics and statistics
 
 paths:
   #
@@ -680,6 +682,166 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  #
+  # Trade Analytics Endpoints
+  #
+  /api/analytics/trade-history:
+    get:
+      tags:
+        - Analytics
+      summary: Get user's trade history
+      description: Returns paginated trade history with filters
+      operationId: getTradeHistory
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          description: Page number
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          description: Items per page
+          schema:
+            type: integer
+            default: 50
+        - name: symbolId
+          in: query
+          description: Filter by symbol ID
+          schema:
+            type: string
+        - name: startDate
+          in: query
+          description: Filter by start date
+          schema:
+            type: string
+            format: date-time
+        - name: endDate
+          in: query
+          description: Filter by end date
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Trade history retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  trades:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Trade"
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+
+  /api/analytics/user-stats:
+    get:
+      tags:
+        - Analytics
+      summary: Get user's trading statistics
+      description: Returns overall trading statistics for the user
+      operationId: getUserStats
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: startDate
+          in: query
+          description: Filter by start date
+          schema:
+            type: string
+            format: date-time
+        - name: endDate
+          in: query
+          description: Filter by end date
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: User stats retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TradeStats"
+
+  /api/analytics/symbol-stats:
+    get:
+      tags:
+        - Analytics
+      summary: Get trading statistics per symbol
+      description: Returns trading statistics grouped by symbol
+      operationId: getSymbolStats
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: startDate
+          in: query
+          description: Filter by start date
+          schema:
+            type: string
+            format: date-time
+        - name: endDate
+          in: query
+          description: Filter by end date
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Symbol stats retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SymbolStats"
+
+  /api/analytics/daily-pnl:
+    get:
+      tags:
+        - Analytics
+      summary: Get daily PnL data
+      description: Returns daily profit/loss data for a date range
+      operationId: getDailyPnL
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: startDate
+          in: query
+          required: true
+          description: Start date
+          schema:
+            type: string
+            format: date-time
+        - name: endDate
+          in: query
+          required: true
+          description: End date
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Daily PnL data retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    date:
+                      type: string
+                      format: date
+                    pnl:
+                      type: number
+                      format: double
+
 components:
   schemas:
     User:
@@ -861,11 +1023,9 @@ components:
         side:
           type: string
           enum: [BUY, SELL]
-          example: "BUY"
         type:
           type: string
           enum: [MARKET, LIMIT]
-          example: "LIMIT"
         quantity:
           type: number
           format: float
@@ -1005,6 +1165,122 @@ components:
           example: 1000
           description: Trading volume
 
+    TradeStats:
+      type: object
+      properties:
+        totalTrades:
+          type: integer
+          description: Total number of trades
+        profitableTrades:
+          type: integer
+          description: Number of profitable trades
+        lossMakingTrades:
+          type: integer
+          description: Number of loss-making trades
+        totalPnL:
+          type: number
+          format: double
+          description: Total profit/loss
+        winRate:
+          type: number
+          format: double
+          description: Win rate percentage
+        averagePnL:
+          type: number
+          format: double
+          description: Average profit/loss per trade
+        bestTrade:
+          type: number
+          format: double
+          description: Best performing trade
+        worstTrade:
+          type: number
+          format: double
+          description: Worst performing trade
+        averageHoldingTime:
+          type: number
+          format: double
+          description: Average holding time in minutes
+
+    SymbolStats:
+      allOf:
+        - $ref: "#/components/schemas/TradeStats"
+        - type: object
+          properties:
+            symbol:
+              type: string
+              description: Symbol name
+            volume:
+              type: number
+              format: double
+              description: Total trading volume
+
+    Trade:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        symbolId:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [BUY, SELL]
+        price:
+          type: number
+          format: double
+        quantity:
+          type: number
+          format: double
+        isShort:
+          type: boolean
+        stopLoss:
+          type: number
+          format: double
+          nullable: true
+        takeProfit:
+          type: number
+          format: double
+          nullable: true
+        status:
+          type: string
+          enum: [OPEN, CLOSED, CANCELLED]
+        exitPrice:
+          type: number
+          format: double
+          nullable: true
+        pnl:
+          type: number
+          format: double
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        closedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    Pagination:
+      type: object
+      properties:
+        total:
+          type: integer
+          description: Total number of items
+        pages:
+          type: integer
+          description: Total number of pages
+        currentPage:
+          type: integer
+          description: Current page number
+        perPage:
+          type: integer
+          description: Items per page
+
   securitySchemes:
     bearerAuth:
       type: http
@@ -1098,3 +1374,28 @@ x-websocket:
       "timestamp": 1647352800000
     }
     ```
+
+# WebSocket Events Documentation
+x-websocket-events:
+  TRADE_ANALYTICS_UPDATE:
+    description: Sent when trade analytics are updated
+    payload:
+      type: object
+      properties:
+        userStats:
+          $ref: "#/components/schemas/TradeStats"
+        symbolStats:
+          type: array
+          items:
+            $ref: "#/components/schemas/SymbolStats"
+        dailyPnL:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+                format: date
+              pnl:
+                type: number
+                format: double

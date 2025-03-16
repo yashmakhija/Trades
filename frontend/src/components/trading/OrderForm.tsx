@@ -273,7 +273,9 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
             disabled={isSubmitting || isLoadingSymbols}
             variant={orderSide === "BUY" ? "default" : "destructive"}
           >
-            {isSubmitting ? "Processing..." : `${orderSide} ${symbol.toUpperCase()}`}
+            {isSubmitting
+              ? "Processing..."
+              : `${orderSide} ${symbol.toUpperCase()}`}
           </Button>
         </div>
       </CardContent>

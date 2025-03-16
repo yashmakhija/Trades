@@ -9,6 +9,12 @@ This is the backend for the Trading App, a platform for simulating cryptocurrenc
 - Order management (market, limit, stop-loss, take-profit)
 - Historical candle data with TimescaleDB integration
 - RESTful API with Swagger documentation
+- Trade Analytics:
+  - Trade history with pagination and filtering
+  - User trading statistics (win rate, PnL, etc.)
+  - Per-symbol trading statistics
+  - Daily PnL tracking
+  - Real-time analytics updates via WebSocket
 
 ## Tech Stack
 
@@ -101,7 +107,25 @@ bun start
 
 ## API Documentation
 
-API documentation is available at `/api-docs` when the server is running. For detailed documentation, see the [API Documentation](./docs/api/README.md).
+API documentation is available at `/api-docs` when the server is running. The API includes:
+
+- **Authentication**: User registration, login, and profile management
+- **Symbols**: Market data and price information
+- **Orders**: Order placement and management
+- **Portfolio**: Balance and position tracking
+- **Candles**: Historical and real-time price data
+- **Analytics**: Trade history and performance metrics
+- **WebSocket**: Real-time data streaming including:
+  - Price updates
+  - Order status changes
+  - Balance updates
+  - Trade analytics updates
+
+For detailed documentation, see:
+
+- [API Documentation](./docs/api/README.md)
+- [WebSocket Guide](./docs/api/websocket.md)
+- [Analytics Guide](./docs/features/analytics.md)
 
 ## Project Structure
 

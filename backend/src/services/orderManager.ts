@@ -3,10 +3,12 @@ import { EventEmitter } from "events";
 import {
   broadcastOrderUpdate,
   broadcastBalanceUpdate,
+  broadcastTradeAnalytics,
 } from "./webSocketService";
 import { balanceManager } from "./balanceManager";
 import { prisma } from "../lib/prisma";
 import { Order } from "../types/binance";
+import { tradeAnalytics } from "./tradeAnalyticsService";
 
 /**
  * OrderManager handles in-memory order management for the trading platform.
@@ -281,6 +283,23 @@ class OrderManager extends EventEmitter {
         price: order.price,
         quantity: order.quantity,
         isShort: order.isShort,
+      });
+
+      // Get updated trade analytics and broadcast
+      const [userStats, symbolStats, dailyPnL] = await Promise.all([
+        tradeAnalytics.getUserStats(order.userId),
+        tradeAnalytics.getSymbolStats(order.userId),
+        tradeAnalytics.getDailyPnL(
+          order.userId,
+          new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // Last 30 days
+          new Date()
+        ),
+      ]);
+
+      broadcastTradeAnalytics(order.userId, {
+        userStats,
+        symbolStats,
+        dailyPnL,
       });
 
       console.log(`Order ${orderId} executed at ${price} (${triggerType})`);
