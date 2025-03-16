@@ -7,13 +7,14 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { ArrowUp, ArrowDown } from "lucide-react";
 import {
   createOrder,
   OrderSide,
   OrderType as OrderTypeValue,
 } from "@/services/orders";
 import { DEFAULT_ORDER_QUANTITY } from "@/config";
+import { useSymbolStore, TradingSymbol } from "@/store/use-symbol-store";
+import { fetchSymbols } from "@/services/symbols";
 
 interface OrderFormProps {
   symbol: string;
@@ -22,15 +23,45 @@ interface OrderFormProps {
 
 export function OrderForm({ symbol, className = "" }: OrderFormProps) {
   const { tickerData } = useWebSocketStore();
+  const { symbols, setSymbols } = useSymbolStore();
+
+  // Get symbol ID from the symbols list
+  const symbolData = symbols.find(
+    (s: TradingSymbol) => s.name.toLowerCase() === symbol.toLowerCase()
+  );
 
   // Order form state
-  const [orderSide, setOrderSide] = useState<OrderSide>("buy");
+  const [orderSide, setOrderSide] = useState<OrderSide>("BUY");
   const [quantity, setQuantity] = useState<string>(
     DEFAULT_ORDER_QUANTITY.toString()
   );
   const [price, setPrice] = useState<string>("");
   const [orderType, setOrderType] = useState<OrderTypeValue>("market");
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [stopLoss, setStopLoss] = useState<string>("");
+  const [takeProfit, setTakeProfit] = useState<string>("");
+  const [isLoadingSymbols, setIsLoadingSymbols] = useState<boolean>(true);
+
+  // Load symbols when component mounts
+  useEffect(() => {
+    const loadSymbols = async () => {
+      try {
+        const fetchedSymbols = await fetchSymbols();
+        setSymbols(fetchedSymbols);
+      } catch (error) {
+        console.error("Error loading symbols:", error);
+        toast.error("Failed to load trading symbols");
+      } finally {
+        setIsLoadingSymbols(false);
+      }
+    };
+
+    if (symbols.length === 0) {
+      loadSymbols();
+    } else {
+      setIsLoadingSymbols(false);
+    }
+  }, [setSymbols, symbols.length]);
 
   // Get current price from WebSocket
   const currentPrice = tickerData[symbol.toLowerCase()]?.price || 0;
@@ -53,6 +84,13 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
   // Handle order submission
   const handleSubmitOrder = async () => {
     try {
+      if (!symbolData) {
+        toast.error("Symbol not found", {
+          description: "Unable to find symbol information",
+        });
+        return;
+      }
+
       setIsSubmitting(true);
 
       // Validate inputs
@@ -70,13 +108,24 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
         return;
       }
 
+      // Convert price to cents/satoshis for backend
+      const priceInCents = Math.round(parseFloat(price) * 100);
+      const stopLossInCents = stopLoss
+        ? Math.round(parseFloat(stopLoss) * 100)
+        : undefined;
+      const takeProfitInCents = takeProfit
+        ? Math.round(parseFloat(takeProfit) * 100)
+        : undefined;
+
       // Prepare order data
       const orderData = {
-        symbol: symbol.toLowerCase(),
+        symbolId: symbolData.id,
+        type: orderSide,
+        price: priceInCents,
         quantity: parseFloat(quantity),
-        price: orderType === "limit" ? parseFloat(price) : undefined,
-        side: orderSide,
-        type: orderType,
+        isShort: false,
+        stopLoss: stopLossInCents,
+        takeProfit: takeProfitInCents,
       };
 
       // Send order to API using the service
@@ -87,10 +136,12 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
       if (orderType === "limit") {
         setPrice("");
       }
+      setStopLoss("");
+      setTakeProfit("");
 
       // Show success message
       toast.success("Order placed successfully", {
-        description: `${orderSide.toUpperCase()} ${quantity} ${symbol
+        description: `${orderSide} ${quantity} ${symbol
           .slice(0, -4)
           .toUpperCase()} at ${
           orderType === "market" ? "market price" : `$${price}`
@@ -113,54 +164,54 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
         <CardTitle className="text-lg font-medium">Place Order</CardTitle>
       </CardHeader>
 
-      <CardContent className="p-4">
+      <CardContent className="p-4 pt-2">
         <div className="space-y-4">
-          {/* Order side selector */}
+          {/* Order type tabs */}
           <Tabs
-            value={orderSide}
-            onValueChange={(value) => setOrderSide(value as OrderSide)}
+            defaultValue="market"
+            value={orderType}
+            onValueChange={(value) => setOrderType(value as OrderTypeValue)}
             className="w-full"
           >
             <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="buy" className="flex items-center gap-1">
-                <ArrowUp className="h-4 w-4" />
-                Buy
-              </TabsTrigger>
-              <TabsTrigger value="sell" className="flex items-center gap-1">
-                <ArrowDown className="h-4 w-4" />
-                Sell
-              </TabsTrigger>
+              <TabsTrigger value="market">Market</TabsTrigger>
+              <TabsTrigger value="limit">Limit</TabsTrigger>
             </TabsList>
           </Tabs>
 
-          {/* Market/Limit switch */}
+          {/* Buy/Sell switch */}
           <div className="flex items-center justify-between">
-            <Label htmlFor="market-order">Market Order</Label>
-            <Switch
-              id="market-order"
-              checked={orderType === "market"}
-              onCheckedChange={(checked) =>
-                setOrderType(checked ? "market" : "limit")
-              }
-            />
+            <Label htmlFor="order-side">Order Side</Label>
+            <div className="flex items-center gap-2">
+              <Label
+                htmlFor="order-side"
+                className={`${
+                  orderSide === "SELL" ? "text-destructive" : "text-primary"
+                }`}
+              >
+                {orderSide}
+              </Label>
+              <Switch
+                id="order-side"
+                checked={orderSide === "BUY"}
+                onCheckedChange={(checked) =>
+                  setOrderSide(checked ? "BUY" : "SELL")
+                }
+              />
+            </div>
           </div>
 
           {/* Price input */}
           <div className="space-y-2">
-            <Label htmlFor="price">
-              Price ({symbol.slice(-4).toUpperCase()})
-            </Label>
+            <Label htmlFor="price">Price (USD)</Label>
             <Input
               id="price"
               type="number"
               step="0.01"
-              min="0"
+              min="0.01"
               value={price}
               onChange={(e) => setPrice(e.target.value)}
               disabled={orderType === "market"}
-              placeholder={
-                orderType === "market" ? formattedPrice : "Enter price"
-              }
             />
           </div>
 
@@ -179,6 +230,34 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
             />
           </div>
 
+          {/* Stop Loss input */}
+          <div className="space-y-2">
+            <Label htmlFor="stopLoss">Stop Loss (Optional)</Label>
+            <Input
+              id="stopLoss"
+              type="number"
+              step="0.01"
+              min="0.01"
+              value={stopLoss}
+              onChange={(e) => setStopLoss(e.target.value)}
+              placeholder="Enter stop loss price"
+            />
+          </div>
+
+          {/* Take Profit input */}
+          <div className="space-y-2">
+            <Label htmlFor="takeProfit">Take Profit (Optional)</Label>
+            <Input
+              id="takeProfit"
+              type="number"
+              step="0.01"
+              min="0.01"
+              value={takeProfit}
+              onChange={(e) => setTakeProfit(e.target.value)}
+              placeholder="Enter take profit price"
+            />
+          </div>
+
           {/* Total */}
           <div className="flex justify-between items-center py-2 border-t border-border">
             <span className="text-sm text-muted-foreground">Total:</span>
@@ -191,14 +270,10 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
           <Button
             className="w-full"
             onClick={handleSubmitOrder}
-            disabled={isSubmitting}
-            variant={orderSide === "buy" ? "default" : "destructive"}
+            disabled={isSubmitting || isLoadingSymbols}
+            variant={orderSide === "BUY" ? "default" : "destructive"}
           >
-            {isSubmitting
-              ? "Processing..."
-              : `${
-                  orderSide === "buy" ? "Buy" : "Sell"
-                } ${symbol.toUpperCase()}`}
+            {isSubmitting ? "Processing..." : `${orderSide} ${symbol.toUpperCase()}`}
           </Button>
         </div>
       </CardContent>

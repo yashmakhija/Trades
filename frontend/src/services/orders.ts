@@ -2,30 +2,40 @@ import { ORDER_POLLING_INTERVAL_MS } from "@/config/index";
 import { apiClient } from "@/lib/api/api-client";
 
 // Order types
-export type OrderSide = "buy" | "sell";
+export type OrderSide = "BUY" | "SELL";
 export type OrderType = "market" | "limit";
-export type OrderStatus = "open" | "filled" | "cancelled" | "rejected";
+export type OrderStatus =
+  | "OPEN"
+  | "FILLED"
+  | "CANCELLED"
+  | "REJECTED"
+  | "CLOSED";
 
 // Order interface
 export interface Order {
   id: string;
-  symbol: string;
-  side: OrderSide;
-  type: OrderType;
-  price: number | null;
+  symbolId: string;
+  type: OrderSide;
+  price: number;
   quantity: number;
   status: OrderStatus;
+  isShort: boolean;
+  stopLoss?: number;
+  takeProfit?: number;
   createdAt: string;
   updatedAt: string;
+  closedAt?: string;
 }
 
 // Order creation parameters
 export interface CreateOrderParams {
-  symbol: string;
-  side: OrderSide;
-  type: OrderType;
+  symbolId: string;
+  type: OrderSide;
+  price: number;
   quantity: number;
-  price?: number;
+  isShort: boolean;
+  stopLoss?: number;
+  takeProfit?: number;
 }
 
 /**
@@ -47,8 +57,7 @@ export async function fetchOrders(): Promise<Order[]> {
         typeof order === "object" &&
         order !== null &&
         "id" in order &&
-        "symbol" in order &&
-        "side" in order &&
+        "symbolId" in order &&
         "type" in order &&
         "status" in order;
 

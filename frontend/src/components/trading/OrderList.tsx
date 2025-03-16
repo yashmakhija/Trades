@@ -7,7 +7,6 @@ import {
   fetchOrders,
   cancelOrder,
   Order as OrderType,
-  OrderSide,
 } from "@/services/orders";
 import { ORDER_POLLING_INTERVAL_MS } from "@/config";
 
@@ -41,13 +40,13 @@ export function OrderList({ symbol, className = "" }: OrderListProps) {
       // Filter by symbol if provided
       const filteredOrders = symbol
         ? allOrders.filter(
-            (order) => order.symbol.toLowerCase() === symbol.toLowerCase()
+            (order) => order.symbolId.toLowerCase() === symbol.toLowerCase()
           )
         : allOrders;
 
       // Filter to only show open orders
       const openOrders = filteredOrders.filter(
-        (order) => order.status === "open"
+        (order) => order.status === "OPEN"
       );
 
       setOrders(openOrders);
@@ -84,7 +83,7 @@ export function OrderList({ symbol, className = "" }: OrderListProps) {
 
   // Format price
   const formatPrice = (price: number): string => {
-    return price.toFixed(2);
+    return (price / 100).toFixed(2); // Convert from cents back to dollars
   };
 
   // Load orders on mount and when symbol changes
@@ -141,16 +140,16 @@ export function OrderList({ symbol, className = "" }: OrderListProps) {
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="font-medium">
-                        {order.symbol.toUpperCase()}
+                        {order.symbolId.toUpperCase()}
                       </span>
                       <span
                         className={`text-xs px-2 py-0.5 rounded-full ${
-                          order.side === "buy"
+                          order.type === "BUY"
                             ? "bg-green-100 text-green-800"
                             : "bg-red-100 text-red-800"
                         }`}
                       >
-                        {order.side.toUpperCase()} {order.type.toUpperCase()}
+                        {order.type} {order.isShort ? "SHORT" : ""}
                       </span>
                     </div>
                     <div className="text-sm text-muted-foreground mt-1">
@@ -170,14 +169,26 @@ export function OrderList({ symbol, className = "" }: OrderListProps) {
                 <div className="grid grid-cols-2 gap-x-4 gap-y-1 mt-2 text-sm">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Price:</span>
-                    <span>
-                      ${order.price ? formatPrice(order.price) : "Market"}
-                    </span>
+                    <span>${formatPrice(order.price)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Quantity:</span>
                     <span>{order.quantity}</span>
                   </div>
+                  {order.stopLoss && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Stop Loss:</span>
+                      <span>${formatPrice(order.stopLoss)}</span>
+                    </div>
+                  )}
+                  {order.takeProfit && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">
+                        Take Profit:
+                      </span>
+                      <span>${formatPrice(order.takeProfit)}</span>
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
