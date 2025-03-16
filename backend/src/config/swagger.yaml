@@ -36,6 +36,8 @@ tags:
     description: Real-time data streaming
   - name: Analytics
     description: Trade analytics and statistics
+  - name: Balance
+    description: Balance management
 
 paths:
   #
@@ -842,6 +844,137 @@ paths:
                       type: number
                       format: double
 
+  #
+  # Balance Endpoints
+  #
+  /api/balance:
+    get:
+      tags:
+        - Balance
+      summary: Get user balance
+      description: Get the current USDC balance and reserved amounts for the authenticated user
+      operationId: getUserBalance
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Balance retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Balance"
+        "401":
+          description: Unauthorized - Invalid or expired token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/balance/history:
+    get:
+      tags:
+        - Balance
+      summary: Get balance history
+      description: Get paginated balance history with filters
+      operationId: getBalanceHistory
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          description: Page number
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          description: Items per page
+          schema:
+            type: integer
+            default: 50
+        - name: startDate
+          in: query
+          description: Filter by start date
+          schema:
+            type: string
+            format: date-time
+        - name: endDate
+          in: query
+          description: Filter by end date
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Balance history retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  history:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/BalanceHistory"
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+        "401":
+          description: Unauthorized - Invalid or expired token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/balance/reserved:
+    get:
+      tags:
+        - Balance
+      summary: Get reserved balance details
+      description: Get details of USDC balance reserved for open orders
+      operationId: getReservedBalance
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Reserved balance details retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  totalReserved:
+                    type: number
+                    format: double
+                    description: Total amount reserved for open orders
+                  reservations:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/BalanceReservation"
+        "401":
+          description: Unauthorized - Invalid or expired token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
 components:
   schemas:
     User:
@@ -1280,6 +1413,79 @@ components:
         perPage:
           type: integer
           description: Items per page
+
+    Balance:
+      type: object
+      properties:
+        total:
+          type: number
+          format: double
+          description: Total USDC balance
+          example: 10000.00
+        available:
+          type: number
+          format: double
+          description: Available USDC balance (total - reserved)
+          example: 8500.00
+        reserved:
+          type: number
+          format: double
+          description: USDC balance reserved for open orders
+          example: 1500.00
+        updatedAt:
+          type: string
+          format: date-time
+
+    BalanceHistory:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        amount:
+          type: number
+          format: double
+          description: Balance amount
+        type:
+          type: string
+          enum: [DEPOSIT, WITHDRAWAL, TRADE, FUNDING]
+          description: Type of balance change
+        description:
+          type: string
+          description: Description of the balance change
+        orderId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Associated order ID if type is TRADE
+        createdAt:
+          type: string
+          format: date-time
+
+    BalanceReservation:
+      type: object
+      properties:
+        orderId:
+          type: string
+          format: uuid
+          description: ID of the order reserving the balance
+        symbol:
+          type: string
+          description: Trading symbol
+        amount:
+          type: number
+          format: double
+          description: Reserved amount
+        type:
+          type: string
+          enum: [BUY, SELL]
+          description: Order type
+        createdAt:
+          type: string
+          format: date-time
 
   securitySchemes:
     bearerAuth:

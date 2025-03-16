@@ -15,14 +15,98 @@ This is the backend for the Trading App, a platform for simulating cryptocurrenc
   - Per-symbol trading statistics
   - Daily PnL tracking
   - Real-time analytics updates via WebSocket
+- Advanced Balance Management:
+  - Real-time balance tracking with WebSocket updates
+  - Reserved balance for open orders
+  - Balance history with transaction types
+  - Dynamic PnL calculation for open positions
+  - Real-time unrealized PnL updates
+  - Automatic balance adjustments on order execution
+
+## Balance System
+
+The platform includes a sophisticated balance management system:
+
+### Features
+
+1. **Real-time Balance Tracking**
+
+   - Live updates of total, available, and reserved balance
+   - Automatic updates based on position values
+   - Real-time unrealized PnL calculation
+   - WebSocket notifications for balance changes
+
+2. **Balance Reservation**
+
+   - Automatic balance reservation for open orders
+   - Reserved amount = Quantity × Current Price
+   - Real-time updates as market prices change
+   - Automatic release on order cancellation
+
+3. **Balance History**
+
+   - Detailed transaction history
+   - Multiple transaction types (DEPOSIT, WITHDRAWAL, TRADE, FUNDING)
+   - Pagination and date filtering
+   - Order reference for trade-related transactions
+
+4. **Position Value Tracking**
+   - Real-time position value updates
+   - Automatic PnL calculation
+   - Support for both long and short positions
+   - Aggregated portfolio value calculation
+
+### Example WebSocket Messages
+
+```typescript
+// Balance Update Message
+{
+  "type": "BALANCE_UPDATE",
+  "data": {
+    "total": 10000.00,      // Total balance including position values
+    "available": 8500.00,   // Available for new trades
+    "reserved": 1500.00,    // Reserved for open orders
+    "unrealizedPnL": 250.00 // Current profit/loss from open positions
+  }
+}
+
+// Position Update Message
+{
+  "type": "POSITION_UPDATE",
+  "data": {
+    "symbol": "BTCUSDT",
+    "entryPrice": 45000.00,
+    "currentPrice": 46000.00,
+    "quantity": 0.1,
+    "value": 4600.00,
+    "unrealizedPnL": 100.00,
+    "pnlPercentage": 2.22
+  }
+}
+```
+
+### API Endpoints
+
+```typescript
+// Get current balance
+GET /api/balance
+
+// Get balance history
+GET /api/balance/history?page=1&limit=50&startDate=2024-03-01&endDate=2024-03-16
+
+// Get reserved balance details
+GET /api/balance/reserved
+```
 
 ## Tech Stack
 
-- Node.js with TypeScript
-- Express.js for API routes
-- PostgreSQL with Prisma ORM
-- TimescaleDB for time-series data
-- WebSocket for real-time communication
+- **Node.js & TypeScript**: For type-safe server-side code
+- **Express**: Web server framework
+- **WebSockets**: For real-time data streaming
+- **Prisma**: Database ORM for PostgreSQL
+- **TimescaleDB**: For efficient time-series data storage
+- **Binance API**: For market data
+- **Bun**: Fast JavaScript runtime and package manager (v1.0+)
 
 ## Getting Started
 

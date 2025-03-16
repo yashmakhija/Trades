@@ -8,38 +8,44 @@ declare global {
   namespace Express {
     interface Request {
       user?: {
-        userId: string;
+        id: string;
         email: string;
       };
     }
   }
 }
 
-export function authenticate(
+export function authenticateToken(
   req: Request,
   res: Response,
   next: NextFunction
-): void {
+) {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
+
+  if (!token) {
+    return res.status(401).json({
+      error: {
+        code: "unauthorized",
+        message: "No token provided",
+      },
+    });
+  }
+
   try {
-    const authHeader = req.headers.authorization;
-
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      res.status(401).json({ error: "Authentication required" });
-      return;
-    }
-
-    const token = authHeader.split(" ")[1];
-
-    const decoded = jwt.verify(token, JWT_SECRET) as {
-      userId: string;
+    const decoded = jwt.verify(token, config.jwtSecret) as {
+      id: string;
       email: string;
     };
-
     req.user = decoded;
     next();
   } catch (error) {
-    console.error("Authentication error:", error);
-    res.status(401).json({ error: "Invalid or expired token" });
+    return res.status(401).json({
+      error: {
+        code: "unauthorized",
+        message: "Invalid token",
+      },
+    });
   }
 }
 

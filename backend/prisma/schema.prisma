@@ -20,6 +20,7 @@ model User {
   name        String?
   usdcBalance Int      @default(1000000)
   orders      Order[]
+  balanceHistory BalanceHistory[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
@@ -56,6 +57,8 @@ model Order {
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
   closedAt      DateTime?   // When the order was closed
+  reservedAmount Int?      // Amount reserved for this order (stored as integer)
+  balanceHistory BalanceHistory[]
 
   @@index([userId])
   @@index([symbolId])
@@ -88,6 +91,21 @@ model OHLCV {
   @@index([timeframe])
 }
 
+model BalanceHistory {
+  id          String          @id @default(uuid())
+  userId      String
+  user        User            @relation(fields: [userId], references: [id])
+  amount      Int             // Amount stored as integer (100 USDC = 10000)
+  type        BalanceType     // Using enum for transaction types
+  description String
+  orderId     String?
+  order       Order?          @relation(fields: [orderId], references: [id])
+  createdAt   DateTime        @default(now())
+
+  @@index([userId, createdAt])
+  @@index([orderId])
+}
+
 enum OrderType {
   BUY
   SELL
@@ -111,5 +129,16 @@ enum Timeframe {
   ONE_HOUR
   FOUR_HOURS
   ONE_DAY
+}
+
+enum BalanceType {
+  DEPOSIT      // Initial or additional deposits
+  WITHDRAWAL   // User withdrawals
+  TRADE_OPEN   // Balance reserved for new trade
+  TRADE_CLOSE  // Balance released/updated when trade closes
+  TRADE_CANCEL // Balance released when order is cancelled
+  FUNDING      // Funding payments (for futures)
+  REFERRAL     // Referral rewards
+  ADJUSTMENT   // Manual/system adjustments
 }
 

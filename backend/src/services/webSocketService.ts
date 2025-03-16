@@ -250,7 +250,7 @@ async function handleClientMessage(
             channel: "candles",
             timeframe,
             message: `Error subscribing to ${symbol.toUpperCase()} candles: ${
-              error.message
+              error instanceof Error ? error.message : "Unknown error"
             }`,
           })
         );
@@ -391,27 +391,6 @@ export function broadcastBalanceUpdate(userId: string, balanceData: any): void {
   const message = JSON.stringify({
     type: "BALANCE_UPDATE",
     data: balanceData,
-  });
-
-  // Send only to clients authenticated as this user
-  clients.forEach((clientInfo) => {
-    const { ws, userId: clientUserId } = clientInfo;
-
-    if (ws.readyState === WebSocket.OPEN && clientUserId === userId) {
-      ws.send(message);
-    }
-  });
-}
-
-/**
- * Broadcast trade analytics update to the specific user
- */
-export function broadcastTradeAnalytics(userId: string, data: any): void {
-  if (!wss || clients.size === 0) return;
-
-  const message = JSON.stringify({
-    type: "TRADE_ANALYTICS_UPDATE",
-    data,
   });
 
   // Send only to clients authenticated as this user
