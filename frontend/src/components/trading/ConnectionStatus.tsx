@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useWebSocketStore } from "@/services/websocket";
+import { useWebSocket } from "@/services/websocket";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { RefreshCw } from "lucide-react";
@@ -9,8 +9,7 @@ interface ConnectionStatusProps {
 }
 
 export function ConnectionStatus({ className }: ConnectionStatusProps) {
-  const connectionState = useWebSocketStore((state) => state.connectionState);
-  const connect = useWebSocketStore((state) => state.connect);
+  const { connectionState, connect } = useWebSocket();
   const [showReconnectButton, setShowReconnectButton] = useState(false);
 
   // Handle reconnection attempts

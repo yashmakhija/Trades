@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useWebSocketStore } from "@/services/websocket";
+import { useWebSocket } from "@/services/websocket";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ArrowUp, ArrowDown } from "lucide-react";
@@ -11,8 +11,12 @@ interface MarketTickerProps {
 
 export function MarketTicker({ symbol, className = "" }: MarketTickerProps) {
   // Get WebSocket data
-  const { tickerData, subscribeToSymbol, connectionState } =
-    useWebSocketStore();
+  const {
+    tickerData,
+    subscribeToSymbol,
+    unsubscribeFromSymbol,
+    connectionState,
+  } = useWebSocket();
 
   // Format price with appropriate decimal places
   const formatPrice = (price: number | undefined): string => {
@@ -58,8 +62,14 @@ export function MarketTicker({ symbol, className = "" }: MarketTickerProps) {
     // Subscribe to the symbol
     subscribeToSymbol(normalizedSymbol);
 
-    // No need to set as active symbol here, as that's handled by the PriceChart component
-  }, [symbol, subscribeToSymbol]);
+    // Clean up on unmount or when symbol changes
+    return () => {
+      console.log(
+        `MarketTicker: Unsubscribing from symbol ${normalizedSymbol}`
+      );
+      unsubscribeFromSymbol(normalizedSymbol);
+    };
+  }, [symbol, subscribeToSymbol, unsubscribeFromSymbol]);
 
   // Get ticker data for the symbol
   const normalizedSymbol = symbol.toLowerCase();

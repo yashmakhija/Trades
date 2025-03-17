@@ -8,7 +8,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { fetchSymbols, SymbolData } from "@/services/marketData";
-import websocketService from "@/services/websocket";
+import { useWebSocket } from "@/services/websocket";
 import { DEFAULT_SYMBOLS } from "@/config";
 import { Loader2 } from "lucide-react";
 
@@ -20,12 +20,30 @@ export function SymbolSelector({ className = "" }: SymbolSelectorProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const {
+    setActiveSymbol,
+    subscribeToSymbol,
+    unsubscribeFromSymbol,
+    activeSymbol,
+  } = useWebSocket();
 
   const [symbols, setSymbols] = useState<SymbolData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [symbolMap, setSymbolMap] = useState<Record<string, SymbolData>>({});
 
-  // Get current symbol from URL query parameter
-  const currentSymbol = searchParams.get("symbol") || DEFAULT_SYMBOLS[0];
+  // Get current symbol from URL query parameter (could be ID or name)
+  const currentSymbolParam = searchParams.get("symbol") || DEFAULT_SYMBOLS[0];
+
+  // Determine if the current symbol param is an ID or a name
+  const isSymbolId = currentSymbolParam.includes("-");
+
+  // Track the current symbol name and ID
+  const [currentSymbolName, setCurrentSymbolName] = useState<string>(
+    isSymbolId ? "" : currentSymbolParam.toLowerCase()
+  );
+  const [currentSymbolId, setCurrentSymbolId] = useState<string>(
+    isSymbolId ? currentSymbolParam : ""
+  );
 
   // Fetch available symbols
   useEffect(() => {
@@ -40,61 +58,157 @@ export function SymbolSelector({ className = "" }: SymbolSelectorProps) {
             "SymbolSelector: No symbols returned from API, using defaults"
           );
           // If no symbols returned from API, use default symbols
-          setSymbols(
-            DEFAULT_SYMBOLS.map((symbol) => ({
-              id: symbol,
-              name: symbol.toUpperCase(),
-              description: `${symbol.slice(0, -4).toUpperCase()}/${symbol
-                .slice(-4)
-                .toUpperCase()}`,
-              currentPrice: null,
-            }))
-          );
-        } else {
-          console.log("SymbolSelector: Loaded symbols from API:", data);
-          setSymbols(data);
-        }
-      } catch (error) {
-        console.error("SymbolSelector: Error loading symbols:", error);
-        // Fallback to default symbols on error
-        setSymbols(
-          DEFAULT_SYMBOLS.map((symbol) => ({
-            id: symbol,
-            name: symbol.toUpperCase(),
+          const defaultSymbolsData = DEFAULT_SYMBOLS.map((symbol) => ({
+            id: symbol, // Use symbol name as ID for defaults
+            name: symbol.toLowerCase(),
             description: `${symbol.slice(0, -4).toUpperCase()}/${symbol
               .slice(-4)
               .toUpperCase()}`,
             currentPrice: null,
-          }))
-        );
+          }));
+
+          setSymbols(defaultSymbolsData);
+
+          // Create a map of symbol ID to symbol data
+          const symbolMapData: Record<string, SymbolData> = {};
+          defaultSymbolsData.forEach((symbol) => {
+            symbolMapData[symbol.id] = symbol;
+            symbolMapData[symbol.name] = symbol; // Also map by name for convenience
+          });
+          setSymbolMap(symbolMapData);
+
+          // If we have a symbol ID but no name yet, find the name
+          if (isSymbolId && currentSymbolId && !currentSymbolName) {
+            const symbol = defaultSymbolsData.find(
+              (s) => s.id === currentSymbolId
+            );
+            if (symbol) {
+              setCurrentSymbolName(symbol.name);
+            } else {
+              // If we can't find the symbol by ID, use the first default
+              setCurrentSymbolName(DEFAULT_SYMBOLS[0].toLowerCase());
+              setCurrentSymbolId(DEFAULT_SYMBOLS[0]);
+            }
+          }
+        } else {
+          console.log("SymbolSelector: Loaded symbols from API:", data);
+          setSymbols(data);
+
+          // Create a map of symbol ID to symbol data
+          const symbolMapData: Record<string, SymbolData> = {};
+          data.forEach((symbol) => {
+            symbolMapData[symbol.id] = symbol;
+            symbolMapData[symbol.name] = symbol; // Also map by name for convenience
+          });
+          setSymbolMap(symbolMapData);
+
+          // If we have a symbol ID but no name yet, find the name
+          if (isSymbolId && currentSymbolId && !currentSymbolName) {
+            const symbol = data.find((s) => s.id === currentSymbolId);
+            if (symbol) {
+              setCurrentSymbolName(symbol.name);
+            } else {
+              // If we can't find the symbol by ID, use the first available
+              if (data.length > 0) {
+                setCurrentSymbolName(data[0].name);
+                setCurrentSymbolId(data[0].id);
+              }
+            }
+          } else if (!isSymbolId && currentSymbolName) {
+            // If we have a name but no ID, find the ID
+            const symbol = data.find(
+              (s) => s.name.toLowerCase() === currentSymbolName.toLowerCase()
+            );
+            if (symbol) {
+              setCurrentSymbolId(symbol.id);
+            }
+          }
+        }
+      } catch (error) {
+        console.error("SymbolSelector: Error loading symbols:", error);
+        // Fallback to default symbols on error
+        const defaultSymbolsData = DEFAULT_SYMBOLS.map((symbol) => ({
+          id: symbol, // Use symbol name as ID for defaults
+          name: symbol.toLowerCase(),
+          description: `${symbol.slice(0, -4).toUpperCase()}/${symbol
+            .slice(-4)
+            .toUpperCase()}`,
+          currentPrice: null,
+        }));
+
+        setSymbols(defaultSymbolsData);
+
+        // Create a map of symbol ID to symbol data
+        const symbolMapData: Record<string, SymbolData> = {};
+        defaultSymbolsData.forEach((symbol) => {
+          symbolMapData[symbol.id] = symbol;
+          symbolMapData[symbol.name] = symbol; // Also map by name for convenience
+        });
+        setSymbolMap(symbolMapData);
+
+        // Use the first default symbol if we can't find the current one
+        setCurrentSymbolName(DEFAULT_SYMBOLS[0].toLowerCase());
+        setCurrentSymbolId(DEFAULT_SYMBOLS[0]);
       } finally {
         setIsLoading(false);
       }
     };
 
     loadSymbols();
-  }, []);
+  }, [currentSymbolId, currentSymbolName, isSymbolId]);
 
   // Set active symbol when component mounts or currentSymbol changes
   useEffect(() => {
-    const normalizedSymbol = currentSymbol.toLowerCase();
-    console.log(`SymbolSelector: Setting active symbol to ${normalizedSymbol}`);
+    if (!currentSymbolName) return;
+
+    console.log(
+      `SymbolSelector: Setting active symbol to ${currentSymbolName}`
+    );
+
+    // Unsubscribe from previous symbol if it exists and is different
+    if (activeSymbol && activeSymbol !== currentSymbolName) {
+      console.log(
+        `SymbolSelector: Unsubscribing from previous symbol ${activeSymbol}`
+      );
+      unsubscribeFromSymbol(activeSymbol);
+    }
 
     // Set as active symbol for optimized updates
-    websocketService.setActiveSymbol(normalizedSymbol);
-  }, [currentSymbol]);
+    setActiveSymbol(currentSymbolName);
+
+    // Subscribe to the new symbol
+    subscribeToSymbol(currentSymbolName);
+  }, [
+    currentSymbolName,
+    setActiveSymbol,
+    subscribeToSymbol,
+    unsubscribeFromSymbol,
+    activeSymbol,
+  ]);
 
   // Handle symbol change
   const handleSymbolChange = (value: string) => {
-    const normalizedSymbol = value.toLowerCase();
-    console.log(`SymbolSelector: Changing symbol to ${normalizedSymbol}`);
+    // Value is the symbol ID
+    const symbolId = value;
+    const symbol = symbolMap[symbolId];
 
-    // Set as active symbol immediately for better responsiveness
-    websocketService.setActiveSymbol(normalizedSymbol);
+    if (!symbol) {
+      console.error(`SymbolSelector: Symbol with ID ${symbolId} not found`);
+      return;
+    }
 
-    // Create new URL with updated symbol parameter
+    const symbolName = symbol.name.toLowerCase();
+    console.log(
+      `SymbolSelector: Changing symbol to ${symbolName} (ID: ${symbolId})`
+    );
+
+    // Update local state
+    setCurrentSymbolName(symbolName);
+    setCurrentSymbolId(symbolId);
+
+    // Create new URL with updated symbol parameter (using ID)
     const params = new URLSearchParams(searchParams);
-    params.set("symbol", normalizedSymbol);
+    params.set("symbol", symbolId);
 
     // Navigate to the new URL
     router.push(`${pathname}?${params.toString()}`);
@@ -110,14 +224,14 @@ export function SymbolSelector({ className = "" }: SymbolSelectorProps) {
   }
 
   return (
-    <Select value={currentSymbol} onValueChange={handleSymbolChange}>
+    <Select value={currentSymbolId} onValueChange={handleSymbolChange}>
       <SelectTrigger className={`w-full ${className}`}>
         <SelectValue placeholder="Select symbol" />
       </SelectTrigger>
       <SelectContent>
         {symbols.map((symbol) => (
           <SelectItem key={symbol.id} value={symbol.id}>
-            {symbol.description || symbol.name}
+            {symbol.description || symbol.name.toUpperCase()}
           </SelectItem>
         ))}
       </SelectContent>

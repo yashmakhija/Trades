@@ -43,16 +43,31 @@ export interface CreateOrderParams {
  */
 export async function fetchOrders(): Promise<Order[]> {
   try {
-    const response = await apiClient.get<unknown>("/orders");
+    const response = await apiClient.get<{
+      openOrders: unknown[];
+      closedOrders: unknown[];
+      balance: unknown;
+    }>("/orders");
 
-    // Ensure the response is an array
-    if (!Array.isArray(response)) {
-      console.error("Expected array of orders but got:", response);
+    // Check if response has the expected structure
+    if (
+      typeof response !== "object" ||
+      response === null ||
+      !("openOrders" in response) ||
+      !("closedOrders" in response)
+    ) {
+      console.error(
+        "Expected object with openOrders and closedOrders but got:",
+        response
+      );
       return [];
     }
 
+    // Combine open and closed orders
+    const allOrders = [...response.openOrders, ...response.closedOrders];
+
     // Validate each order in the array
-    return response.filter((order): order is Order => {
+    return allOrders.filter((order): order is Order => {
       const isValid =
         typeof order === "object" &&
         order !== null &&

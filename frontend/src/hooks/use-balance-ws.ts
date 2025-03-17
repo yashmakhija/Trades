@@ -1,61 +1,65 @@
 import { useEffect } from "react";
-import { useWebSocket } from "./use-web-socket";
+import { useWebSocket } from "@/services/websocket";
 import { useBalanceStore } from "@/store/use-balance-store";
 import { useAuthStore } from "@/store/use-auth-store";
 
 export function useBalanceWs() {
-  const { isConnected, lastMessage } = useWebSocket();
+  const { isConnected, isAuthenticated, balance, orders } = useWebSocket();
   const { setBalance, updatePosition, removePosition } = useBalanceStore();
-  const { isAuthenticated } = useAuthStore();
+  const { isAuthenticated: isAuthStoreAuthenticated } = useAuthStore();
 
+  // Update balance when it changes in WebSocket store
   useEffect(() => {
-    if (!isConnected || !isAuthenticated || !lastMessage) return;
+    if (
+      !isConnected ||
+      !isAuthenticated ||
+      !isAuthStoreAuthenticated ||
+      !balance
+    )
+      return;
 
-    try {
-      const message = JSON.parse(lastMessage);
-
-      switch (message.type) {
-        case "BALANCE_UPDATE":
-          setBalance({
-            total: message.data.total,
-            available: message.data.available,
-            reserved: message.data.reserved,
-            positions: message.data.positions,
-            totalValue: message.data.totalValue,
-            totalPnl: message.data.totalPnl,
-            totalPositionValue: message.data.totalPositionValue,
-            openOrdersCount: message.data.openOrdersCount,
-          });
-          break;
-
-        case "ORDER_UPDATE":
-          if (
-            message.data.status === "CLOSED" ||
-            message.data.status === "CANCELLED"
-          ) {
-            removePosition(message.data.id);
-          } else if (message.data.status === "OPEN") {
-            updatePosition({
-              symbol: message.data.symbolName,
-              quantity: message.data.quantity,
-              averagePrice: message.data.price,
-              currentPrice: message.data.price,
-              orderId: message.data.id,
-              pnl: 0,
-              status: message.data.status,
-            });
-          }
-          break;
-      }
-    } catch (error) {
-      console.error("Error processing WebSocket message:", error);
-    }
+    setBalance(balance);
   }, [
-    lastMessage,
     isConnected,
     isAuthenticated,
+    isAuthStoreAuthenticated,
+    balance,
     setBalance,
+  ]);
+
+  // Update positions when orders change
+  useEffect(() => {
+    if (!isConnected || !isAuthenticated || !isAuthStoreAuthenticated) return;
+
+    // Process orders to update positions
+    Object.values(orders).forEach((order) => {
+      if (order.status === "CANCELLED" || order.status === "REJECTED") {
+        removePosition(order.orderId);
+      } else if (order.status === "FILLED" || order.status === "PENDING") {
+        updatePosition({
+          symbol: order.symbol,
+          quantity: order.quantity,
+          averagePrice: order.price,
+          currentPrice: order.price,
+          orderId: order.orderId,
+          pnl: 0,
+          status: order.status,
+        });
+      }
+    });
+  }, [
+    isConnected,
+    isAuthenticated,
+    isAuthStoreAuthenticated,
+    orders,
     updatePosition,
     removePosition,
   ]);
+
+  return {
+    balance,
+    orders,
+    isConnected,
+    isAuthenticated,
+  };
 }

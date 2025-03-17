@@ -1,7 +1,8 @@
 import { create } from "zustand";
 import { devtools } from "zustand/middleware";
-import { useWebSocketStore } from "@/services/websocket";
+import { useWebSocket } from "@/services/websocket";
 import { useEffect } from "react";
+import { API_BASE_URL } from "@/config";
 
 export interface Position {
   symbol: string;
@@ -77,7 +78,7 @@ export const useBalanceStore = create<BalanceState & BalanceActions>()(
     fetchBalance: async () => {
       try {
         set({ isLoading: true, error: null });
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/balance`);
+        const response = await fetch(`${API_BASE_URL}/api/balance`);
         if (!response.ok) {
           throw new Error("Failed to fetch balance");
         }
@@ -96,12 +97,41 @@ export const useBalanceStore = create<BalanceState & BalanceActions>()(
 
 // Hook to sync WebSocket balance updates with the store
 export function useBalanceSync() {
-  const wsStore = useWebSocketStore();
+  const { balance, orders, isAuthenticated } = useWebSocket();
   const setBalance = useBalanceStore((state) => state.setBalance);
+  const updatePosition = useBalanceStore((state) => state.updatePosition);
+  const removePosition = useBalanceStore((state) => state.removePosition);
 
+  // Update balance when WebSocket balance changes
   useEffect(() => {
-    if (wsStore.balance) {
-      setBalance(wsStore.balance);
+    if (balance && isAuthenticated) {
+      setBalance(balance);
     }
-  }, [wsStore.balance, setBalance]);
+  }, [balance, setBalance, isAuthenticated]);
+
+  // Update positions based on order updates
+  useEffect(() => {
+    if (orders && isAuthenticated) {
+      // Process orders to update positions
+      Object.values(orders).forEach((order) => {
+        if (order.status === "CANCELLED" || order.status === "REJECTED") {
+          // Remove position for cancelled/rejected orders
+          removePosition(order.orderId);
+        } else if (order.status === "FILLED") {
+          // Update position for filled orders
+          updatePosition({
+            symbol: order.symbol,
+            quantity: order.quantity,
+            averagePrice: order.averagePrice,
+            currentPrice: order.price,
+            orderId: order.orderId,
+            pnl: 0, // Calculate PnL if needed
+            status: "OPEN",
+          });
+        } else if (order.status === "PENDING") {
+          // Handle pending orders if needed
+        }
+      });
+    }
+  }, [orders, updatePosition, removePosition, isAuthenticated]);
 }

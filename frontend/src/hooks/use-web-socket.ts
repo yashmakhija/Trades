@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useAuthStore } from "@/store/use-auth-store";
+import { useWebSocket as useWebSocketStore } from "@/services/websocket";
 
 interface WebSocketConfig {
   onMessage?: (event: MessageEvent) => void;
@@ -53,3 +54,5 @@ export function useWebSocket(config: WebSocketConfig) {
 
   return wsRef.current;
 }
+
+export { useWebSocketStore as useWebSocket };

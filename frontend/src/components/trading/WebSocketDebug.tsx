@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useWebSocketStore, websocketService } from "@/services/websocket";
+import { useWebSocket } from "@/services/websocket";
 import {
   Card,
   CardContent,
@@ -25,7 +25,8 @@ export function WebSocketDebug({ className = "" }: WebSocketDebugProps) {
     lastHeartbeat,
     connect,
     disconnect,
-  } = useWebSocketStore();
+    reconnect,
+  } = useWebSocket();
 
   const [lastUpdate, setLastUpdate] = useState(Date.now());
   const [expanded, setExpanded] = useState(false);
@@ -88,10 +89,7 @@ export function WebSocketDebug({ className = "" }: WebSocketDebugProps) {
 
   // Handle reconnect
   const handleReconnect = () => {
-    disconnect();
-    setTimeout(() => {
-      connect();
-    }, 500);
+    reconnect();
   };
 
   return (

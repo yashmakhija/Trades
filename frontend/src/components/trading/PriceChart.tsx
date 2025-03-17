@@ -11,8 +11,7 @@ import {
   HistogramSeries,
   Time,
 } from "lightweight-charts";
-import { useWebSocketStore, CandleData } from "@/services/websocket";
-import websocketService from "@/services/websocket";
+import { useWebSocket, CandleData } from "@/services/websocket";
 import {
   fetchHistoricalData,
   generateMockHistoricalData,
@@ -44,23 +43,36 @@ export function PriceChart({
   const [timeframe, setTimeframe] = useState<Timeframe>(initialTimeframe);
   const [isLoading, setIsLoading] = useState(true);
 
-  const { candleData } = useWebSocketStore();
+  const {
+    candleData,
+    subscribeToSymbol,
+    setActiveSymbol,
+    setActiveTimeframe,
+    subscribeToCandles,
+  } = useWebSocket();
 
   useEffect(() => {
     const normalizedSymbol = symbol.toLowerCase();
     console.log(`PriceChart: Setting up for symbol ${normalizedSymbol}`);
 
     // Subscribe to symbol and candles
-    websocketService.subscribeToSymbol(normalizedSymbol);
-    websocketService.setActiveSymbol(normalizedSymbol);
-    websocketService.setActiveTimeframe(timeframe);
-    websocketService.subscribeToCandles(normalizedSymbol, timeframe);
+    subscribeToSymbol(normalizedSymbol);
+    setActiveSymbol(normalizedSymbol);
+    setActiveTimeframe(timeframe);
+    subscribeToCandles(normalizedSymbol, timeframe);
 
     return () => {
       // No need to unsubscribe on unmount as other components might need the data
       console.log(`PriceChart: Component unmounting`);
     };
-  }, [symbol, timeframe]);
+  }, [
+    symbol,
+    timeframe,
+    subscribeToSymbol,
+    setActiveSymbol,
+    setActiveTimeframe,
+    subscribeToCandles,
+  ]);
 
   useEffect(() => {
     if (!chartContainerRef.current) return;
@@ -277,22 +289,35 @@ export function PriceChart({
         `PriceChart: Updating chart with real-time data for ${normalizedSymbol}`
       );
 
-      candleSeries.current.update({
-        time: candleTime,
-        open: latestCandle.open,
-        high: latestCandle.high,
-        low: latestCandle.low,
-        close: latestCandle.close,
-      });
+      // Make sure we have valid data before updating
+      if (typeof candleTime !== 'number' || isNaN(candleTime)) {
+        console.warn(`PriceChart: Invalid candle time: ${candleTime}, skipping update`);
+        return;
+      }
 
-      volumeSeries.current.update({
-        time: candleTime,
-        value: latestCandle.volume,
-        color:
-          latestCandle.close >= latestCandle.open
-            ? "rgba(38, 166, 154, 0.5)"
-            : "rgba(239, 83, 80, 0.5)",
-      });
+      try {
+        candleSeries.current.update({
+          time: candleTime,
+          open: latestCandle.open,
+          high: latestCandle.high,
+          low: latestCandle.low,
+          close: latestCandle.close,
+        });
+
+        volumeSeries.current.update({
+          time: candleTime,
+          value: latestCandle.volume,
+          color:
+            latestCandle.close >= latestCandle.open
+              ? "rgba(38, 166, 154, 0.5)"
+              : "rgba(239, 83, 80, 0.5)",
+        });
+      } catch (error) {
+        console.error(
+          `PriceChart: Error updating chart with real-time data:`,
+          error
+        );
+      }
     } catch (error) {
       console.error(
         `PriceChart: Error updating chart with real-time data:`,
@@ -305,8 +330,8 @@ export function PriceChart({
     const newTimeframe = value as Timeframe;
     console.log(`PriceChart: Changing timeframe to ${newTimeframe}`);
     setTimeframe(newTimeframe);
-    websocketService.setActiveTimeframe(newTimeframe);
-    websocketService.subscribeToCandles(symbol.toLowerCase(), newTimeframe);
+    setActiveTimeframe(newTimeframe);
+    subscribeToCandles(symbol.toLowerCase(), newTimeframe);
   };
 
   return (

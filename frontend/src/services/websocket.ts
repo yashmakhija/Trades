@@ -61,6 +61,7 @@ interface WebSocketMessage {
   timeframe?: string;
   userId?: string;
   error?: string;
+  authenticated?: boolean;
 }
 
 // WebSocket connection states
@@ -72,6 +73,7 @@ interface WebSocketStore {
   connectionState: ConnectionState;
   lastError: string | null;
   lastHeartbeat: number;
+  isAuthenticated: boolean;
 
   // Market data
   tickerData: Record<string, TickerData>;
@@ -119,284 +121,184 @@ interface WebSocketStore {
   updateBalance: (balance: BalanceUpdate) => void;
   updateOrder: (order: OrderUpdate) => void;
   removeOrder: (orderId: string) => void;
-
-  // Authenticate methods
-  authenticateWebSocket: () => void;
 }
-
-// Create a singleton WebSocket instance
-let socketInstance: WebSocket | null = null;
-let heartbeatInterval: NodeJS.Timeout | null = null;
-let reconnectAttempts = 0;
-let reconnectTimeout: NodeJS.Timeout | null = null;
-let isReconnecting = false;
-let isAuthenticating = false;
 
 // Create WebSocket store
 export const useWebSocketStore = create<WebSocketStore>((set, get) => {
+  // WebSocket instance
+  let socketInstance: WebSocket | null = null;
+  let heartbeatInterval: NodeJS.Timeout | null = null;
+  let reconnectTimeout: NodeJS.Timeout | null = null;
+  let reconnectAttempts = 0;
+  let isReconnecting = false;
+
   // Handle WebSocket messages
   const handleMessage = (event: MessageEvent) => {
     try {
-      const message = JSON.parse(event.data) as WebSocketMessage;
+      const message: WebSocketMessage = JSON.parse(event.data);
+      console.log("WebSocket: Received message:", message.type);
 
-      // Update last heartbeat timestamp
+      // Update last heartbeat time
       set({ lastHeartbeat: Date.now() });
 
-      // Only log non-heartbeat messages to reduce console noise
-      if (message.type !== "PONG") {
-        console.log("WebSocket: Received message type:", message.type);
-      }
-
       switch (message.type) {
-        case "INITIAL_DATA":
-          // Type assertion to ensure compatibility
-          console.log(
-            "WebSocket: Received initial data for symbols:",
-            Object.keys(message.data).join(", ")
-          );
+        case "CONNECTION_SUCCESS":
+          console.log("WebSocket: Connection success", message);
           set({
-            tickerData: message.data as Record<string, TickerData>,
-            lastError: null,
+            isAuthenticated: message.authenticated || false,
+            connectionState: "connected",
           });
           break;
 
-        case "TICKER_UPDATE":
-          if (message.symbol && message.data) {
-            const symbolKey = message.symbol as string;
-            set((state) => ({
-              tickerData: {
-                ...state.tickerData,
-                [symbolKey]: message.data as TickerData,
-              },
-            }));
-          }
-          break;
-
         case "AUTHENTICATION_SUCCESS":
-          console.log("WebSocket: Authentication successful");
-          isAuthenticating = false;
-          set({ lastError: null });
+          console.log("WebSocket: Authentication success", message);
+          set({ isAuthenticated: true });
           break;
 
         case "AUTH_ERROR":
-          console.error("WebSocket: Authentication error:", message.error);
-          isAuthenticating = false;
-
-          // If we have a token but got an auth error, the token is likely invalid
-          if (useAuthStore.getState().token) {
-            console.warn("WebSocket: Token appears to be invalid, logging out");
-            useAuthStore.getState().logout();
-          }
-
-          set({ lastError: message.error || "Authentication failed" });
+          console.error("WebSocket: Authentication error", message.error);
+          set({
+            lastError: message.error || "Authentication failed",
+            isAuthenticated: false,
+          });
           break;
 
-        case "CONNECTION_SUCCESS":
-          console.log("WebSocket: Connection established successfully");
-          // If we're authenticated, try to authenticate the WebSocket
-          if (useAuthStore.getState().isAuthenticated) {
-            authenticateWebSocket();
+        case "INITIAL_DATA":
+          console.log("WebSocket: Received initial market data");
+          if (message.data) {
+            const tickerData: Record<string, TickerData> = {};
+            Object.entries(message.data).forEach(([symbol, data]) => {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const tickerInfo = data as any;
+              tickerData[symbol] = {
+                symbol,
+                price: tickerInfo.price,
+                priceChangePercent: tickerInfo.priceChangePercent || 0,
+                volume: tickerInfo.volume || 0,
+                timestamp: tickerInfo.timestamp || Date.now(),
+              };
+            });
+            set({ tickerData });
           }
           break;
 
         case "RAW_DATA":
           if (message.symbol && message.data) {
-            const symbolKey = message.symbol.toLowerCase();
+            const symbol = message.symbol.toLowerCase();
             const rawData = message.data;
 
             // Handle different types of Binance WebSocket messages
-            if (rawData.e === "24hrTicker") {
-              // Update ticker data
-              const tickerUpdate: TickerData = {
-                symbol: symbolKey,
-                price: parseFloat(rawData.c),
-                priceChangePercent: parseFloat(rawData.P),
-                volume: parseFloat(rawData.v),
-                timestamp: rawData.E,
-              };
+            if (rawData.e === "kline" && rawData.k) {
+              const kline = rawData.k;
 
-              set((state) => ({
-                tickerData: {
-                  ...state.tickerData,
-                  [symbolKey]: tickerUpdate,
-                },
-              }));
-
-              // Create a candle update from the ticker data
-              const now = Math.floor(Date.now() / 1000);
-              const existingData = get().candleData[symbolKey] || {};
-
-              // Only update if this is the active symbol or we don't have many candles yet
-              // This prevents unnecessary updates for non-viewed symbols
-              if (
-                symbolKey === get().activeSymbol &&
-                existingData[get().activeTimeframe]
-              ) {
-                const updatedCandleData = [
-                  ...existingData[get().activeTimeframe],
-                ];
-
-                // If we have existing candles, update the latest one
-                if (updatedCandleData.length > 0) {
-                  const latestCandle =
-                    updatedCandleData[updatedCandleData.length - 1];
-                  const currentPrice = parseFloat(rawData.c);
-
-                  // Update the latest candle with new price data
-                  const updatedCandle: CandleData = {
-                    time: latestCandle.time,
-                    open: latestCandle.open,
-                    high: Math.max(latestCandle.high, currentPrice),
-                    low: Math.min(latestCandle.low, currentPrice),
-                    close: currentPrice,
-                    volume: latestCandle.volume,
-                  };
-
-                  updatedCandleData[updatedCandleData.length - 1] =
-                    updatedCandle;
-
-                  // Broadcast the candle update
-                  set((state) => ({
-                    candleData: {
-                      ...state.candleData,
-                      [symbolKey]: {
-                        ...existingData,
-                        [get().activeTimeframe]: updatedCandleData,
-                      },
-                    },
-                  }));
-                }
-              } else if (symbolKey === get().activeSymbol) {
-                // Initialize the timeframe data if it doesn't exist
-                const currentPrice = parseFloat(rawData.c);
-                const newCandle: CandleData = {
-                  time: now,
-                  open: currentPrice,
-                  high: currentPrice,
-                  low: currentPrice,
-                  close: currentPrice,
-                  volume: parseFloat(rawData.v),
+              // Update ticker data with latest price
+              set((state) => {
+                const currentTicker = state.tickerData[symbol] || {
+                  symbol,
+                  price: 0,
+                  priceChangePercent: 0,
+                  volume: 0,
+                  timestamp: Date.now(),
                 };
 
-                // Broadcast the new candle
-                set((state) => ({
-                  candleData: {
-                    ...state.candleData,
-                    [symbolKey]: {
-                      ...existingData,
-                      [get().activeTimeframe]: [newCandle],
+                return {
+                  tickerData: {
+                    ...state.tickerData,
+                    [symbol]: {
+                      ...currentTicker,
+                      price: parseFloat(kline.c),
+                      volume: parseFloat(kline.v),
+                      timestamp: rawData.E,
                     },
                   },
-                }));
-              }
-            } else if (rawData.e === "kline") {
-              // Handle kline/candlestick data
-              if (rawData.k) {
-                const kline = rawData.k;
+                };
+              });
 
-                // Only process if this is the active symbol
-                if (symbolKey === get().activeSymbol) {
-                  const candle: CandleData = {
-                    time: Math.floor(kline.t / 1000), // Convert to seconds for TradingView
-                    open: parseFloat(kline.o),
-                    high: parseFloat(kline.h),
-                    low: parseFloat(kline.l),
-                    close: parseFloat(kline.c),
-                    volume: parseFloat(kline.v),
-                  };
+              // Create candle data from kline
+              const candle: CandleData = {
+                time: Math.floor(kline.t / 1000), // Convert to seconds for charts
+                open: parseFloat(kline.o),
+                high: parseFloat(kline.h),
+                low: parseFloat(kline.l),
+                close: parseFloat(kline.c),
+                volume: parseFloat(kline.v),
+              };
 
-                  set((state) => {
-                    const existingData = state.candleData[symbolKey] || {};
-                    const timeframeCandles =
-                      existingData[get().activeTimeframe] || [];
-
-                    // Update existing candle or add new one
-                    const updatedData = {
-                      ...existingData,
-                      [get().activeTimeframe]: [...timeframeCandles, candle],
-                    };
-
-                    return {
-                      candleData: {
-                        ...state.candleData,
-                        [symbolKey]: updatedData,
-                      },
-                    };
-                  });
-                }
-              }
-            } else if (rawData.e === "trade") {
-              // Handle individual trade data
-              // Only update ticker for active symbol to reduce state updates
-              if (symbolKey === get().activeSymbol) {
-                const tradePrice = parseFloat(rawData.p);
-
-                // Update ticker with latest trade price
+              // Update candle data for active timeframe
+              const activeTimeframe = get().activeTimeframe;
+              if (kline.i.toLowerCase() === activeTimeframe) {
                 set((state) => {
-                  const currentTicker = state.tickerData[symbolKey] || {
-                    symbol: symbolKey,
-                    price: 0,
-                    priceChangePercent: 0,
-                    volume: 0,
-                    timestamp: Date.now(),
-                  };
+                  const symbolCandles = state.candleData[symbol] || {};
+                  const timeframeCandles = symbolCandles[activeTimeframe] || [];
+
+                  // Check if this candle already exists (same timestamp)
+                  const existingIndex = timeframeCandles.findIndex((c) => {
+                    const cTime = typeof c.time === "number" ? c.time : 0;
+                    const candleTime =
+                      typeof candle.time === "number" ? candle.time : 0;
+                    return cTime === candleTime;
+                  });
+
+                  let updatedCandles;
+                  if (existingIndex >= 0) {
+                    // Update existing candle
+                    updatedCandles = [...timeframeCandles];
+                    updatedCandles[existingIndex] = candle;
+                  } else {
+                    // Add new candle
+                    updatedCandles = [...timeframeCandles, candle].sort(
+                      (a, b) => {
+                        const timeA = typeof a.time === "number" ? a.time : 0;
+                        const timeB = typeof b.time === "number" ? b.time : 0;
+                        return timeA - timeB;
+                      }
+                    );
+                  }
 
                   return {
-                    tickerData: {
-                      ...state.tickerData,
-                      [symbolKey]: {
-                        ...currentTicker,
-                        price: tradePrice,
-                        timestamp: rawData.T,
+                    candleData: {
+                      ...state.candleData,
+                      [symbol]: {
+                        ...symbolCandles,
+                        [activeTimeframe]: updatedCandles,
                       },
                     },
                   };
                 });
               }
-            }
-          }
-          break;
-
-        case "OHLCV_UPDATE":
-          if (message.symbol && message.data) {
-            const symbolKey = message.symbol as string;
-
-            // Only process if this is the active symbol
-            if (
-              symbolKey === get().activeSymbol ||
-              symbolKey.toLowerCase() === get().activeSymbol
-            ) {
-              const candleData = message.data as CandleData;
-
-              // Ensure the time is a number (timestamp in seconds)
-              if (typeof candleData.time !== "number") {
-                // If it's a string ISO date, convert to timestamp
-                if (typeof candleData.time === "string") {
-                  candleData.time = Math.floor(
-                    new Date(candleData.time).getTime() / 1000
-                  );
-                } else {
-                  // If it's something else, use current time
-                  candleData.time = Math.floor(Date.now() / 1000);
-                }
-              }
-
+            } else if (rawData.e === "24hrTicker") {
+              // Update ticker data
+              set((state) => ({
+                tickerData: {
+                  ...state.tickerData,
+                  [symbol]: {
+                    symbol,
+                    price: parseFloat(rawData.c),
+                    priceChangePercent: parseFloat(rawData.P),
+                    volume: parseFloat(rawData.v),
+                    timestamp: rawData.E,
+                  },
+                },
+              }));
+            } else if (rawData.e === "trade") {
+              // Update ticker with latest trade price
               set((state) => {
-                const existingData = state.candleData[symbolKey] || {};
-
-                // Update existing candle or add new one
-                const updatedData = {
-                  ...existingData,
-                  [get().activeTimeframe]: [
-                    ...existingData[get().activeTimeframe],
-                    candleData,
-                  ],
+                const currentTicker = state.tickerData[symbol] || {
+                  symbol,
+                  price: 0,
+                  priceChangePercent: 0,
+                  volume: 0,
+                  timestamp: Date.now(),
                 };
 
                 return {
-                  candleData: {
-                    ...state.candleData,
-                    [symbolKey]: updatedData,
+                  tickerData: {
+                    ...state.tickerData,
+                    [symbol]: {
+                      ...currentTicker,
+                      price: parseFloat(rawData.p),
+                      timestamp: rawData.T,
+                    },
                   },
                 };
               });
@@ -404,48 +306,63 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
           }
           break;
 
-        case "SUBSCRIPTION_SUCCESS":
-          console.log(
-            `WebSocket: Successfully subscribed to ${message.symbol}`
-          );
-          set({ lastError: null });
-          break;
-
-        case "UNSUBSCRIPTION_SUCCESS":
-          console.log(
-            `WebSocket: Successfully unsubscribed from ${message.symbol}`
-          );
-          break;
-
-        case "ERROR":
-          console.error("WebSocket: Error message received:", message.data);
-          set({ lastError: message.data?.message || "Unknown error" });
-          break;
-
-        case "PONG":
-          // Heartbeat response received - already updated lastHeartbeat
+        case "TICKER_UPDATE":
+          if (message.symbol && message.data) {
+            set((state) => ({
+              tickerData: {
+                ...state.tickerData,
+                [message.symbol!]: {
+                  symbol: message.symbol!,
+                  price: message.data.price,
+                  priceChangePercent: message.data.priceChangePercent || 0,
+                  volume: message.data.volume || 0,
+                  timestamp: message.data.timestamp || Date.now(),
+                },
+              },
+            }));
+          }
           break;
 
         case "CANDLE_HISTORY":
-          if (message.symbol && message.data && message.timeframe) {
-            const symbolKey = message.symbol.toLowerCase();
-            const timeframe = message.timeframe;
-            const candleData = message.data as CandleData[];
+          if (
+            message.symbol &&
+            message.timeframe &&
+            Array.isArray(message.data)
+          ) {
+            const candles: CandleData[] = message.data.map((candle) => {
+              // Ensure time is in seconds for lightweight-charts
+              let time = candle.time;
 
-            console.log(
-              `WebSocket: Received candle history for ${symbolKey} (${timeframe}), ${candleData.length} candles`
-            );
+              // Convert milliseconds to seconds if needed
+              if (typeof time === "number" && time > 10000000000) {
+                time = Math.floor(time / 1000);
+              }
 
-            // Update candle data for this symbol and timeframe
+              return {
+                time,
+                open: candle.open,
+                high: candle.high,
+                low: candle.low,
+                close: candle.close,
+                volume: candle.volume,
+              };
+            });
+
+            // Sort candles by time to ensure proper order
+            candles.sort((a, b) => {
+              const timeA = typeof a.time === "number" ? a.time : 0;
+              const timeB = typeof b.time === "number" ? b.time : 0;
+              return timeA - timeB;
+            });
+
             set((state) => {
-              const symbolCandles = state.candleData[symbolKey] || {};
-
+              const symbolCandles = state.candleData[message.symbol!] || {};
               return {
                 candleData: {
                   ...state.candleData,
-                  [symbolKey]: {
+                  [message.symbol!]: {
                     ...symbolCandles,
-                    [timeframe]: candleData,
+                    [message.timeframe!]: candles,
                   },
                 },
               };
@@ -453,50 +370,113 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
           }
           break;
 
-        case "CANDLE_UPDATE":
-          if (message.symbol && message.data && message.timeframe) {
-            const symbolKey = message.symbol.toLowerCase();
-            const timeframe = message.timeframe;
-            let candle: CandleData;
+        case "OHLCV_UPDATE":
+          if (
+            message.symbol &&
+            message.timeframe &&
+            message.data &&
+            typeof message.data === "object"
+          ) {
+            // Ensure time is in seconds for lightweight-charts
+            let time = message.data.time;
 
-            // Handle different possible formats of the candle data
-            if (message.data.candle) {
-              // Old format: { candle: {...}, timeframe: "1m" }
-              candle = message.data.candle as CandleData;
-            } else {
-              // New format: direct candle data
-              candle = message.data as CandleData;
+            // Convert milliseconds to seconds if needed
+            if (typeof time === "number" && time > 10000000000) {
+              time = Math.floor(time / 1000);
             }
 
-            // Ensure time is in the correct format (seconds since epoch)
-            if (typeof candle.time === "string") {
-              candle.time = Math.floor(new Date(candle.time).getTime() / 1000);
-            } else if (
-              typeof candle.time === "number" &&
-              candle.time > 10000000000
-            ) {
-              // If timestamp is in milliseconds, convert to seconds
-              candle.time = Math.floor(candle.time / 1000);
-            }
+            const candle: CandleData = {
+              time,
+              open: message.data.open,
+              high: message.data.high,
+              low: message.data.low,
+              close: message.data.close,
+              volume: message.data.volume,
+            };
 
-            console.log(
-              `WebSocket: Received candle update for ${symbolKey} (${timeframe})`
-            );
+            set((state) => {
+              const symbolCandles = state.candleData[message.symbol!] || {};
+              const timeframeCandles = symbolCandles[message.timeframe!] || [];
 
-            // Append or update the candle
-            get().appendCandleData(symbolKey, timeframe, candle);
+              // Check if this candle already exists (same timestamp)
+              const existingIndex = timeframeCandles.findIndex((c) => {
+                const cTime = typeof c.time === "number" ? c.time : 0;
+                const candleTime =
+                  typeof candle.time === "number" ? candle.time : 0;
+                return cTime === candleTime;
+              });
+
+              let updatedCandles;
+              if (existingIndex >= 0) {
+                // Update existing candle
+                updatedCandles = [...timeframeCandles];
+                updatedCandles[existingIndex] = candle;
+              } else {
+                // Add new candle
+                updatedCandles = [...timeframeCandles, candle].sort((a, b) => {
+                  const timeA = typeof a.time === "number" ? a.time : 0;
+                  const timeB = typeof b.time === "number" ? b.time : 0;
+                  return timeA - timeB;
+                });
+              }
+
+              return {
+                candleData: {
+                  ...state.candleData,
+                  [message.symbol!]: {
+                    ...symbolCandles,
+                    [message.timeframe!]: updatedCandles,
+                  },
+                },
+              };
+            });
           }
           break;
 
         case "BALANCE_UPDATE":
           if (message.data) {
-            set({ balance: message.data as BalanceUpdate });
+            console.log("WebSocket: Received balance update", message.data);
+            set({ balance: message.data });
+          }
+          break;
+
+        case "OPEN_ORDERS":
+          if (Array.isArray(message.data)) {
+            console.log("WebSocket: Received open orders", message.data);
+            const orders: Record<string, OrderUpdate> = {};
+            message.data.forEach((order) => {
+              orders[order.id] = {
+                orderId: order.id,
+                symbol: order.symbolName,
+                type: order.type,
+                side: order.side,
+                status: order.status,
+                quantity: order.quantity,
+                price: order.price,
+                filledQuantity: order.filledQuantity || 0,
+                averagePrice: order.averagePrice || order.price,
+                timestamp: order.createdAt || Date.now(),
+              };
+            });
+            set({ orders });
           }
           break;
 
         case "ORDER_UPDATE":
           if (message.data) {
-            const order = message.data as OrderUpdate;
+            console.log("WebSocket: Received order update", message.data);
+            const order: OrderUpdate = {
+              orderId: message.data.id,
+              symbol: message.data.symbolName,
+              type: message.data.type,
+              side: message.data.side,
+              status: message.data.status,
+              quantity: message.data.quantity,
+              price: message.data.price,
+              filledQuantity: message.data.filledQuantity || 0,
+              averagePrice: message.data.averagePrice || message.data.price,
+              timestamp: message.data.updatedAt || Date.now(),
+            };
             set((state) => ({
               orders: {
                 ...state.orders,
@@ -557,7 +537,19 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
     }
 
     try {
-      socketInstance = new WebSocket(WS_BASE_URL);
+      // Get the current token from auth store
+      const { token } = useAuthStore.getState();
+
+      // Create WebSocket URL with token if available
+      let wsUrl = WS_BASE_URL;
+      if (token) {
+        wsUrl += `?token=${token}`;
+        console.log("WebSocket: Connecting with authentication token");
+      } else {
+        console.log("WebSocket: Connecting without authentication");
+      }
+
+      socketInstance = new WebSocket(wsUrl);
 
       socketInstance.onopen = () => {
         console.log("WebSocket: Connection established");
@@ -594,41 +586,32 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
           });
         }
 
-        // Authenticate if user is logged in
-        const { isAuthenticated } = useAuthStore.getState();
-        if (isAuthenticated) {
-          authenticateWebSocket();
-        }
-
-        // Setup heartbeat
+        // Set up heartbeat interval
         if (heartbeatInterval) {
           clearInterval(heartbeatInterval);
         }
 
         heartbeatInterval = setInterval(() => {
           if (socketInstance && socketInstance.readyState === WebSocket.OPEN) {
-            socketInstance.send(JSON.stringify({ type: "PING" }));
-
-            // Check if we've received a response since the last ping
+            // Check if we haven't received a message in a while
             const lastHeartbeat = get().lastHeartbeat;
             const now = Date.now();
 
-            // If no heartbeat for more than 2x the interval, reconnect
             if (now - lastHeartbeat > WS_HEARTBEAT_INTERVAL_MS * 2) {
-              console.warn(
-                `WebSocket: No heartbeat received for ${
-                  (now - lastHeartbeat) / 1000
-                }s, reconnecting...`
+              console.log(
+                "WebSocket: No messages received recently, reconnecting..."
               );
-
-              // Force reconnection
-              if (socketInstance) {
-                socketInstance.close();
-                socketInstance = null;
-              }
-
-              setupWebSocket();
+              reconnect();
+              return;
             }
+
+            // Send ping to keep connection alive
+            socketInstance.send(JSON.stringify({ type: "PING" }));
+          } else {
+            console.log(
+              "WebSocket: Connection not open during heartbeat check, reconnecting..."
+            );
+            reconnect();
           }
         }, WS_HEARTBEAT_INTERVAL_MS);
       };
@@ -636,81 +619,80 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
       socketInstance.onmessage = handleMessage;
 
       socketInstance.onclose = (event) => {
-        console.log(
-          `WebSocket: Disconnected with code: ${event.code}, reason: ${event.reason}`
-        );
+        console.log(`WebSocket: Connection closed (${event.code})`);
         set({
           connectionState: "disconnected",
-          lastError: event.reason || "Connection closed",
+          isAuthenticated: false,
         });
 
-        // Clear heartbeat
+        // Clear heartbeat interval
         if (heartbeatInterval) {
           clearInterval(heartbeatInterval);
           heartbeatInterval = null;
         }
 
-        // Attempt reconnection
-        if (reconnectAttempts < WS_RECONNECT_ATTEMPTS) {
-          reconnectAttempts++;
-          const delay =
-            WS_RECONNECT_DELAY_MS * Math.pow(1.5, reconnectAttempts - 1);
-          console.log(
-            `WebSocket: Reconnecting... Attempt ${reconnectAttempts} in ${delay}ms`
-          );
-          setTimeout(setupWebSocket, delay);
-        } else {
-          console.error("WebSocket: Max reconnection attempts reached");
+        // Attempt to reconnect if not intentionally closed
+        if (!isReconnecting && event.code !== 1000) {
+          isReconnecting = true;
+
+          if (reconnectAttempts < WS_RECONNECT_ATTEMPTS) {
+            reconnectAttempts++;
+            const delay =
+              WS_RECONNECT_DELAY_MS * Math.pow(1.5, reconnectAttempts - 1);
+            console.log(
+              `WebSocket: Reconnecting after close... Attempt ${reconnectAttempts} in ${delay}ms`
+            );
+            reconnectTimeout = setTimeout(setupWebSocket, delay);
+          } else {
+            console.log("WebSocket: Max reconnect attempts reached, giving up");
+            set({
+              lastError: "Failed to reconnect after multiple attempts",
+            });
+            isReconnecting = false;
+          }
         }
       };
 
       socketInstance.onerror = (error) => {
-        console.error("WebSocket: Error:", error);
-        set({ lastError: "WebSocket connection error" });
+        console.error("WebSocket: Connection error", error);
+        set({
+          lastError: "Connection error",
+          connectionState: "disconnected",
+          isAuthenticated: false,
+        });
+
+        // Clear heartbeat interval
+        if (heartbeatInterval) {
+          clearInterval(heartbeatInterval);
+          heartbeatInterval = null;
+        }
+
+        // Attempt to reconnect
+        if (!isReconnecting && reconnectAttempts < WS_RECONNECT_ATTEMPTS) {
+          isReconnecting = true;
+          reconnectAttempts++;
+          const delay =
+            WS_RECONNECT_DELAY_MS * Math.pow(1.5, reconnectAttempts - 1);
+          console.log(
+            `WebSocket: Reconnecting after error... Attempt ${reconnectAttempts} in ${delay}ms`
+          );
+          reconnectTimeout = setTimeout(setupWebSocket, delay);
+        } else if (reconnectAttempts >= WS_RECONNECT_ATTEMPTS) {
+          console.log("WebSocket: Max reconnect attempts reached, giving up");
+          set({
+            lastError: "Failed to reconnect after multiple attempts",
+          });
+          isReconnecting = false;
+        }
       };
     } catch (error) {
-      console.error("WebSocket: Setup error:", error);
+      console.error("WebSocket: Error setting up connection", error);
       set({
+        lastError: "Failed to set up connection",
         connectionState: "disconnected",
-        lastError: error instanceof Error ? error.message : "Unknown error",
+        isAuthenticated: false,
       });
-
-      // Attempt reconnection after error
-      if (reconnectAttempts < WS_RECONNECT_ATTEMPTS) {
-        reconnectAttempts++;
-        const delay =
-          WS_RECONNECT_DELAY_MS * Math.pow(1.5, reconnectAttempts - 1);
-        console.log(
-          `WebSocket: Reconnecting after error... Attempt ${reconnectAttempts} in ${delay}ms`
-        );
-        setTimeout(setupWebSocket, delay);
-      }
     }
-  };
-
-  // Authenticate WebSocket connection
-  const authenticateWebSocket = () => {
-    if (!socketInstance || socketInstance.readyState !== WebSocket.OPEN) {
-      console.log("WebSocket: Cannot authenticate, connection not open");
-      return;
-    }
-
-    if (isAuthenticating) {
-      console.log("WebSocket: Already authenticating, skipping");
-      return;
-    }
-
-    const { token } = useAuthStore.getState();
-    if (!token) {
-      console.log("WebSocket: No token available for authentication");
-      return;
-    }
-
-    isAuthenticating = true;
-    console.log("WebSocket: Authenticating connection");
-
-    // No need to send an AUTHENTICATE message - the token is already in the URL
-    // The server will handle authentication based on the token
   };
 
   // Reconnect to WebSocket with current auth token
@@ -736,24 +718,8 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
 
     // Wait a moment to ensure the connection is closed
     setTimeout(() => {
-      // Get the current token from auth store
-      const { token } = useAuthStore.getState();
-
-      // Recreate the WebSocket URL with the current token
-      let wsUrl = WS_BASE_URL;
-
-      // If the URL already has a token parameter, remove it
-      if (wsUrl.includes("?token=")) {
-        wsUrl = wsUrl.split("?token=")[0];
-      }
-
-      // Add the current token if available
-      if (token) {
-        wsUrl += `?token=${token}`;
-      }
-
       isReconnecting = true;
-      console.log(`WebSocket: Reconnecting with${token ? "" : "out"} token`);
+      console.log("WebSocket: Reconnecting with new connection");
 
       // Set up a new connection
       set({ connectionState: "connecting" });
@@ -773,7 +739,15 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
       heartbeatInterval = null;
     }
 
-    set({ connectionState: "disconnected" });
+    if (reconnectTimeout) {
+      clearTimeout(reconnectTimeout);
+      reconnectTimeout = null;
+    }
+
+    set({
+      connectionState: "disconnected",
+      isAuthenticated: false,
+    });
   };
 
   return {
@@ -781,6 +755,7 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
     connectionState: "disconnected",
     lastError: null,
     lastHeartbeat: 0,
+    isAuthenticated: false,
 
     // Market data
     tickerData: {},
@@ -802,116 +777,61 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
     reconnect,
 
     // Subscription methods
-    subscribeToSymbol: (symbol) => {
-      const normalizedSymbol = symbol.toLowerCase();
-      const { subscribedSymbols, connectionState } = get();
-
-      // Check if already subscribed
-      if (subscribedSymbols.has(normalizedSymbol)) {
-        console.log(`WebSocket: Already subscribed to ${normalizedSymbol}`);
-        return;
-      }
-
-      console.log(`WebSocket: Subscribing to symbol: ${normalizedSymbol}`);
-
-      // Add to subscribed symbols set
-      set((state) => ({
-        subscribedSymbols: new Set([
-          ...state.subscribedSymbols,
-          normalizedSymbol,
-        ]),
-        // Set as active symbol if we don't have one yet
-        activeSymbol: state.activeSymbol || normalizedSymbol,
-      }));
+    subscribeToSymbol: (symbol: string) => {
+      // Add to subscription set
+      set((state) => {
+        const newSubscribedSymbols = new Set(state.subscribedSymbols);
+        newSubscribedSymbols.add(symbol);
+        return { subscribedSymbols: newSubscribedSymbols };
+      });
 
       // Send subscription message if connected
-      if (socketInstance && connectionState === "connected") {
-        console.log(
-          `WebSocket: Sending subscription message for ${normalizedSymbol}`
-        );
+      if (socketInstance && socketInstance.readyState === WebSocket.OPEN) {
         socketInstance.send(
           JSON.stringify({
             type: "SUBSCRIBE",
-            symbol: normalizedSymbol,
+            symbol,
           })
         );
-      } else {
-        console.log(
-          `WebSocket: Will subscribe to ${normalizedSymbol} when connected (current state: ${connectionState})`
-        );
-
-        // If not connected, try to connect
-        if (connectionState === "disconnected") {
-          console.log("WebSocket: Not connected, initiating connection");
-          setupWebSocket();
-        }
       }
     },
 
-    unsubscribeFromSymbol: (symbol) => {
-      const normalizedSymbol = symbol.toLowerCase();
-      const { subscribedSymbols, connectionState, activeSymbol } = get();
-
-      // Check if not subscribed
-      if (!subscribedSymbols.has(normalizedSymbol)) {
-        console.log(`WebSocket: Not subscribed to ${normalizedSymbol}`);
-        return;
-      }
-
-      console.log(`WebSocket: Unsubscribing from symbol: ${normalizedSymbol}`);
-
-      // Remove from subscribed symbols set
-      const newSubscribedSymbols = new Set(subscribedSymbols);
-      newSubscribedSymbols.delete(normalizedSymbol);
-
-      // Update active symbol if needed
-      let newActiveSymbol = activeSymbol;
-      if (activeSymbol === normalizedSymbol) {
-        newActiveSymbol =
-          newSubscribedSymbols.size > 0
-            ? Array.from(newSubscribedSymbols)[0]
-            : null;
-      }
-
-      set({
-        subscribedSymbols: newSubscribedSymbols,
-        activeSymbol: newActiveSymbol,
+    unsubscribeFromSymbol: (symbol: string) => {
+      // Remove from subscription set
+      set((state) => {
+        const newSubscribedSymbols = new Set(state.subscribedSymbols);
+        newSubscribedSymbols.delete(symbol);
+        return { subscribedSymbols: newSubscribedSymbols };
       });
 
       // Send unsubscription message if connected
-      if (socketInstance && connectionState === "connected") {
-        console.log(
-          `WebSocket: Sending unsubscription message for ${normalizedSymbol}`
-        );
+      if (socketInstance && socketInstance.readyState === WebSocket.OPEN) {
         socketInstance.send(
           JSON.stringify({
             type: "UNSUBSCRIBE",
-            symbol: normalizedSymbol,
+            symbol,
           })
         );
       }
     },
 
     subscribeToCandles: (symbol: string, timeframe: string) => {
-      const { connectionState, subscribedCandles } = get();
-      const symbolKey = symbol.toLowerCase();
-
-      // Add to subscribed candles
-      const timeframes = subscribedCandles.get(symbolKey) || new Set<string>();
-      timeframes.add(timeframe);
-      subscribedCandles.set(symbolKey, timeframes);
-
-      set({ subscribedCandles });
+      // Add to subscription set
+      set((state) => {
+        const newSubscribedCandles = new Map(state.subscribedCandles);
+        const symbolTimeframes =
+          newSubscribedCandles.get(symbol) || new Set<string>();
+        symbolTimeframes.add(timeframe);
+        newSubscribedCandles.set(symbol, symbolTimeframes);
+        return { subscribedCandles: newSubscribedCandles };
+      });
 
       // Send subscription message if connected
-      if (connectionState === "connected" && socketInstance) {
-        console.log(
-          `WebSocket: Subscribing to ${symbolKey} candles with timeframe ${timeframe}`
-        );
+      if (socketInstance && socketInstance.readyState === WebSocket.OPEN) {
         socketInstance.send(
           JSON.stringify({
             type: "SUBSCRIBE_CANDLES",
-            symbol: symbolKey,
+            symbol,
             timeframe,
           })
         );
@@ -919,31 +839,27 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
     },
 
     unsubscribeFromCandles: (symbol: string, timeframe: string) => {
-      const { connectionState, subscribedCandles } = get();
-      const symbolKey = symbol.toLowerCase();
-
-      // Remove from subscribed candles
-      const timeframes = subscribedCandles.get(symbolKey);
-      if (timeframes) {
-        timeframes.delete(timeframe);
-        if (timeframes.size === 0) {
-          subscribedCandles.delete(symbolKey);
-        } else {
-          subscribedCandles.set(symbolKey, timeframes);
+      // Remove from subscription set
+      set((state) => {
+        const newSubscribedCandles = new Map(state.subscribedCandles);
+        const symbolTimeframes = newSubscribedCandles.get(symbol);
+        if (symbolTimeframes) {
+          symbolTimeframes.delete(timeframe);
+          if (symbolTimeframes.size === 0) {
+            newSubscribedCandles.delete(symbol);
+          } else {
+            newSubscribedCandles.set(symbol, symbolTimeframes);
+          }
         }
-      }
-
-      set({ subscribedCandles });
+        return { subscribedCandles: newSubscribedCandles };
+      });
 
       // Send unsubscription message if connected
-      if (connectionState === "connected" && socketInstance) {
-        console.log(
-          `WebSocket: Unsubscribing from ${symbolKey} candles with timeframe ${timeframe}`
-        );
+      if (socketInstance && socketInstance.readyState === WebSocket.OPEN) {
         socketInstance.send(
           JSON.stringify({
             type: "UNSUBSCRIBE_CANDLES",
-            symbol: symbolKey,
+            symbol,
             timeframe,
           })
         );
@@ -951,22 +867,11 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
     },
 
     setActiveSymbol: (symbol: string) => {
-      const symbolKey = symbol.toLowerCase();
-      set({ activeSymbol: symbolKey });
-
-      // Subscribe to candles for the active symbol and timeframe
-      const { activeTimeframe, subscribeToCandles } = get();
-      subscribeToCandles(symbolKey, activeTimeframe);
+      set({ activeSymbol: symbol });
     },
 
     setActiveTimeframe: (timeframe: string) => {
       set({ activeTimeframe: timeframe });
-
-      // Subscribe to candles for the active symbol and new timeframe
-      const { activeSymbol, subscribeToCandles } = get();
-      if (activeSymbol) {
-        subscribeToCandles(activeSymbol, timeframe);
-      }
     },
 
     // Internal methods
@@ -987,15 +892,12 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
       timeframe: string,
       data: CandleData[]
     ) => {
-      const symbolKey = symbol.toLowerCase();
-
       set((state) => {
-        const symbolCandles = state.candleData[symbolKey] || {};
-
+        const symbolCandles = state.candleData[symbol] || {};
         return {
           candleData: {
             ...state.candleData,
-            [symbolKey]: {
+            [symbol]: {
               ...symbolCandles,
               [timeframe]: data,
             },
@@ -1009,10 +911,8 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
       timeframe: string,
       candle: CandleData
     ) => {
-      const symbolKey = symbol.toLowerCase();
-
       set((state) => {
-        const symbolCandles = state.candleData[symbolKey] || {};
+        const symbolCandles = state.candleData[symbol] || {};
         const timeframeCandles = symbolCandles[timeframe] || [];
 
         // Check if this candle already exists (same timestamp)
@@ -1020,28 +920,22 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
           (c) => c.time === candle.time
         );
 
-        let updatedCandles: CandleData[];
-
+        let updatedCandles;
         if (existingIndex >= 0) {
           // Update existing candle
           updatedCandles = [...timeframeCandles];
           updatedCandles[existingIndex] = candle;
         } else {
           // Add new candle
-          updatedCandles = [...timeframeCandles, candle];
-          // Sort by time
-          updatedCandles.sort((a, b) => a.time - b.time);
-
-          // Limit to 100 candles
-          if (updatedCandles.length > 100) {
-            updatedCandles = updatedCandles.slice(-100);
-          }
+          updatedCandles = [...timeframeCandles, candle].sort(
+            (a, b) => a.time - b.time
+          );
         }
 
         return {
           candleData: {
             ...state.candleData,
-            [symbolKey]: {
+            [symbol]: {
               ...symbolCandles,
               [timeframe]: updatedCandles,
             },
@@ -1071,39 +965,82 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
         ),
       }));
     },
-
-    // Authenticate methods
-    authenticateWebSocket,
   };
 });
 
-// Auto-connect when this module is imported
-if (typeof window !== "undefined") {
-  console.log("WebSocket: Auto-connecting on module import");
-  setTimeout(() => {
-    console.log("WebSocket: Initializing connection");
-    useWebSocketStore.getState().connect();
-  }, 0);
-}
+// Add React useEffect hook
+import { useEffect } from "react";
 
-// Export the WebSocket service
-const websocketService = {
-  connect: () => useWebSocketStore.getState().connect(),
-  disconnect: () => useWebSocketStore.getState().disconnect(),
-  reconnect: () => useWebSocketStore.getState().reconnect(),
-  subscribeToSymbol: (symbol: string) =>
-    useWebSocketStore.getState().subscribeToSymbol(symbol),
-  unsubscribeFromSymbol: (symbol: string) =>
-    useWebSocketStore.getState().unsubscribeFromSymbol(symbol),
-  subscribeToCandles: (symbol: string, timeframe: string) =>
-    useWebSocketStore.getState().subscribeToCandles(symbol, timeframe),
-  unsubscribeFromCandles: (symbol: string, timeframe: string) =>
-    useWebSocketStore.getState().unsubscribeFromCandles(symbol, timeframe),
-  setActiveSymbol: (symbol: string) =>
-    useWebSocketStore.getState().setActiveSymbol(symbol),
-  setActiveTimeframe: (timeframe: string) =>
-    useWebSocketStore.getState().setActiveTimeframe(timeframe),
-  authenticateWebSocket: () =>
-    useWebSocketStore.getState().authenticateWebSocket(),
-};
-export default websocketService;
+// Helper function to use the WebSocket store in components
+export function useWebSocket() {
+  const {
+    connect,
+    disconnect,
+    reconnect,
+    connectionState,
+    lastError,
+    isAuthenticated,
+    tickerData,
+    candleData,
+    balance,
+    orders,
+    subscribeToSymbol,
+    unsubscribeFromSymbol,
+    subscribeToCandles,
+    unsubscribeFromCandles,
+    setActiveSymbol,
+    setActiveTimeframe,
+    activeSymbol,
+    activeTimeframe,
+  } = useWebSocketStore();
+
+  // Connect to WebSocket on component mount
+  useEffect(() => {
+    connect();
+    return () => {
+      // No need to disconnect on unmount as we want to keep the connection alive
+      // disconnect();
+    };
+  }, [connect]);
+
+  // Listen for auth state changes
+  useEffect(() => {
+    const unsubscribe = useAuthStore.subscribe((state) => {
+      const { isAuthenticated: authStoreAuthenticated } = state;
+
+      // If auth state changes, reconnect the WebSocket
+      if (connectionState === "connected") {
+        console.log(
+          `WebSocket: Auth state changed, reconnecting (authenticated: ${authStoreAuthenticated})`
+        );
+        reconnect();
+      }
+    });
+
+    return unsubscribe;
+  }, [connectionState, reconnect]);
+
+  return {
+    connectionState,
+    isConnected: connectionState === "connected",
+    isConnecting: connectionState === "connecting",
+    isDisconnected: connectionState === "disconnected",
+    isAuthenticated,
+    lastError,
+    tickerData,
+    candleData,
+    balance,
+    orders,
+    connect,
+    disconnect,
+    reconnect,
+    subscribeToSymbol,
+    unsubscribeFromSymbol,
+    subscribeToCandles,
+    unsubscribeFromCandles,
+    setActiveSymbol,
+    setActiveTimeframe,
+    activeSymbol,
+    activeTimeframe,
+  };
+}

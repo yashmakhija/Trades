@@ -1,21 +1,18 @@
 "use client";
 
-import { useEffect } from "react";
 import { useBalanceStore, useBalanceSync } from "@/store/use-balance-store";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatCurrency } from "@/lib/utils";
+import { useWebSocket } from "@/services/websocket";
 
 export function BalanceDisplay() {
   const { total, available, reserved, totalPnl, isLoading, error } =
     useBalanceStore();
+  const { isAuthenticated } = useWebSocket();
   useBalanceSync();
 
-  useEffect(() => {
-    useBalanceStore.getState().fetchBalance();
-  }, []);
-
-  if (isLoading) {
+  if (isLoading && isAuthenticated) {
     return (
       <Card className="w-full">
         <CardContent className="p-4">
@@ -34,6 +31,18 @@ export function BalanceDisplay() {
       <Card className="w-full border-destructive">
         <CardContent className="p-4">
           <p className="text-sm text-destructive">{error}</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <Card className="w-full">
+        <CardContent className="p-4">
+          <p className="text-sm text-muted-foreground">
+            Please log in to view your balance
+          </p>
         </CardContent>
       </Card>
     );
