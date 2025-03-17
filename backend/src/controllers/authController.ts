@@ -118,7 +118,7 @@ export async function getProfile(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    const userId = req.user.userId;
+    const userId = req.user.id;
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -140,5 +140,24 @@ export async function getProfile(req: Request, res: Response): Promise<void> {
   } catch (error) {
     console.error("Error fetching profile:", error);
     res.status(500).json({ error: "Failed to fetch profile" });
+  }
+}
+
+export async function verifyToken(req: Request, res: Response): Promise<void> {
+  try {
+    // If the request reaches here, it means the token is valid
+    // (because it passed through the authenticateToken middleware)
+    res.status(200).json({
+      valid: true,
+      user: {
+        id: req.user?.id,
+      },
+    });
+  } catch (error) {
+    console.error("Error verifying token:", error);
+    res.status(401).json({
+      valid: false,
+      error: "Invalid token",
+    });
   }
 }

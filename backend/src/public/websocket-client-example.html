@@ -181,6 +181,7 @@
           <p><strong>Name:</strong> <span id="user-name"></span></p>
           <p><strong>Email:</strong> <span id="user-email"></span></p>
           <p><strong>Balance:</strong> $<span id="user-balance"></span></p>
+          <button onclick="logout()">Logout</button>
         </div>
       </div>
 
@@ -288,15 +289,20 @@
 
       // Initialize WebSocket connection
       function initWebSocket() {
-        const wsUrl = `ws://${window.location.hostname}:${window.location.port}`;
-        ws = new WebSocket(wsUrl);
+        const wsUrl = `ws://${window.location.hostname}:${window.location.port}/ws`;
+
+        // If token exists, include it in the connection URL
+        if (token) {
+          ws = new WebSocket(`${wsUrl}?token=${token}`);
+        } else {
+          ws = new WebSocket(wsUrl);
+        }
 
         ws.onopen = function () {
           logMessage("WebSocket connection established");
 
           // Authenticate if token exists
           if (token && userId) {
-            authenticateWebSocket();
             displayUserInfo();
             getOrders();
           }
@@ -378,18 +384,6 @@
             JSON.stringify({
               type: "UNSUBSCRIBE",
               symbol: symbol,
-            })
-          );
-        }
-      }
-
-      // Authenticate WebSocket connection
-      function authenticateWebSocket() {
-        if (ws && ws.readyState === WebSocket.OPEN && userId) {
-          ws.send(
-            JSON.stringify({
-              type: "AUTHENTICATE",
-              userId: userId,
             })
           );
         }
@@ -505,7 +499,12 @@
 
             // Update UI
             displayUserInfo();
-            authenticateWebSocket();
+
+            // Reconnect WebSocket with token
+            if (ws) {
+              ws.close();
+            }
+            initWebSocket();
           } else {
             logMessage(`Registration failed: ${data.error}`);
           }
@@ -550,7 +549,13 @@
 
             // Update UI
             displayUserInfo();
-            authenticateWebSocket();
+
+            // Reconnect WebSocket with token
+            if (ws) {
+              ws.close();
+            }
+            initWebSocket();
+
             getOrders();
           } else {
             logMessage(`Login failed: ${data.error}`);
@@ -779,6 +784,39 @@
         } catch (error) {
           logMessage(`Error cancelling order: ${error.message}`);
         }
+      }
+
+      // Logout the current user
+      function logout() {
+        // Clear local storage
+        localStorage.removeItem("token");
+        localStorage.removeItem("userId");
+        localStorage.removeItem("userEmail");
+        localStorage.removeItem("userName");
+        localStorage.removeItem("userBalance");
+
+        // Reset global variables
+        token = null;
+        userId = null;
+
+        // Hide user info
+        document.getElementById("user-info").style.display = "none";
+
+        // Clear orders display
+        document.getElementById("open-orders").innerHTML =
+          "<p>No open orders</p>";
+        document.getElementById("closed-orders").innerHTML =
+          "<p>No closed orders</p>";
+
+        // Reconnect WebSocket without token
+        if (ws) {
+          ws.close();
+        }
+
+        logMessage("Logged out successfully");
+
+        // Reconnect as anonymous user
+        initWebSocket();
       }
 
       // Initialize the application

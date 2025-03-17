@@ -3,15 +3,6 @@ import { broadcastBalanceUpdate } from "./webSocketService";
 import { prisma } from "../server";
 import { OrderType, OrderStatus } from "@prisma/client";
 
-interface UserBalance {
-  total: number;
-  reserved: number;
-  available: number;
-  positions: Map<string, Position>;
-  lastUpdate: Date;
-  openOrders: Set<string>; // Track open orders
-}
-
 interface Position {
   symbol: string;
   quantity: number;
@@ -19,7 +10,16 @@ interface Position {
   currentPrice: number;
   orderId: string;
   pnl: number;
-  status: OrderStatus; // Add order status
+  status: string;
+}
+
+interface UserBalance {
+  total: number;
+  reserved: number;
+  available: number;
+  positions: Map<string, Position>;
+  lastUpdate: Date;
+  openOrders: Set<string>;
 }
 
 /**
@@ -89,7 +89,17 @@ export class BalanceManager extends EventEmitter {
   }
 
   async updateSymbolPrice(symbol: string, newPrice: number) {
+    if (!symbol || !newPrice) {
+      console.warn(`Invalid symbol or price: ${symbol}, ${newPrice}`);
+      return;
+    }
+
     this.userBalances.forEach((balance, userId) => {
+      if (!userId) {
+        console.warn("Found balance with no userId");
+        return;
+      }
+
       let totalPnlChange = 0;
 
       balance.positions.forEach((position) => {
@@ -102,8 +112,19 @@ export class BalanceManager extends EventEmitter {
       });
 
       if (totalPnlChange !== 0) {
-        balance.lastUpdate = new Date();
-        this.broadcastBalanceUpdate(userId);
+        // Only broadcast if there was a change
+        broadcastBalanceUpdate(userId, {
+          total: balance.total,
+          reserved: balance.reserved,
+          available: balance.available,
+          positions: Array.from(balance.positions.values()),
+          totalValue:
+            balance.total +
+            Array.from(balance.positions.values()).reduce(
+              (sum, pos) => sum + pos.quantity * pos.currentPrice,
+              0
+            ),
+        });
       }
     });
   }
@@ -331,13 +352,46 @@ export class BalanceManager extends EventEmitter {
     available: number;
     positions: Position[];
     totalValue: number;
+    totalPnl: number;
+    totalPositionValue: number;
+    openOrdersCount: number;
   } | null> {
+    // Check if userId is valid
+    if (!userId) {
+      console.warn("getUserBalance called with no userId - returning null");
+      return null;
+    }
+
+    console.log(`Getting balance for user ${userId}`);
+
+    // Validate UUID format
+    const uuidRegex =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(userId)) {
+      console.log(
+        `getUserBalance called with invalid userId format: ${userId}`
+      );
+      return null;
+    }
+
     const cachedBalance = this.userBalances.get(userId);
     if (!cachedBalance) {
+      console.log(
+        `No cached balance found for user ${userId}, initializing...`
+      );
       // If not in cache, fetch from DB and cache it
-      await this.initializeUserBalance(userId);
+      const result = await this.initializeUserBalance(userId);
+      if (!result) {
+        console.warn(`Failed to initialize balance for user ${userId}`);
+        return null;
+      }
+      console.log(`Balance initialized for user ${userId}, retrieving...`);
       return this.getUserBalance(userId);
     }
+
+    console.log(
+      `Found cached balance for user ${userId}: total=${cachedBalance.total}, available=${cachedBalance.available}`
+    );
 
     const positions = Array.from(cachedBalance.positions.values());
     const totalPositionValue = positions.reduce(
@@ -345,57 +399,117 @@ export class BalanceManager extends EventEmitter {
       0
     );
 
+    const totalPnl = positions.reduce((sum, pos) => sum + pos.pnl, 0);
+
     return {
       total: cachedBalance.total,
       reserved: cachedBalance.reserved,
       available: cachedBalance.available,
       positions,
       totalValue: cachedBalance.total + totalPositionValue,
+      totalPnl,
+      totalPositionValue,
+      openOrdersCount: cachedBalance.openOrders.size,
     };
   }
 
   private async initializeUserBalance(userId: string) {
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      include: {
-        orders: {
-          where: { status: "OPEN" },
-          include: { symbol: true },
-        },
-      },
-    });
-
-    if (!user) return null;
-
-    const positions = new Map<string, Position>();
-    const openOrders = new Set<string>();
-    let reserved = 0;
-
-    user.orders.forEach((order) => {
-      reserved += order.reservedAmount || 0;
-      if (order.status === OrderStatus.OPEN) {
-        openOrders.add(order.id);
-        positions.set(order.id, {
-          symbol: order.symbol.name,
-          quantity: order.quantity,
-          averagePrice: order.price,
-          currentPrice: order.symbol.currentPrice || 0,
-          orderId: order.id,
-          pnl:
-            ((order.symbol.currentPrice || 0) - order.price) * order.quantity,
-          status: order.status,
-        });
+    try {
+      if (!userId) {
+        console.error(
+          `Cannot initialize balance for invalid user ID: ${userId}`
+        );
+        return null;
       }
-    });
 
-    this.userBalances.set(userId, {
-      total: user.usdcBalance,
-      reserved,
-      available: user.usdcBalance - reserved,
-      positions,
-      lastUpdate: new Date(),
-      openOrders,
-    });
+      const uuidRegex =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(userId)) {
+        console.error(`Invalid user ID format: ${userId}`);
+        return null;
+      }
+
+      console.log(`BalanceManager: Initializing balance for user ${userId}`);
+
+      const user = await prisma.user.findUnique({
+        where: {
+          id: userId,
+        },
+        include: {
+          orders: {
+            where: {
+              status: "OPEN",
+            },
+            include: {
+              symbol: true,
+            },
+          },
+        },
+      });
+
+      if (!user) {
+        console.error(`User not found for ID: ${userId}`);
+        return null;
+      }
+
+      console.log(`Found user ${userId} with balance: ${user.usdcBalance}`);
+
+      const positions = new Map<string, Position>();
+      const openOrders = new Set<string>();
+      let reserved = 0;
+
+      for (const order of user.orders) {
+        openOrders.add(order.id);
+        const symbolName = order.symbol.name;
+        const position = positions.get(symbolName);
+
+        if (position) {
+          position.quantity +=
+            order.type === "BUY" ? order.quantity : -order.quantity;
+          position.averagePrice = order.price;
+          position.currentPrice = order.price;
+          position.pnl = 0;
+          position.status = order.status;
+        } else {
+          positions.set(symbolName, {
+            symbol: symbolName,
+            quantity: order.type === "BUY" ? order.quantity : -order.quantity,
+            averagePrice: order.price,
+            currentPrice: order.price,
+            orderId: order.id,
+            pnl: 0,
+            status: order.status,
+          });
+        }
+
+        if (order.reservedAmount) {
+          reserved += order.reservedAmount;
+        }
+      }
+
+      console.log(
+        `User ${userId} has ${openOrders.size} open orders and ${reserved} reserved balance`
+      );
+
+      this.userBalances.set(userId, {
+        total: user.usdcBalance,
+        reserved: reserved,
+        available: user.usdcBalance - reserved,
+        positions,
+        lastUpdate: new Date(),
+        openOrders,
+      });
+
+      console.log(
+        `Balance initialized for user ${userId}: total=${
+          user.usdcBalance
+        }, available=${user.usdcBalance - reserved}`
+      );
+      return this.userBalances.get(userId);
+    } catch (error) {
+      console.error(`Error initializing balance for user ${userId}:`, error);
+      return null;
+    }
   }
 
   /**

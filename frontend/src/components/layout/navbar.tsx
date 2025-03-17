@@ -20,12 +20,12 @@ import {
 import { LogOut, User, BarChart2, Settings } from "lucide-react";
 import { useEffect, useState } from "react";
 import { BalanceDisplay } from "@/components/balance/balance-display";
-import { UserNav } from "@/components/user/user-nav";
+// import { UserNav } from "@/components/user/user-nav";
 
 export function Navbar() {
   const pathname = usePathname();
   const { isAuthenticated, user } = useAuthStore();
-  const { logout, demoAccount } = useDemoAuth();
+  const { logout,  } = useDemoAuth();
   // Add client-side only state to prevent hydration mismatch
   const [isMounted, setIsMounted] = useState(false);
 
@@ -86,16 +86,9 @@ export function Navbar() {
             {isMounted ? (
               isAuthenticated && user ? (
                 <>
-                  {demoAccount && (
-                    <div className="hidden md:flex flex-col items-end">
-                      <span className="text-sm font-medium">
-                        ${demoAccount.balance.toLocaleString()}
-                      </span>
-                      <span className="text-xs text-muted-foreground">
-                        Demo Balance
-                      </span>
-                    </div>
-                  )}
+                  <div className="hidden md:block w-64">
+                    <BalanceDisplay />
+                  </div>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button

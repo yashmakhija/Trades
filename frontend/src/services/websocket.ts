@@ -5,6 +5,8 @@ import {
   WS_RECONNECT_DELAY_MS,
   WS_HEARTBEAT_INTERVAL_MS,
 } from "@/config";
+import { Position } from "@/store/use-balance-store";
+import { useAuthStore } from "@/store/use-auth-store";
 
 // Define types for market data
 export interface TickerData {
@@ -24,6 +26,31 @@ export interface CandleData {
   volume: number;
 }
 
+// Add new message types
+export interface BalanceUpdate {
+  total: number;
+  available: number;
+  reserved: number;
+  positions: Position[];
+  totalValue: number;
+  totalPnl: number;
+  totalPositionValue: number;
+  openOrdersCount: number;
+}
+
+export interface OrderUpdate {
+  orderId: string;
+  symbol: string;
+  type: "MARKET" | "LIMIT";
+  side: "BUY" | "SELL";
+  status: "PENDING" | "FILLED" | "CANCELLED" | "REJECTED";
+  quantity: number;
+  price: number;
+  filledQuantity: number;
+  averagePrice: number;
+  timestamp: number;
+}
+
 // WebSocket message types
 interface WebSocketMessage {
   type: string;
@@ -32,6 +59,8 @@ interface WebSocketMessage {
   data: any;
   symbol?: string;
   timeframe?: string;
+  userId?: string;
+  error?: string;
 }
 
 // WebSocket connection states
@@ -54,9 +83,14 @@ interface WebSocketStore {
   activeSymbol: string | null;
   activeTimeframe: string;
 
+  // Balance and Order data
+  balance: BalanceUpdate | null;
+  orders: Record<string, OrderUpdate>;
+
   // Connection methods
   connect: () => void;
   disconnect: () => void;
+  reconnect: () => void;
 
   // Subscription methods
   subscribeToSymbol: (symbol: string) => void;
@@ -80,12 +114,23 @@ interface WebSocketStore {
     timeframe: string,
     candle: CandleData
   ) => void;
+
+  // Additional methods
+  updateBalance: (balance: BalanceUpdate) => void;
+  updateOrder: (order: OrderUpdate) => void;
+  removeOrder: (orderId: string) => void;
+
+  // Authenticate methods
+  authenticateWebSocket: () => void;
 }
 
 // Create a singleton WebSocket instance
 let socketInstance: WebSocket | null = null;
 let heartbeatInterval: NodeJS.Timeout | null = null;
 let reconnectAttempts = 0;
+let reconnectTimeout: NodeJS.Timeout | null = null;
+let isReconnecting = false;
+let isAuthenticating = false;
 
 // Create WebSocket store
 export const useWebSocketStore = create<WebSocketStore>((set, get) => {
@@ -124,6 +169,33 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
                 [symbolKey]: message.data as TickerData,
               },
             }));
+          }
+          break;
+
+        case "AUTHENTICATION_SUCCESS":
+          console.log("WebSocket: Authentication successful");
+          isAuthenticating = false;
+          set({ lastError: null });
+          break;
+
+        case "AUTH_ERROR":
+          console.error("WebSocket: Authentication error:", message.error);
+          isAuthenticating = false;
+
+          // If we have a token but got an auth error, the token is likely invalid
+          if (useAuthStore.getState().token) {
+            console.warn("WebSocket: Token appears to be invalid, logging out");
+            useAuthStore.getState().logout();
+          }
+
+          set({ lastError: message.error || "Authentication failed" });
+          break;
+
+        case "CONNECTION_SUCCESS":
+          console.log("WebSocket: Connection established successfully");
+          // If we're authenticated, try to authenticate the WebSocket
+          if (useAuthStore.getState().isAuthenticated) {
+            authenticateWebSocket();
           }
           break;
 
@@ -416,42 +488,73 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
           }
           break;
 
+        case "BALANCE_UPDATE":
+          if (message.data) {
+            set({ balance: message.data as BalanceUpdate });
+          }
+          break;
+
+        case "ORDER_UPDATE":
+          if (message.data) {
+            const order = message.data as OrderUpdate;
+            set((state) => ({
+              orders: {
+                ...state.orders,
+                [order.orderId]: order,
+              },
+            }));
+          }
+          break;
+
+        case "ORDER_REMOVED":
+          if (message.data?.orderId) {
+            set((state) => ({
+              orders: Object.fromEntries(
+                Object.entries(state.orders).filter(
+                  ([key]) => key !== message.data.orderId
+                )
+              ),
+            }));
+          }
+          break;
+
         default:
           console.log("WebSocket: Unhandled message type:", message.type);
       }
     } catch (error) {
       console.error("WebSocket: Error handling message:", error);
-      set({
-        lastError: error instanceof Error ? error.message : "Unknown error",
-      });
+      set({ lastError: "Failed to process message" });
     }
   };
 
   // Setup WebSocket connection
   const setupWebSocket = () => {
-    // Don't create a new connection if one already exists and is open/connecting
+    if (isReconnecting) {
+      console.log("WebSocket: Already reconnecting, skipping setup");
+      return;
+    }
+
+    // Clear any existing reconnect timeout
+    if (reconnectTimeout) {
+      clearTimeout(reconnectTimeout);
+      reconnectTimeout = null;
+    }
+
+    // Set connection state to connecting
+    set({ connectionState: "connecting" });
+    console.log("WebSocket: Connect method called");
+
+    // Check if we already have a connection
     if (
       socketInstance &&
-      (socketInstance.readyState === WebSocket.OPEN ||
-        socketInstance.readyState === WebSocket.CONNECTING)
+      (socketInstance.readyState === WebSocket.CONNECTING ||
+        socketInstance.readyState === WebSocket.OPEN)
     ) {
       console.log(
         "WebSocket: Connection already exists, not creating a new one"
       );
       return;
     }
-
-    // Close existing socket if in a bad state
-    if (socketInstance) {
-      console.log(
-        "WebSocket: Closing existing connection before creating a new one"
-      );
-      socketInstance.close();
-      socketInstance = null;
-    }
-
-    console.log(`WebSocket: Connecting to ${WS_BASE_URL}`);
-    set({ connectionState: "connecting", lastError: null });
 
     try {
       socketInstance = new WebSocket(WS_BASE_URL);
@@ -464,6 +567,7 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
           lastHeartbeat: Date.now(),
         });
         reconnectAttempts = 0;
+        isReconnecting = false;
 
         // Subscribe to all symbols in the subscription set
         const { subscribedSymbols } = get();
@@ -488,6 +592,12 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
               );
             }
           });
+        }
+
+        // Authenticate if user is logged in
+        const { isAuthenticated } = useAuthStore.getState();
+        if (isAuthenticated) {
+          authenticateWebSocket();
         }
 
         // Setup heartbeat
@@ -578,37 +688,118 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
     }
   };
 
+  // Authenticate WebSocket connection
+  const authenticateWebSocket = () => {
+    if (!socketInstance || socketInstance.readyState !== WebSocket.OPEN) {
+      console.log("WebSocket: Cannot authenticate, connection not open");
+      return;
+    }
+
+    if (isAuthenticating) {
+      console.log("WebSocket: Already authenticating, skipping");
+      return;
+    }
+
+    const { token } = useAuthStore.getState();
+    if (!token) {
+      console.log("WebSocket: No token available for authentication");
+      return;
+    }
+
+    isAuthenticating = true;
+    console.log("WebSocket: Authenticating connection");
+
+    // No need to send an AUTHENTICATE message - the token is already in the URL
+    // The server will handle authentication based on the token
+  };
+
+  // Reconnect to WebSocket with current auth token
+  const reconnect = () => {
+    // Close existing connection if it's open
+    if (socketInstance) {
+      if (socketInstance.readyState === WebSocket.OPEN) {
+        socketInstance.close();
+      }
+      socketInstance = null;
+    }
+
+    // Clear any existing intervals or timeouts
+    if (heartbeatInterval) {
+      clearInterval(heartbeatInterval);
+      heartbeatInterval = null;
+    }
+
+    if (reconnectTimeout) {
+      clearTimeout(reconnectTimeout);
+      reconnectTimeout = null;
+    }
+
+    // Wait a moment to ensure the connection is closed
+    setTimeout(() => {
+      // Get the current token from auth store
+      const { token } = useAuthStore.getState();
+
+      // Recreate the WebSocket URL with the current token
+      let wsUrl = WS_BASE_URL;
+
+      // If the URL already has a token parameter, remove it
+      if (wsUrl.includes("?token=")) {
+        wsUrl = wsUrl.split("?token=")[0];
+      }
+
+      // Add the current token if available
+      if (token) {
+        wsUrl += `?token=${token}`;
+      }
+
+      isReconnecting = true;
+      console.log(`WebSocket: Reconnecting with${token ? "" : "out"} token`);
+
+      // Set up a new connection
+      set({ connectionState: "connecting" });
+      setupWebSocket();
+    }, 500);
+  };
+
+  // Disconnect from WebSocket
+  const disconnect = () => {
+    if (socketInstance) {
+      socketInstance.close();
+      socketInstance = null;
+    }
+
+    if (heartbeatInterval) {
+      clearInterval(heartbeatInterval);
+      heartbeatInterval = null;
+    }
+
+    set({ connectionState: "disconnected" });
+  };
+
   return {
-    // State
+    // Connection state
     connectionState: "disconnected",
     lastError: null,
     lastHeartbeat: 0,
+
+    // Market data
     tickerData: {},
     candleData: {},
+
+    // Subscriptions
     subscribedSymbols: new Set<string>(),
     subscribedCandles: new Map<string, Set<string>>(),
     activeSymbol: null,
-    activeTimeframe: "1m",
+    activeTimeframe: "1h",
+
+    // Balance and Order data
+    balance: null,
+    orders: {},
 
     // Connection methods
-    connect: () => {
-      console.log("WebSocket: Connect method called");
-      setupWebSocket();
-    },
-
-    disconnect: () => {
-      if (socketInstance) {
-        socketInstance.close();
-        socketInstance = null;
-      }
-
-      if (heartbeatInterval) {
-        clearInterval(heartbeatInterval);
-        heartbeatInterval = null;
-      }
-
-      set({ connectionState: "disconnected" });
-    },
+    connect: setupWebSocket,
+    disconnect,
+    reconnect,
 
     // Subscription methods
     subscribeToSymbol: (symbol) => {
@@ -858,6 +1049,31 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
         };
       });
     },
+
+    // Additional methods
+    updateBalance: (balance: BalanceUpdate) => {
+      set({ balance });
+    },
+
+    updateOrder: (order: OrderUpdate) => {
+      set((state) => ({
+        orders: {
+          ...state.orders,
+          [order.orderId]: order,
+        },
+      }));
+    },
+
+    removeOrder: (orderId: string) => {
+      set((state) => ({
+        orders: Object.fromEntries(
+          Object.entries(state.orders).filter(([key]) => key !== orderId)
+        ),
+      }));
+    },
+
+    // Authenticate methods
+    authenticateWebSocket,
   };
 });
 
@@ -874,6 +1090,7 @@ if (typeof window !== "undefined") {
 const websocketService = {
   connect: () => useWebSocketStore.getState().connect(),
   disconnect: () => useWebSocketStore.getState().disconnect(),
+  reconnect: () => useWebSocketStore.getState().reconnect(),
   subscribeToSymbol: (symbol: string) =>
     useWebSocketStore.getState().subscribeToSymbol(symbol),
   unsubscribeFromSymbol: (symbol: string) =>
@@ -886,6 +1103,7 @@ const websocketService = {
     useWebSocketStore.getState().setActiveSymbol(symbol),
   setActiveTimeframe: (timeframe: string) =>
     useWebSocketStore.getState().setActiveTimeframe(timeframe),
+  authenticateWebSocket: () =>
+    useWebSocketStore.getState().authenticateWebSocket(),
 };
-
 export default websocketService;

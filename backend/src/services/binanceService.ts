@@ -1,6 +1,6 @@
 import WebSocket from "ws";
 import { config } from "../config";
-import { prisma } from "../server";
+import { prisma } from "../lib/prisma";
 import {
   BinanceSubscriptionMessage,
   BinanceTickerMessage,
@@ -171,7 +171,7 @@ async function processKlineData(data: BinanceKlineMessage): Promise<void> {
         ).toISOString()}`
       );
 
-      broadcastOHLCVUpdate(symbolName, {
+      broadcastOHLCVUpdate(symbolName, "ONE_MINUTE", {
         id: ohlcvData.id,
         symbol: symbolName,
         open: open / 100,
@@ -339,52 +339,72 @@ export async function startBinanceWebSocket(): Promise<void> {
 
   // Close existing connection if any
   if (ws) {
+    console.log("Closing existing Binance WebSocket connection");
     ws.terminate();
+    ws = null;
   }
 
-  // Create new WebSocket connection
-  ws = new WebSocket(config.binanceWebSocketUrl);
+  try {
+    console.log(
+      `Connecting to Binance WebSocket at ${config.binanceWebSocketUrl}`
+    );
 
-  // Set up event handlers
-  ws.on("open", () => {
-    console.log("Connected to Binance WebSocket");
-    reconnectAttempts = 0; // Reset reconnect attempts on successful connection
-    subscribeToStreams(ws!);
-    setupHeartbeat();
-  });
+    ws = new WebSocket(config.binanceWebSocketUrl);
 
-  ws.on("message", handleWebSocketMessage);
+    ws.on("open", () => {
+      console.log("Connected to Binance WebSocket");
+      reconnectAttempts = 0; // Reset reconnect attempts on successful connection
+      subscribeToStreams(ws!);
+      setupHeartbeat();
+    });
 
-  ws.on("error", (error) => {
-    console.error("WebSocket error:", error);
-  });
+    ws.on("message", (message) => {
+      try {
+        handleWebSocketMessage(message);
+      } catch (error) {
+        console.error("Error handling WebSocket message:", error);
+      }
+    });
 
-  ws.on("close", () => {
-    console.log("Disconnected from Binance WebSocket");
+    ws.on("error", (error) => {
+      console.error("Binance WebSocket error:", error);
+    });
 
-    // Clear heartbeat interval
-    if (heartbeatInterval) {
-      clearInterval(heartbeatInterval);
-      heartbeatInterval = null;
-    }
+    ws.on("close", (code: number, reason: Buffer) => {
+      console.log(
+        `Disconnected from Binance WebSocket. Code: ${code}, Reason: ${
+          reason ? reason.toString() : "Unknown"
+        }`
+      );
 
-    // Reconnect
+      if (heartbeatInterval) {
+        clearInterval(heartbeatInterval);
+        heartbeatInterval = null;
+      }
+
+      setTimeout(() => {
+        reconnectWebSocket();
+      }, RECONNECT_DELAY_MS);
+    });
+
+    const connectionTimeout = setTimeout(() => {
+      if (ws && ws.readyState !== WebSocket.OPEN) {
+        console.error("Binance WebSocket connection timeout");
+        ws.terminate();
+        ws = null;
+        reconnectWebSocket();
+      }
+    }, 10000); // 10 seconds timeout
+
+    ws.on("open", () => {
+      clearTimeout(connectionTimeout);
+    });
+  } catch (error) {
+    console.error("Error creating Binance WebSocket connection:", error);
     setTimeout(() => {
       reconnectWebSocket();
     }, RECONNECT_DELAY_MS);
-  });
-
-  // Set a connection timeout
-  const connectionTimeout = setTimeout(() => {
-    if (ws && ws.readyState !== WebSocket.OPEN) {
-      console.error("WebSocket connection timeout");
-      ws.terminate();
-    }
-  }, 10000); // 10 seconds timeout
-
-  ws.on("open", () => {
-    clearTimeout(connectionTimeout);
-  });
+  }
 }
 
 /**
