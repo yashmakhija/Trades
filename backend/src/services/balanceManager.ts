@@ -1,6 +1,26 @@
 import { EventEmitter } from "events";
 import { broadcastBalanceUpdate } from "./webSocketService";
 import { prisma } from "../server";
+import { OrderType, OrderStatus } from "@prisma/client";
+
+interface UserBalance {
+  total: number;
+  reserved: number;
+  available: number;
+  positions: Map<string, Position>;
+  lastUpdate: Date;
+  openOrders: Set<string>; // Track open orders
+}
+
+interface Position {
+  symbol: string;
+  quantity: number;
+  averagePrice: number;
+  currentPrice: number;
+  orderId: string;
+  pnl: number;
+  status: OrderStatus; // Add order status
+}
 
 /**
  * Balance Manager Service
@@ -8,11 +28,107 @@ import { prisma } from "../server";
  * Handles user balance operations including checking if a user has sufficient balance,
  * reserving balance for pending orders, and updating balance when orders are executed or canceled.
  */
-class BalanceManager extends EventEmitter {
+export class BalanceManager extends EventEmitter {
+  // In-memory balance cache
+  private userBalances: Map<string, UserBalance> = new Map();
   private reservedBalances: Map<string, Map<string, number>> = new Map();
 
   constructor() {
     super();
+    this.initializeBalanceCache();
+  }
+
+  private async initializeBalanceCache() {
+    try {
+      const users = await prisma.user.findMany({
+        include: {
+          orders: {
+            where: { status: "OPEN" },
+            include: { symbol: true },
+          },
+        },
+      });
+
+      users.forEach((user) => {
+        const positions = new Map<string, Position>();
+        const openOrders = new Set<string>();
+        let reserved = 0;
+
+        user.orders.forEach((order) => {
+          reserved += order.reservedAmount || 0;
+          if (order.status === OrderStatus.OPEN) {
+            openOrders.add(order.id);
+            positions.set(order.id, {
+              symbol: order.symbol.name,
+              quantity: order.quantity,
+              averagePrice: order.price,
+              currentPrice: order.symbol.currentPrice || 0,
+              orderId: order.id,
+              pnl:
+                ((order.symbol.currentPrice || 0) - order.price) *
+                order.quantity,
+              status: order.status,
+            });
+          }
+        });
+
+        this.userBalances.set(user.id, {
+          total: user.usdcBalance,
+          reserved,
+          available: user.usdcBalance - reserved,
+          positions,
+          lastUpdate: new Date(),
+          openOrders,
+        });
+      });
+
+      console.log("Balance cache initialized");
+    } catch (error) {
+      console.error("Error initializing balance cache:", error);
+    }
+  }
+
+  async updateSymbolPrice(symbol: string, newPrice: number) {
+    this.userBalances.forEach((balance, userId) => {
+      let totalPnlChange = 0;
+
+      balance.positions.forEach((position) => {
+        if (position.symbol === symbol) {
+          const oldPnl = position.pnl;
+          position.currentPrice = newPrice;
+          position.pnl = (newPrice - position.averagePrice) * position.quantity;
+          totalPnlChange += position.pnl - oldPnl;
+        }
+      });
+
+      if (totalPnlChange !== 0) {
+        balance.lastUpdate = new Date();
+        this.broadcastBalanceUpdate(userId);
+      }
+    });
+  }
+
+  private broadcastBalanceUpdate(userId: string) {
+    const balance = this.userBalances.get(userId);
+    if (balance) {
+      const positions = Array.from(balance.positions.values());
+      const totalPositionValue = positions.reduce(
+        (sum, pos) => sum + pos.quantity * pos.currentPrice,
+        0
+      );
+      const totalPnl = positions.reduce((sum, pos) => sum + pos.pnl, 0);
+
+      broadcastBalanceUpdate(userId, {
+        total: balance.total,
+        reserved: balance.reserved,
+        available: balance.available,
+        positions,
+        totalPositionValue,
+        totalValue: balance.total + totalPositionValue,
+        totalPnl,
+        openOrdersCount: balance.openOrders.size,
+      });
+    }
   }
 
   /**
@@ -51,15 +167,36 @@ class BalanceManager extends EventEmitter {
    * @param orderId Order ID
    * @param amount Amount to reserve
    */
-  reserveBalance(userId: string, orderId: string, amount: number): void {
-    if (!this.reservedBalances.has(userId)) {
-      this.reservedBalances.set(userId, new Map());
+  async reserveBalance(
+    userId: string,
+    orderId: string,
+    amount: number
+  ): Promise<void> {
+    const cachedBalance = this.userBalances.get(userId);
+    if (!cachedBalance || cachedBalance.available < amount) {
+      throw new Error("Insufficient balance");
     }
 
-    this.reservedBalances.get(userId)!.set(orderId, amount);
+    await prisma.$transaction(async (tx) => {
+      await tx.order.update({
+        where: { id: orderId },
+        data: { reservedAmount: amount },
+      });
 
-    this.emit("balanceReserved", { userId, orderId, amount });
-    console.log(`Reserved ${amount} for order ${orderId} by user ${userId}`);
+      await tx.user.update({
+        where: { id: userId },
+        data: { usdcBalance: { decrement: amount } },
+      });
+
+      // Update cache
+      cachedBalance.total -= amount;
+      cachedBalance.reserved += amount;
+      cachedBalance.available -= amount;
+      cachedBalance.openOrders.add(orderId); // Track new open order
+      cachedBalance.lastUpdate = new Date();
+    });
+
+    this.broadcastBalanceUpdate(userId);
   }
 
   /**
@@ -69,17 +206,41 @@ class BalanceManager extends EventEmitter {
    * @param orderId Order ID
    * @returns Amount that was released
    */
-  releaseBalance(userId: string, orderId: string): number {
-    const userReserved = this.reservedBalances.get(userId);
-    if (!userReserved) return 0;
+  async releaseReservedBalance(userId: string, orderId: string): Promise<void> {
+    const cachedBalance = this.userBalances.get(userId);
+    if (!cachedBalance) return;
 
-    const amount = userReserved.get(orderId) || 0;
-    userReserved.delete(orderId);
+    await prisma.$transaction(async (tx) => {
+      const order = await tx.order.findUnique({
+        where: { id: orderId },
+        select: { reservedAmount: true },
+      });
 
-    this.emit("balanceReleased", { userId, orderId, amount });
-    console.log(`Released ${amount} for order ${orderId} by user ${userId}`);
+      if (!order?.reservedAmount) return;
 
-    return amount;
+      await tx.order.update({
+        where: { id: orderId },
+        data: {
+          reservedAmount: 0,
+          status: OrderStatus.CANCELLED,
+        },
+      });
+
+      await tx.user.update({
+        where: { id: userId },
+        data: { usdcBalance: { increment: order.reservedAmount } },
+      });
+
+      // Update cache
+      cachedBalance.total += order.reservedAmount;
+      cachedBalance.reserved -= order.reservedAmount;
+      cachedBalance.available += order.reservedAmount;
+      cachedBalance.openOrders.delete(orderId); // Remove from open orders
+      cachedBalance.positions.delete(orderId);
+      cachedBalance.lastUpdate = new Date();
+    });
+
+    this.broadcastBalanceUpdate(userId);
   }
 
   /**
@@ -110,27 +271,52 @@ class BalanceManager extends EventEmitter {
   async updateBalanceAfterExecution(
     userId: string,
     orderId: string,
-    pnl: number
+    symbol: string,
+    quantity: number,
+    price: number,
+    type: OrderType
   ): Promise<void> {
-    try {
-      // Release the reserved balance
-      const reservedAmount = this.releaseBalance(userId, orderId);
+    const cachedBalance = this.userBalances.get(userId);
+    if (!cachedBalance) return;
 
-      // Update the user's balance with the PnL
-      await prisma.user.update({
-        where: { id: userId },
-        data: {
-          usdcBalance: {
-            increment: pnl,
-          },
-        },
-      });
+    const position: Position = {
+      symbol,
+      quantity,
+      averagePrice: price,
+      currentPrice: price,
+      orderId,
+      pnl: 0,
+      status: OrderStatus.CLOSED,
+    };
 
-      this.emit("balanceUpdated", { userId, orderId, pnl, reservedAmount });
-      console.log(`Updated balance for user ${userId} with PnL ${pnl}`);
-    } catch (error) {
-      console.error(`Error updating balance for user ${userId}:`, error);
+    // Update position
+    cachedBalance.positions.set(orderId, position);
+
+    // Remove from open orders since it's executed
+    cachedBalance.openOrders.delete(orderId);
+
+    // If no more open orders, update DB balance
+    if (cachedBalance.openOrders.size === 0) {
+      const totalPnl = Array.from(cachedBalance.positions.values()).reduce(
+        (sum, pos) => sum + pos.pnl,
+        0
+      );
+
+      if (totalPnl !== 0) {
+        await this.updateBalance(
+          userId,
+          Math.abs(totalPnl),
+          totalPnl > 0 ? "INCREASE" : "DECREASE"
+        );
+      }
+
+      // Clear positions after final balance update
+      cachedBalance.positions.clear();
     }
+
+    cachedBalance.lastUpdate = new Date();
+    this.broadcastBalanceUpdate(userId);
+    this.emit("balanceUpdated", { userId, orderId, position });
   }
 
   /**
@@ -139,29 +325,77 @@ class BalanceManager extends EventEmitter {
    * @param userId User ID
    * @returns User balance information
    */
-  async getUserBalance(
-    userId: string
-  ): Promise<{ total: number; reserved: number; available: number } | null> {
-    try {
-      const user = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { usdcBalance: true },
-      });
-
-      if (!user) return null;
-
-      const reserved = this.getTotalReservedBalance(userId);
-      const available = user.usdcBalance - reserved;
-
-      return {
-        total: user.usdcBalance,
-        reserved,
-        available,
-      };
-    } catch (error) {
-      console.error(`Error getting balance for user ${userId}:`, error);
-      return null;
+  async getUserBalance(userId: string): Promise<{
+    total: number;
+    reserved: number;
+    available: number;
+    positions: Position[];
+    totalValue: number;
+  } | null> {
+    const cachedBalance = this.userBalances.get(userId);
+    if (!cachedBalance) {
+      // If not in cache, fetch from DB and cache it
+      await this.initializeUserBalance(userId);
+      return this.getUserBalance(userId);
     }
+
+    const positions = Array.from(cachedBalance.positions.values());
+    const totalPositionValue = positions.reduce(
+      (sum, pos) => sum + pos.quantity * pos.currentPrice,
+      0
+    );
+
+    return {
+      total: cachedBalance.total,
+      reserved: cachedBalance.reserved,
+      available: cachedBalance.available,
+      positions,
+      totalValue: cachedBalance.total + totalPositionValue,
+    };
+  }
+
+  private async initializeUserBalance(userId: string) {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        orders: {
+          where: { status: "OPEN" },
+          include: { symbol: true },
+        },
+      },
+    });
+
+    if (!user) return null;
+
+    const positions = new Map<string, Position>();
+    const openOrders = new Set<string>();
+    let reserved = 0;
+
+    user.orders.forEach((order) => {
+      reserved += order.reservedAmount || 0;
+      if (order.status === OrderStatus.OPEN) {
+        openOrders.add(order.id);
+        positions.set(order.id, {
+          symbol: order.symbol.name,
+          quantity: order.quantity,
+          averagePrice: order.price,
+          currentPrice: order.symbol.currentPrice || 0,
+          orderId: order.id,
+          pnl:
+            ((order.symbol.currentPrice || 0) - order.price) * order.quantity,
+          status: order.status,
+        });
+      }
+    });
+
+    this.userBalances.set(userId, {
+      total: user.usdcBalance,
+      reserved,
+      available: user.usdcBalance - reserved,
+      positions,
+      lastUpdate: new Date(),
+      openOrders,
+    });
   }
 
   /**
@@ -176,6 +410,32 @@ class BalanceManager extends EventEmitter {
         0
       ),
     };
+  }
+
+  async updateBalance(
+    userId: string,
+    amount: number,
+    type: "INCREASE" | "DECREASE"
+  ): Promise<void> {
+    try {
+      if (!userId) {
+        throw new Error("User ID is required");
+      }
+
+      await prisma.user.update({
+        where: {
+          id: userId,
+        },
+        data: {
+          usdcBalance: {
+            [type === "INCREASE" ? "increment" : "decrement"]: amount,
+          },
+        },
+      });
+    } catch (error) {
+      console.error("Error updating balance:", error);
+      throw error;
+    }
   }
 }
 

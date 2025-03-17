@@ -38,7 +38,10 @@ class OrderManager extends EventEmitter {
     orderData: Omit<Order, "id" | "createdAt" | "status">
   ): Promise<Order> {
     try {
-      // Create order in database
+      // Calculate required balance
+      const requiredAmount = orderData.price * orderData.quantity;
+
+      // Create order in database first to get the orderId
       const order = await prisma.order.create({
         data: {
           userId: orderData.userId,
@@ -50,11 +53,19 @@ class OrderManager extends EventEmitter {
           stopLoss: orderData.stopLoss,
           takeProfit: orderData.takeProfit,
           status: OrderStatus.OPEN,
+          reservedAmount: requiredAmount, // Store the reserved amount
         },
         include: {
           symbol: true,
         },
       });
+
+      // Reserve the balance using the order ID
+      await balanceManager.reserveBalance(
+        orderData.userId,
+        order.id,
+        requiredAmount
+      );
 
       // Add to in-memory maps
       const orderObj: Order = {
@@ -115,14 +126,8 @@ class OrderManager extends EventEmitter {
         return false;
       }
 
-      // Update order in database
-      await prisma.order.update({
-        where: { id: orderId },
-        data: {
-          status: OrderStatus.CANCELLED,
-          closedAt: new Date(),
-        },
-      });
+      // Release the reserved balance - this will handle broadcasting balance updates
+      await balanceManager.releaseReservedBalance(userId, orderId);
 
       // Remove from in-memory maps
       this.openOrders.delete(orderId);
@@ -137,8 +142,16 @@ class OrderManager extends EventEmitter {
         this.takeProfitOrders.get(order.symbolName)?.delete(orderId);
       }
 
-      // Emit order cancelled event
-      this.emit("orderCancelled", { ...order, status: OrderStatus.CANCELLED });
+      // Broadcast order update only
+      broadcastOrderUpdate(userId, {
+        id: orderId,
+        status: OrderStatus.CANCELLED,
+        symbolName: order.symbolName,
+        type: order.type,
+        price: order.price,
+        quantity: order.quantity,
+        isShort: order.isShort,
+      });
 
       console.log(`Order cancelled: ${orderId}`);
 
@@ -235,10 +248,7 @@ class OrderManager extends EventEmitter {
       // Calculate PnL
       const pnl = this.calculatePnL(order, price);
 
-      // Update user balance
-      await this.updateUserBalance(order.userId, order, price, pnl);
-
-      // Update order in database
+      // Update order in database first
       await prisma.order.update({
         where: { id: orderId },
         data: {
@@ -248,6 +258,16 @@ class OrderManager extends EventEmitter {
           closedAt: new Date(),
         },
       });
+
+      // Update balance manager with position info - this will handle broadcasting balance updates
+      await balanceManager.updateBalanceAfterExecution(
+        order.userId,
+        orderId,
+        order.symbolName,
+        order.quantity,
+        price,
+        order.type
+      );
 
       // Remove from in-memory maps
       this.openOrders.delete(orderId);
@@ -260,17 +280,6 @@ class OrderManager extends EventEmitter {
       if (order.takeProfit) {
         this.takeProfitOrders.get(order.symbolName)?.delete(orderId);
       }
-
-      const executedOrder = {
-        ...order,
-        status: OrderStatus.CLOSED,
-        exitPrice: price,
-        pnl,
-        closedAt: new Date(),
-      };
-
-      // Emit order executed event
-      this.emit("orderExecuted", executedOrder);
 
       // Broadcast order update via WebSocket
       broadcastOrderUpdate(order.userId, {
@@ -291,7 +300,7 @@ class OrderManager extends EventEmitter {
         tradeAnalytics.getSymbolStats(order.userId),
         tradeAnalytics.getDailyPnL(
           order.userId,
-          new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // Last 30 days
+          new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
           new Date()
         ),
       ]);
@@ -325,41 +334,6 @@ class OrderManager extends EventEmitter {
     } else {
       // Short position: profit when entry price > exit price
       return entryValue - exitValue;
-    }
-  }
-
-  /**
-   * Update user balance after order execution
-   *
-   * @param userId User ID
-   * @param order Executed order
-   * @param exitPrice Exit price
-   * @param pnl Profit/loss
-   */
-  private async updateUserBalance(
-    userId: string,
-    order: Order,
-    exitPrice: number,
-    pnl: number
-  ): Promise<void> {
-    try {
-      const updatedUser = await prisma.user.update({
-        where: { id: userId },
-        data: {
-          usdcBalance: {
-            increment: pnl,
-          },
-        },
-      });
-
-      // Broadcast balance update via WebSocket
-      broadcastBalanceUpdate(userId, {
-        total: updatedUser.usdcBalance,
-        available: updatedUser.usdcBalance, // This is simplified, in a real app you'd calculate available balance
-        reserved: 0, // This is simplified, in a real app you'd calculate reserved balance
-      });
-    } catch (error) {
-      console.error(`Error updating balance for user ${userId}:`, error);
     }
   }
 

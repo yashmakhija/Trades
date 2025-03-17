@@ -10,7 +10,7 @@
  * - Candle data updates
  */
 import { Server } from "http";
-import WebSocket from "ws";
+import WebSocket, { WebSocketServer } from "ws";
 import {
   getAllTickerData,
   getLatestTickerData,
@@ -21,281 +21,191 @@ import { prisma } from "../server";
 import { orderManager } from "./orderManager";
 import { candleService } from "./candleService";
 import { Timeframe } from "@prisma/client";
+import { balanceManager } from "./balanceManager";
+import jwt from "jsonwebtoken";
 
-let wss: WebSocket.Server | null = null;
-
-interface ClientInfo {
+// WebSocket client with authentication and connection state
+interface WSClient {
   ws: WebSocket;
-  subscribedSymbols: Set<string>;
   userId?: string;
+  isAlive: boolean;
+  subscribedSymbols: Set<string>;
 }
 
-const clients = new Map<WebSocket, ClientInfo>();
+// Global state
+let wss: WebSocketServer | null = null;
+const clients = new Map<WebSocket, WSClient>();
+
+async function verifyToken(token: string): Promise<string | null> {
+  try {
+    const decoded = jwt.verify(
+      token,
+      process.env.JWT_SECRET || "your-secret-key"
+    ) as { userId: string };
+
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.userId },
+      select: { id: true },
+    });
+
+    return user?.id || null;
+  } catch (error) {
+    return null;
+  }
+}
 
 export function initWebSocketServer(server: Server): void {
-  wss = new WebSocket.Server({ server });
-
-  // Set the WebSocket server in the candle service
+  wss = new WebSocketServer({ server });
   candleService.setWebSocketServer(wss);
 
-  wss.on("connection", (ws: WebSocket) => {
-    console.log("Client connected to WebSocket");
-
-    clients.set(ws, {
+  wss.on("connection", async (ws: WebSocket, request) => {
+    // Initialize client state
+    const client: WSClient = {
       ws,
-      subscribedSymbols: new Set<string>(),
+      isAlive: true,
+      subscribedSymbols: new Set(),
+    };
+    clients.set(ws, client);
+
+    try {
+      // Authenticate client
+      const url = new URL(request.url || "", `http://${request.headers.host}`);
+      const token = url.searchParams.get("token");
+
+      if (!token) {
+        ws.close(1008, "Authentication required");
+        return;
+      }
+
+      const userId = await verifyToken(token);
+      if (!userId) {
+        ws.close(1008, "Invalid authentication");
+        return;
+      }
+
+      client.userId = userId;
+      console.log(`Client authenticated with userId: ${userId}`);
+
+      // Send initial data
+      const balance = await balanceManager.getUserBalance(userId);
+      if (balance) {
+        ws.send(JSON.stringify({ type: "BALANCE_UPDATE", data: balance }));
+      }
+
+      // Send initial market data
+      const allTickerData = getAllTickerData();
+      ws.send(JSON.stringify({ type: "INITIAL_DATA", data: allTickerData }));
+
+      // Send open orders
+      const openOrders = await orderManager.getUserOpenOrders(userId);
+      if (openOrders.length > 0) {
+        ws.send(JSON.stringify({ type: "OPEN_ORDERS", data: openOrders }));
+      }
+
+      // Setup event handlers
+      ws.on("pong", () => {
+        const client = clients.get(ws);
+        if (client) client.isAlive = true;
+      });
+
+      ws.on("message", async (message) => {
+        try {
+          await handleClientMessage(ws, message);
+        } catch (error) {
+          console.error("Error processing message:", error);
+        }
+      });
+
+      ws.on("close", () => {
+        console.log(`Client disconnected: ${client.userId}`);
+        // Cleanup symbol tracking
+        client.subscribedSymbols.forEach((symbol) => {
+          let stillInUse = false;
+          clients.forEach((otherClient) => {
+            if (
+              otherClient !== client &&
+              otherClient.subscribedSymbols.has(symbol)
+            ) {
+              stillInUse = true;
+            }
+          });
+          if (!stillInUse) {
+            removeSymbolFromTracking(symbol);
+          }
+        });
+        clients.delete(ws);
+      });
+
+      ws.on("error", (error) => {
+        console.error("WebSocket error:", error);
+      });
+    } catch (error) {
+      console.error("WebSocket connection error:", error);
+      ws.close(1011, "Internal server error");
+    }
+  });
+
+  // Health check interval
+  const pingInterval = setInterval(() => {
+    if (!wss) return;
+
+    clients.forEach((client, ws) => {
+      if (!client.isAlive) {
+        console.log(
+          `Terminating inactive connection for user: ${client.userId}`
+        );
+        clients.delete(ws);
+        return ws.terminate();
+      }
+      client.isAlive = false;
+      ws.ping();
     });
+  }, 30000);
 
-    sendInitialData(ws);
-
-    ws.on("message", (message: WebSocket.Data) => {
-      handleClientMessage(ws, message);
-    });
-
-    ws.on("close", () => {
-      console.log("Client disconnected from WebSocket");
-      clients.delete(ws);
-    });
-
-    ws.on("error", (error) => {
-      console.error("WebSocket client error:", error);
-      clients.delete(ws);
-    });
-
-    setupPingPong(ws);
+  wss.on("close", () => {
+    clearInterval(pingInterval);
   });
 
   console.log("WebSocket server initialized");
 }
 
-function sendInitialData(ws: WebSocket): void {
-  try {
-    const allData = getAllTickerData();
-    ws.send(
-      JSON.stringify({
-        type: "INITIAL_DATA",
-        data: allData,
-      })
-    );
-  } catch (error) {
-    console.error("Error sending initial data:", error);
+// Broadcast helpers
+export function broadcastToUser(userId: string, type: string, data: any): void {
+  if (!wss) {
+    console.warn("WebSocket server not initialized");
+    return;
   }
-}
 
-async function handleClientMessage(
-  ws: WebSocket,
-  message: WebSocket.Data
-): Promise<void> {
-  try {
-    let data;
-    const messageStr = message.toString();
+  const message = JSON.stringify({ type, data });
 
-    try {
-      data = JSON.parse(messageStr);
-    } catch (parseError) {
-      console.log(`Received plain text message: ${messageStr}`);
-      data = {
-        type: "SUBSCRIBE",
-        symbol: messageStr.trim().toLowerCase(),
-      };
+  clients.forEach((client) => {
+    if (client.userId === userId && client.ws.readyState === WebSocket.OPEN) {
+      client.ws.send(message);
     }
-
-    const clientInfo = clients.get(ws);
-
-    if (!clientInfo) {
-      console.error("Client not found in clients map");
-      return;
-    }
-
-    if (data.type === "SUBSCRIBE" && data.symbol) {
-      const symbol = data.symbol.toLowerCase();
-
-      clientInfo.subscribedSymbols.add(symbol);
-
-      addSymbolToTracking(symbol);
-
-      console.log(`Client subscribed to ${symbol}`);
-
-      const tickerData = getLatestTickerData(symbol);
-      if (tickerData) {
-        ws.send(
-          JSON.stringify({
-            type: "TICKER_UPDATE",
-            symbol,
-            data: {
-              ...tickerData,
-              displayPrice: tickerData.price / 100,
-            },
-          })
-        );
-      }
-
-      ws.send(
-        JSON.stringify({
-          type: "SUBSCRIPTION_SUCCESS",
-          symbol,
-          message: `Successfully subscribed to ${symbol.toUpperCase()}`,
-        })
-      );
-    } else if (data.type === "UNSUBSCRIBE" && data.symbol) {
-      const symbol = data.symbol.toLowerCase();
-
-      clientInfo.subscribedSymbols.delete(symbol);
-
-      let stillSubscribed = false;
-      clients.forEach((info) => {
-        if (info.subscribedSymbols.has(symbol)) {
-          stillSubscribed = true;
-        }
-      });
-
-      if (!stillSubscribed) {
-        removeSymbolFromTracking(symbol);
-      }
-
-      console.log(`Client unsubscribed from ${symbol}`);
-
-      ws.send(
-        JSON.stringify({
-          type: "UNSUBSCRIPTION_SUCCESS",
-          symbol,
-          message: `Successfully unsubscribed from ${symbol.toUpperCase()}`,
-        })
-      );
-    } else if (data.type === "AUTHENTICATE" && data.userId) {
-      try {
-        const user = await prisma.user.findUnique({
-          where: { id: data.userId },
-        });
-
-        if (user) {
-          clientInfo.userId = user.id;
-          console.log(`Client authenticated as user ${user.id}`);
-
-          ws.send(
-            JSON.stringify({
-              type: "AUTHENTICATION_SUCCESS",
-              userId: user.id,
-              message: "Successfully authenticated",
-            })
-          );
-        } else {
-          ws.send(
-            JSON.stringify({
-              type: "AUTHENTICATION_ERROR",
-              message: "User not found",
-            })
-          );
-        }
-      } catch (error) {
-        console.error("Error authenticating client:", error);
-        ws.send(
-          JSON.stringify({
-            type: "AUTHENTICATION_ERROR",
-            message: "Authentication failed",
-          })
-        );
-      }
-    } else if (data.type === "SUBSCRIBE_CANDLES" && data.symbol) {
-      const symbol = data.symbol.toLowerCase();
-      const timeframe = data.timeframe || "1m";
-
-      // Map string timeframe to Prisma Timeframe enum
-      const timeframeEnum = mapTimeframeToEnum(timeframe);
-
-      clientInfo.subscribedSymbols.add(symbol);
-      addSymbolToTracking(symbol);
-
-      console.log(
-        `Client subscribed to ${symbol} candles with timeframe ${timeframe}`
-      );
-
-      try {
-        // Get the latest candles for this symbol and timeframe
-        const candles = await candleService.getCandles(symbol, timeframeEnum);
-
-        if (candles && candles.length > 0) {
-          ws.send(
-            JSON.stringify({
-              type: "CANDLE_HISTORY",
-              symbol,
-              timeframe,
-              data: candles.map((c) => ({
-                time: c.time,
-                open: c.open,
-                high: c.high,
-                low: c.low,
-                close: c.close,
-                volume: c.volume,
-              })),
-            })
-          );
-        }
-
-        ws.send(
-          JSON.stringify({
-            type: "SUBSCRIPTION_SUCCESS",
-            symbol,
-            channel: "candles",
-            timeframe,
-            message: `Successfully subscribed to ${symbol.toUpperCase()} candles with timeframe ${timeframe}`,
-          })
-        );
-      } catch (error) {
-        console.error(`Error fetching candles for ${symbol}:`, error);
-        ws.send(
-          JSON.stringify({
-            type: "SUBSCRIPTION_ERROR",
-            symbol,
-            channel: "candles",
-            timeframe,
-            message: `Error subscribing to ${symbol.toUpperCase()} candles: ${
-              error instanceof Error ? error.message : "Unknown error"
-            }`,
-          })
-        );
-      }
-    } else if (data.type === "UNSUBSCRIBE_CANDLES" && data.symbol) {
-      const symbol = data.symbol.toLowerCase();
-      const timeframe = data.timeframe || "1m";
-
-      console.log(
-        `Client unsubscribed from ${symbol} candles with timeframe ${timeframe}`
-      );
-
-      ws.send(
-        JSON.stringify({
-          type: "UNSUBSCRIPTION_SUCCESS",
-          symbol,
-          channel: "candles",
-          timeframe,
-          message: `Successfully unsubscribed from ${symbol.toUpperCase()} candles with timeframe ${timeframe}`,
-        })
-      );
-    }
-  } catch (error) {
-    console.error("Error handling client message:", error);
-  }
-}
-
-function setupPingPong(ws: WebSocket): void {
-  const pingInterval = setInterval(() => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.ping();
-    } else {
-      clearInterval(pingInterval);
-    }
-  }, 30000);
-
-  ws.on("pong", () => {});
-
-  ws.on("close", () => {
-    clearInterval(pingInterval);
   });
 }
 
+export function broadcastBalanceUpdate(userId: string, balanceData: any): void {
+  broadcastToUser(userId, "BALANCE_UPDATE", balanceData);
+}
+
+export function broadcastTradeAnalytics(userId: string, analytics: any): void {
+  broadcastToUser(userId, "TRADE_ANALYTICS_UPDATE", analytics);
+}
+
+export function broadcastOrderUpdate(userId: string, orderData: any): void {
+  broadcastToUser(userId, "ORDER_UPDATE", orderData);
+  // Also update balance since order status change affects it
+  if (orderData.status === "FILLED" || orderData.status === "CANCELED") {
+    balanceManager.getUserBalance(userId).then((balance) => {
+      if (balance) broadcastBalanceUpdate(userId, balance);
+    });
+  }
+}
+
+// Broadcast market data to subscribed clients
 export function broadcastTickerUpdate(symbol: string, data: any): void {
-  if (!wss || clients.size === 0) return;
+  if (!wss) return;
 
   const message = JSON.stringify({
     type: "TICKER_UPDATE",
@@ -303,131 +213,180 @@ export function broadcastTickerUpdate(symbol: string, data: any): void {
     data,
   });
 
-  clients.forEach((clientInfo) => {
-    const { ws, subscribedSymbols } = clientInfo;
-
+  clients.forEach((client) => {
     if (
-      ws.readyState === WebSocket.OPEN &&
-      (subscribedSymbols.size === 0 || subscribedSymbols.has(symbol))
+      client.ws.readyState === WebSocket.OPEN &&
+      (client.subscribedSymbols.size === 0 ||
+        client.subscribedSymbols.has(symbol))
     ) {
-      ws.send(message);
+      client.ws.send(message);
+
+      // Update balance manager with new price if client has positions
+      if (client.userId) {
+        balanceManager.updateSymbolPrice(symbol, data.price);
+      }
     }
   });
 }
 
-export function broadcastOHLCVUpdate(symbol: string, data: any): void {
-  if (!wss || clients.size === 0) return;
+// Handle client messages
+async function handleClientMessage(
+  ws: WebSocket,
+  message: WebSocket.Data
+): Promise<void> {
+  const client = clients.get(ws);
+  if (!client) return;
 
-  const message = JSON.stringify({
-    type: "OHLCV_UPDATE",
-    symbol,
-    data,
-  });
+  try {
+    const data = JSON.parse(message.toString());
+    const symbol = (data.symbol || "").toLowerCase();
 
-  // Send to all clients or only to those subscribed to this symbol
-  clients.forEach((clientInfo) => {
-    const { ws, subscribedSymbols } = clientInfo;
+    switch (data.type) {
+      case "SUBSCRIBE":
+        if (symbol) {
+          client.subscribedSymbols.add(symbol);
+          addSymbolToTracking(symbol);
+          console.log(`Client subscribed to ${symbol}`);
 
-    // Send if client is subscribed to this symbol or has no specific subscriptions
-    if (
-      ws.readyState === WebSocket.OPEN &&
-      (subscribedSymbols.size === 0 || subscribedSymbols.has(symbol))
-    ) {
-      ws.send(message);
+          const tickerData = getLatestTickerData(symbol);
+          if (tickerData) {
+            ws.send(
+              JSON.stringify({
+                type: "TICKER_UPDATE",
+                symbol,
+                data: tickerData,
+              })
+            );
+
+            // Update balance manager with current price if client has positions
+            if (client.userId) {
+              balanceManager.updateSymbolPrice(symbol, tickerData.price);
+            }
+          }
+        }
+        break;
+
+      case "UNSUBSCRIBE":
+        if (symbol) {
+          client.subscribedSymbols.delete(symbol);
+          // Check if any other client is still subscribed
+          let stillInUse = false;
+          clients.forEach((otherClient) => {
+            if (
+              otherClient !== client &&
+              otherClient.subscribedSymbols.has(symbol)
+            ) {
+              stillInUse = true;
+            }
+          });
+          if (!stillInUse) {
+            removeSymbolFromTracking(symbol);
+          }
+          console.log(`Client unsubscribed from ${symbol}`);
+        }
+        break;
+
+      case "SUBSCRIBE_CANDLES":
+        if (symbol) {
+          const timeframe = data.timeframe || "1m";
+          await handleCandleSubscription(client, symbol, timeframe);
+        }
+        break;
+
+      case "PLACE_ORDER":
+        if (client.userId && data.orderData) {
+          try {
+            const order = await orderManager.addOrder({
+              userId: client.userId,
+              ...data.orderData,
+            });
+            broadcastOrderUpdate(client.userId, order);
+          } catch (error) {
+            ws.send(
+              JSON.stringify({
+                type: "ORDER_ERROR",
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Failed to place order",
+              })
+            );
+          }
+        }
+        break;
+
+      case "CANCEL_ORDER":
+        if (client.userId && data.orderId) {
+          try {
+            const order = await orderManager.cancelOrder(
+              client.userId,
+              data.orderId
+            );
+            broadcastOrderUpdate(client.userId, order);
+          } catch (error) {
+            ws.send(
+              JSON.stringify({
+                type: "ORDER_ERROR",
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Failed to cancel order",
+              })
+            );
+          }
+        }
+        break;
+
+      default:
+        console.warn(`Unknown message type: ${data.type}`);
     }
-  });
+  } catch (error) {
+    console.error("Error handling client message:", error);
+  }
 }
 
-/**
- * Broadcast raw data from Binance directly to clients
- */
-export function broadcastRawData(symbol: string, data: any): void {
-  if (!wss || clients.size === 0) return;
+async function handleCandleSubscription(
+  client: WSClient,
+  symbol: string,
+  timeframe: string
+): Promise<void> {
+  try {
+    const timeframeEnum = mapTimeframeToEnum(timeframe);
+    client.subscribedSymbols.add(symbol);
+    addSymbolToTracking(symbol);
 
-  const message = JSON.stringify({
-    type: "RAW_DATA",
-    symbol,
-    data,
-  });
+    console.log(
+      `Client subscribed to ${symbol} candles with timeframe ${timeframe}`
+    );
 
-  // Send to clients subscribed to this symbol
-  clients.forEach((clientInfo) => {
-    const { ws, subscribedSymbols } = clientInfo;
+    const candles = await candleService.getCandles(symbol, timeframeEnum);
+    if (candles?.length) {
+      client.ws.send(
+        JSON.stringify({
+          type: "CANDLE_HISTORY",
+          symbol,
+          timeframe,
+          data: candles,
+        })
+      );
 
-    // Only send to clients specifically subscribed to this symbol
-    if (ws.readyState === WebSocket.OPEN && subscribedSymbols.has(symbol)) {
-      ws.send(message);
+      // Update balance manager with latest candle price if client has positions
+      if (client.userId) {
+        const latestCandle = candles[candles.length - 1];
+        balanceManager.updateSymbolPrice(symbol, latestCandle.close);
+      }
     }
-  });
+  } catch (error) {
+    console.error(`Error subscribing to candles for ${symbol}:`, error);
+  }
 }
 
-/**
- * Broadcast order updates to the specific user
- */
-export function broadcastOrderUpdate(userId: string, orderData: any): void {
-  if (!wss || clients.size === 0) return;
-
-  const message = JSON.stringify({
-    type: "ORDER_UPDATE",
-    data: orderData,
-  });
-
-  // Send only to clients authenticated as this user
-  clients.forEach((clientInfo) => {
-    const { ws, userId: clientUserId } = clientInfo;
-
-    if (ws.readyState === WebSocket.OPEN && clientUserId === userId) {
-      ws.send(message);
-    }
-  });
-}
-
-/**
- * Broadcast balance updates to the specific user
- */
-export function broadcastBalanceUpdate(userId: string, balanceData: any): void {
-  if (!wss || clients.size === 0) return;
-
-  const message = JSON.stringify({
-    type: "BALANCE_UPDATE",
-    data: balanceData,
-  });
-
-  // Send only to clients authenticated as this user
-  clients.forEach((clientInfo) => {
-    const { ws, userId: clientUserId } = clientInfo;
-
-    if (ws.readyState === WebSocket.OPEN && clientUserId === userId) {
-      ws.send(message);
-    }
-  });
-}
-
-export function getConnectedClientsCount(): number {
-  return clients.size;
-}
-
-export function getAuthenticatedClientsCount(): number {
-  let count = 0;
-  clients.forEach((clientInfo) => {
-    if (clientInfo.userId) {
-      count++;
-    }
-  });
-  return count;
-}
-
-/**
- * Map string timeframe to Prisma Timeframe enum
- */
 function mapTimeframeToEnum(timeframe: string): Timeframe {
   switch (timeframe) {
     case "1m":
       return Timeframe.ONE_MINUTE;
     case "5m":
       return Timeframe.FIVE_MINUTES;
-    case "10m":
-      return Timeframe.TEN_MINUTES;
     case "15m":
       return Timeframe.FIFTEEN_MINUTES;
     case "30m":
@@ -440,31 +399,5 @@ function mapTimeframeToEnum(timeframe: string): Timeframe {
       return Timeframe.ONE_DAY;
     default:
       return Timeframe.ONE_MINUTE;
-  }
-}
-
-/**
- * Map Prisma Timeframe enum to string
- */
-function mapEnumToTimeframe(timeframe: Timeframe): string {
-  switch (timeframe) {
-    case Timeframe.ONE_MINUTE:
-      return "1m";
-    case Timeframe.FIVE_MINUTES:
-      return "5m";
-    case Timeframe.TEN_MINUTES:
-      return "10m";
-    case Timeframe.FIFTEEN_MINUTES:
-      return "15m";
-    case Timeframe.THIRTY_MINUTES:
-      return "30m";
-    case Timeframe.ONE_HOUR:
-      return "1h";
-    case Timeframe.FOUR_HOURS:
-      return "4h";
-    case Timeframe.ONE_DAY:
-      return "1d";
-    default:
-      return "1m";
   }
 }

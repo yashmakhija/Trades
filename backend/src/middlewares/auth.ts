@@ -1,53 +1,72 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
-import { config } from "../config";
+import { prisma } from "../server";
 
-const JWT_SECRET = config.jwtSecret;
+interface JwtPayload {
+  userId: string;
+}
 
 declare global {
   namespace Express {
     interface Request {
       user?: {
         id: string;
-        email: string;
       };
     }
   }
 }
 
-export function authenticateToken(
+export const authenticateToken = async (
   req: Request,
   res: Response,
   next: NextFunction
-) {
-  const authHeader = req.headers["authorization"];
-  const token = authHeader && authHeader.split(" ")[1];
-
-  if (!token) {
-    return res.status(401).json({
-      error: {
-        code: "unauthorized",
-        message: "No token provided",
-      },
-    });
-  }
-
+) => {
   try {
-    const decoded = jwt.verify(token, config.jwtSecret) as {
-      id: string;
-      email: string;
-    };
-    req.user = decoded;
+    const authHeader = req.headers["authorization"];
+    const token = authHeader && authHeader.split(" ")[1];
+
+    if (!token) {
+      return res.status(401).json({
+        error: {
+          code: "unauthorized",
+          message: "Authentication token is required",
+        },
+      });
+    }
+
+    const { userId } = jwt.verify(
+      token,
+      process.env.JWT_SECRET || "your-secret-key"
+    ) as JwtPayload;
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true },
+    });
+
+    if (!user) {
+      return res.status(401).json({
+        error: {
+          code: "unauthorized",
+          message: "User not found",
+        },
+      });
+    }
+
+    req.user = user;
     next();
   } catch (error) {
     return res.status(401).json({
       error: {
         code: "unauthorized",
-        message: "Invalid token",
+        message: "Invalid authentication token",
       },
     });
   }
-}
+};
+
+// Alias for backward compatibility
+export const authenticate = authenticateToken;
 
 export function optionalAuthenticate(
   req: Request,
@@ -65,12 +84,16 @@ export function optionalAuthenticate(
     const token = authHeader.split(" ")[1];
 
     try {
-      const decoded = jwt.verify(token, JWT_SECRET) as {
+      const decoded = jwt.verify(
+        token,
+        process.env.JWT_SECRET || "your-secret-key"
+      ) as {
         userId: string;
-        email: string;
       };
 
-      req.user = decoded;
+      req.user = {
+        id: decoded.userId,
+      };
     } catch (tokenError) {
       console.warn("Invalid token in optional authentication");
     }

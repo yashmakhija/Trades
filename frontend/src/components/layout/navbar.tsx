@@ -19,6 +19,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { LogOut, User, BarChart2, Settings } from "lucide-react";
 import { useEffect, useState } from "react";
+import { BalanceDisplay } from "@/components/balance/balance-display";
+import { UserNav } from "@/components/user/user-nav";
 
 export function Navbar() {
   const pathname = usePathname();
