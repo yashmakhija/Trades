@@ -345,15 +345,25 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
           ) {
             const candles: CandleData[] = message.data.map((candle) => {
               // Ensure time is in seconds for lightweight-charts
-              let time = candle.time;
+              let normalizedTime: number;
+              const rawTime = candle.time;
 
-              // Convert milliseconds to seconds if needed
-              if (typeof time === "number" && time > 10000000000) {
-                time = Math.floor(time / 1000);
+              // Convert time to a proper timestamp number in seconds
+              if (typeof rawTime === "number") {
+                // Convert milliseconds to seconds if needed
+                normalizedTime =
+                  rawTime > 10000000000 ? Math.floor(rawTime / 1000) : rawTime;
+              } else if (typeof rawTime === "string") {
+                // Convert string date to seconds
+                normalizedTime = Math.floor(new Date(rawTime).getTime() / 1000);
+              } else {
+                // Default to current time if invalid
+                console.warn("Invalid candle time format:", rawTime);
+                normalizedTime = Math.floor(Date.now() / 1000);
               }
 
               return {
-                time,
+                time: normalizedTime,
                 open: candle.open,
                 high: candle.high,
                 low: candle.low,
@@ -364,9 +374,8 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
 
             // Sort candles by time to ensure proper order
             candles.sort((a, b) => {
-              const timeA = typeof a.time === "number" ? a.time : 0;
-              const timeB = typeof b.time === "number" ? b.time : 0;
-              return timeA - timeB;
+              // Both times should already be normalized numbers at this point
+              return (a.time as number) - (b.time as number);
             });
 
             set((state) => {
@@ -392,15 +401,24 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
             typeof message.data === "object"
           ) {
             // Ensure time is in seconds for lightweight-charts
-            let time = message.data.time;
+            let normalizedTime: number;
+            const rawTime = message.data.time;
 
-            // Convert milliseconds to seconds if needed
-            if (typeof time === "number" && time > 10000000000) {
-              time = Math.floor(time / 1000);
+            // Convert time to a proper timestamp number in seconds
+            if (typeof rawTime === "number") {
+              // Convert milliseconds to seconds if needed
+              normalizedTime =
+                rawTime > 10000000000 ? Math.floor(rawTime / 1000) : rawTime;
+            } else if (typeof rawTime === "string") {
+              // Convert string date to seconds
+              normalizedTime = Math.floor(new Date(rawTime).getTime() / 1000);
+            } else {
+              console.warn("Invalid candle time format:", rawTime);
+              break; // Skip this update if time format is invalid
             }
 
             const candle: CandleData = {
-              time,
+              time: normalizedTime,
               open: message.data.open,
               high: message.data.high,
               low: message.data.low,
@@ -409,15 +427,25 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
             };
 
             set((state) => {
-              const symbolCandles = state.candleData[message.symbol!] || {};
-              const timeframeCandles = symbolCandles[message.timeframe!] || [];
+              const symbol = message.symbol!.toLowerCase();
+              const timeframe = message.timeframe!;
+
+              // First, update the 1m candle data
+              const symbolCandles = state.candleData[symbol] || {};
+              const timeframeCandles = symbolCandles[timeframe] || [];
 
               // Check if this candle already exists (same timestamp)
               const existingIndex = timeframeCandles.findIndex((c) => {
-                const cTime = typeof c.time === "number" ? c.time : 0;
-                const candleTime =
-                  typeof candle.time === "number" ? candle.time : 0;
-                return cTime === candleTime;
+                let existingTime: number;
+                if (typeof c.time === "number") {
+                  existingTime =
+                    c.time > 10000000000 ? Math.floor(c.time / 1000) : c.time;
+                } else if (typeof c.time === "string") {
+                  existingTime = Math.floor(new Date(c.time).getTime() / 1000);
+                } else {
+                  existingTime = 0;
+                }
+                return existingTime === normalizedTime;
               });
 
               let updatedCandles;
@@ -428,21 +456,59 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
               } else {
                 // Add new candle
                 updatedCandles = [...timeframeCandles, candle].sort((a, b) => {
-                  const timeA = typeof a.time === "number" ? a.time : 0;
-                  const timeB = typeof b.time === "number" ? b.time : 0;
+                  let timeA: number;
+                  if (typeof a.time === "number") {
+                    timeA = a.time;
+                  } else if (typeof a.time === "string") {
+                    timeA = Math.floor(new Date(a.time).getTime() / 1000);
+                  } else {
+                    timeA = 0;
+                  }
+
+                  let timeB: number;
+                  if (typeof b.time === "number") {
+                    timeB = b.time;
+                  } else if (typeof b.time === "string") {
+                    timeB = Math.floor(new Date(b.time).getTime() / 1000);
+                  } else {
+                    timeB = 0;
+                  }
+
                   return timeA - timeB;
                 });
               }
 
-              return {
-                candleData: {
-                  ...state.candleData,
-                  [message.symbol!]: {
-                    ...symbolCandles,
-                    [message.timeframe!]: updatedCandles,
-                  },
+              // Create a new state object with updated 1m candles
+              const newCandleData = {
+                ...state.candleData,
+                [symbol]: {
+                  ...symbolCandles,
+                  [timeframe]: updatedCandles,
                 },
               };
+
+              // Now update all other timeframes that are subscribed for this symbol
+              const subscribedTimeframes = state.subscribedCandles.get(symbol);
+              if (subscribedTimeframes && timeframe === "1m") {
+                // Only aggregate from 1m candles
+                subscribedTimeframes.forEach((tf) => {
+                  if (tf !== "1m") {
+                    const existingTfCandles =
+                      (newCandleData[symbol] && newCandleData[symbol][tf]) ||
+                      [];
+                    const { updatedCandles: aggregatedCandles } =
+                      aggregateCandle(candle, tf, existingTfCandles);
+
+                    // Update the timeframe data
+                    if (!newCandleData[symbol]) {
+                      newCandleData[symbol] = {};
+                    }
+                    newCandleData[symbol][tf] = aggregatedCandles;
+                  }
+                });
+              }
+
+              return { candleData: newCandleData };
             });
           }
           break;
@@ -929,20 +995,75 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
         const symbolCandles = state.candleData[symbol] || {};
         const timeframeCandles = symbolCandles[timeframe] || [];
 
+        // Ensure candle time is a number in seconds
+        let normalizedCandleTime: number;
+        if (typeof candle.time === "number") {
+          // Convert from milliseconds to seconds if needed
+          normalizedCandleTime =
+            candle.time > 10000000000
+              ? Math.floor(candle.time / 1000)
+              : candle.time;
+        } else if (typeof candle.time === "string") {
+          // Convert string date to seconds
+          normalizedCandleTime = Math.floor(
+            new Date(candle.time).getTime() / 1000
+          );
+        } else {
+          console.warn("Invalid candle time format:", candle.time);
+          return state; // Return unchanged state if time format is invalid
+        }
+
+        // Create a normalized candle with proper time format
+        const normalizedCandle: CandleData = {
+          ...candle,
+          time: normalizedCandleTime,
+        };
+
         // Check if this candle already exists (same timestamp)
-        const existingIndex = timeframeCandles.findIndex(
-          (c) => c.time === candle.time
-        );
+        const existingIndex = timeframeCandles.findIndex((c) => {
+          // Normalize existing candle time for comparison
+          let existingTime: number;
+          if (typeof c.time === "number") {
+            existingTime =
+              c.time > 10000000000 ? Math.floor(c.time / 1000) : c.time;
+          } else if (typeof c.time === "string") {
+            existingTime = Math.floor(new Date(c.time).getTime() / 1000);
+          } else {
+            existingTime = 0;
+          }
+
+          return existingTime === normalizedCandleTime;
+        });
 
         let updatedCandles;
         if (existingIndex >= 0) {
           // Update existing candle
           updatedCandles = [...timeframeCandles];
-          updatedCandles[existingIndex] = candle;
+          updatedCandles[existingIndex] = normalizedCandle;
         } else {
           // Add new candle
-          updatedCandles = [...timeframeCandles, candle].sort(
-            (a, b) => a.time - b.time
+          updatedCandles = [...timeframeCandles, normalizedCandle].sort(
+            (a, b) => {
+              let timeA: number;
+              if (typeof a.time === "number") {
+                timeA = a.time;
+              } else if (typeof a.time === "string") {
+                timeA = Math.floor(new Date(a.time).getTime() / 1000);
+              } else {
+                timeA = 0;
+              }
+
+              let timeB: number;
+              if (typeof b.time === "number") {
+                timeB = b.time;
+              } else if (typeof b.time === "string") {
+                timeB = Math.floor(new Date(b.time).getTime() / 1000);
+              } else {
+                timeB = 0;
+              }
+
+              return timeA - timeB;
+            }
           );
         }
 
@@ -1057,4 +1178,93 @@ export function useWebSocket() {
     activeSymbol,
     activeTimeframe,
   };
+}
+
+// Add a helper function to aggregate candles
+function aggregateCandle(
+  candle: CandleData,
+  timeframe: string,
+  existingCandles: CandleData[]
+): { updatedCandles: CandleData[]; isNewCandle: boolean } {
+  // Skip if candle time is invalid
+  if (typeof candle.time !== "number") {
+    console.warn("Invalid candle time format for aggregation:", candle.time);
+    return { updatedCandles: existingCandles, isNewCandle: false };
+  }
+
+  // Determine interval in minutes
+  let intervalMinutes = 1;
+  switch (timeframe) {
+    case "5m":
+      intervalMinutes = 5;
+      break;
+    case "15m":
+      intervalMinutes = 15;
+      break;
+    case "30m":
+      intervalMinutes = 30;
+      break;
+    case "1h":
+      intervalMinutes = 60;
+      break;
+    case "4h":
+      intervalMinutes = 240;
+      break;
+    case "1d":
+      intervalMinutes = 1440;
+      break;
+    case "1w":
+      intervalMinutes = 10080;
+      break;
+    default:
+      return { updatedCandles: existingCandles, isNewCandle: false }; // Skip aggregation for 1m
+  }
+
+  // Calculate the interval start time
+  const candleTimeMs = candle.time * 1000; // Convert seconds to milliseconds
+  const intervalMs = intervalMinutes * 60 * 1000;
+  const intervalStart = Math.floor(candleTimeMs / intervalMs) * intervalMs;
+  const intervalStartSec = Math.floor(intervalStart / 1000);
+
+  // Find if we already have a candle for this interval
+  const existingIndex = existingCandles.findIndex(
+    (c) => typeof c.time === "number" && Math.floor(c.time) === intervalStartSec
+  );
+
+  // Clone the candles array to avoid mutating the original
+  const updatedCandles = [...existingCandles];
+  let isNewCandle = false;
+
+  if (existingIndex >= 0) {
+    // Update existing candle
+    const existingCandle = updatedCandles[existingIndex];
+    updatedCandles[existingIndex] = {
+      time: intervalStartSec,
+      open: existingCandle.open, // Keep original open
+      high: Math.max(existingCandle.high, candle.high),
+      low: Math.min(existingCandle.low, candle.low),
+      close: candle.close, // Update close to latest
+      volume: existingCandle.volume + candle.volume, // Accumulate volume
+    };
+  } else {
+    // Create new candle for this interval
+    updatedCandles.push({
+      time: intervalStartSec,
+      open: candle.open,
+      high: candle.high,
+      low: candle.low,
+      close: candle.close,
+      volume: candle.volume,
+    });
+    isNewCandle = true;
+
+    // Sort candles by time
+    updatedCandles.sort((a, b) => {
+      const timeA = typeof a.time === "number" ? a.time : 0;
+      const timeB = typeof b.time === "number" ? b.time : 0;
+      return timeA - timeB;
+    });
+  }
+
+  return { updatedCandles, isNewCandle };
 }

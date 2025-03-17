@@ -89,7 +89,7 @@ export async function getCandles(req: Request, res: Response): Promise<void> {
       orderBy: {
         time: "desc",
       },
-      take: limitNum, 
+      take: limitNum,
     });
 
     // Transform data to match expected format

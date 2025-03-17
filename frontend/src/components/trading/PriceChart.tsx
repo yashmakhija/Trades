@@ -14,6 +14,7 @@ import {
   Time,
   LineStyle,
   PriceScaleMode,
+  HistogramSeriesOptions,
 } from "lightweight-charts";
 import { useWebSocket, CandleData } from "@/services/websocket";
 import {
@@ -23,9 +24,29 @@ import {
 } from "@/services/marketData";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Skeleton } from "@/components/ui/skeleton";
 import { AlertCircle } from "lucide-react";
 import { useTheme } from "next-themes";
+
+// Define a type for the watermark options
+interface WatermarkOptions {
+  color: string;
+  visible: boolean;
+  text: string;
+  fontSize: number;
+  horzAlign: "center" | "left" | "right";
+  vertAlign: "center" | "top" | "bottom";
+}
+
+// Define a type for the last candle reference
+interface LastCandle {
+  time: Time;
+  data: {
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+  };
+}
 
 interface PriceChartProps {
   symbol: string;
@@ -37,7 +58,7 @@ interface PriceChartProps {
 
 export function PriceChart({
   symbol,
-  initialTimeframe = "1h",
+  initialTimeframe = "1m",
   height = 400,
   useMockData = false,
   className = "",
@@ -47,7 +68,7 @@ export function PriceChart({
   const candleSeries = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeries = useRef<ISeriesApi<"Histogram"> | null>(null);
   const resizeObserver = useRef<ResizeObserver | null>(null);
-  const lastCandleRef = useRef<{ time: Time; data: any } | null>(null);
+  const lastCandleRef = useRef<LastCandle | null>(null);
 
   const [timeframe, setTimeframe] = useState<Timeframe>(initialTimeframe);
   const [isLoading, setIsLoading] = useState(true);
@@ -215,6 +236,11 @@ export function PriceChart({
         mouseWheel: true,
         pressedMouseMove: true,
       },
+    };
+
+    // Add watermark options separately since it's not in the TypeScript definitions
+    const fullOptions = {
+      ...options,
       watermark: {
         color: chartColors.watermark,
         visible: true,
@@ -222,15 +248,15 @@ export function PriceChart({
         fontSize: 56,
         horzAlign: "center",
         vertAlign: "center",
-      },
+      } as WatermarkOptions,
     };
 
     try {
       chartRef.current = createChart(chartContainerRef.current, {
-        ...options,
+        ...fullOptions,
         width: chartContainerRef.current.clientWidth,
         height: height,
-      });
+      } as DeepPartial<ChartOptions>);
 
       // Determine price format based on symbol
       const isPriceLarge = normalizedSymbol.includes("btc");
@@ -263,7 +289,6 @@ export function PriceChart({
       });
 
       // The lightweight-charts library has incomplete TypeScript definitions for histogram series options
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       volumeSeries.current = chartRef.current.addSeries(HistogramSeries, {
         color: "rgba(56, 33, 110, 0.3)",
         priceFormat: {
@@ -276,7 +301,7 @@ export function PriceChart({
           top: 0.85,
           bottom: 0,
         },
-      } as any); // Using any is necessary due to incomplete TypeScript definitions
+      } as DeepPartial<HistogramSeriesOptions>);
 
       // Set up resize observer for responsive chart
       if (resizeObserver.current) {
@@ -400,7 +425,12 @@ export function PriceChart({
         const lastCandle = candleStickData[candleStickData.length - 1];
         lastCandleRef.current = {
           time: lastCandle.time,
-          data: lastCandle,
+          data: {
+            open: lastCandle.open,
+            high: lastCandle.high,
+            low: lastCandle.low,
+            close: lastCandle.close,
+          },
         };
       }
 
@@ -472,7 +502,9 @@ export function PriceChart({
       }
 
       // Ensure time is in the correct format (seconds since epoch)
-      let candleTime: Time;
+      let candleTime: UTCTimestamp;
+
+      // Convert time to a proper timestamp number
       if (typeof latestCandle.time === "string") {
         candleTime = Math.floor(
           new Date(latestCandle.time).getTime() / 1000
@@ -483,8 +515,11 @@ export function PriceChart({
       ) {
         // If timestamp is in milliseconds, convert to seconds
         candleTime = Math.floor(latestCandle.time / 1000) as UTCTimestamp;
-      } else {
+      } else if (typeof latestCandle.time === "number") {
         candleTime = latestCandle.time as UTCTimestamp;
+      } else {
+        console.warn("Invalid time format:", latestCandle.time);
+        return;
       }
 
       // Make sure we have valid data before updating
@@ -504,6 +539,17 @@ export function PriceChart({
       const normalizedHigh = normalizePrice(latestCandle.high);
       const normalizedLow = normalizePrice(latestCandle.low);
       const normalizedClose = normalizePrice(latestCandle.close);
+
+      // Log the update for debugging
+      console.log("Updating chart with:", {
+        time: candleTime,
+        lastTime: lastCandleRef.current?.time,
+        open: normalizedOpen,
+        high: normalizedHigh,
+        low: normalizedLow,
+        close: normalizedClose,
+        isNewCandle,
+      });
 
       try {
         // Update the candle data

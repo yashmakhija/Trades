@@ -7,6 +7,7 @@ Welcome to the documentation for the Trading App Backend. This documentation pro
 - [**API Documentation**](./api/README.md): Comprehensive documentation of the REST API endpoints and WebSocket API.
 - [**Features**](./features/): Documentation of specific features:
   - [Candle Data System](./features/candle-data.md): Documentation of the candle data management system.
+  - [Order Matching System](./features/order-matching.md): Detailed explanation of how orders are processed, matched, and executed.
 - [**TimescaleDB**](./timescaledb/README.md): Documentation of the TimescaleDB implementation.
 
 ## Quick Links
@@ -15,6 +16,7 @@ Welcome to the documentation for the Trading App Backend. This documentation pro
 - [WebSocket API](./api/README.md#websocket-api)
 - [TimescaleDB Setup](./timescaledb/TIMESCALEDB-SETUP.md)
 - [Candle Data Management](./features/candle-data.md)
+- [Order Matching System](./features/order-matching.md)
 
 ## Getting Started
 
