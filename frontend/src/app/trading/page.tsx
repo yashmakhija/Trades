@@ -9,13 +9,32 @@ import { OrderForm } from "@/components/trading/OrderForm";
 import { OrderList } from "@/components/trading/OrderList";
 import { ConnectionStatus } from "@/components/trading/ConnectionStatus";
 import { WebSocketDebug } from "@/components/trading/WebSocketDebug";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Typography } from "@/components/ui/typography";
 import { useWebSocket } from "@/services/websocket";
 import { Toaster } from "sonner";
 import { DEFAULT_SYMBOLS } from "@/config";
 import { fetchSymbols } from "@/services/marketData";
+import { TradingAnalytics } from "@/components/trading/TradingAnalytics";
+import { Button } from "@/components/ui/button";
+import {
+  LineChart,
+  BookOpen,
+  ListOrdered,
+  BarChart4,
+  ChevronDown,
+  ChevronUp,
+  Eye,
+  EyeOff,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
 
 export default function TradingPage() {
   const searchParams = useSearchParams();
@@ -26,9 +45,11 @@ export default function TradingPage() {
     DEFAULT_SYMBOLS[0]
   );
 
-  // State for active tab
+  // State for active tab and UI controls
   const [activeTab, setActiveTab] = useState("chart");
   const [showDebug, setShowDebug] = useState(false);
+  const [isAnalyticsExpanded, setIsAnalyticsExpanded] = useState(false);
+  const [sidebarView, setSidebarView] = useState<"orders" | "form">("form");
 
   // Use the WebSocket hook
   const {
@@ -129,12 +150,13 @@ export default function TradingPage() {
   }, []);
 
   return (
-    <main className="container mx-auto py-6 px-4">
+    <main className="container mx-auto py-4 px-4 max-w-7xl">
       {/* Toast provider for notifications */}
       <Toaster position="top-right" richColors />
 
-      <div className="flex flex-col space-y-6">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+      <div className="flex flex-col space-y-4">
+        {/* Header with connection status and symbol selector */}
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 bg-card p-4 rounded-lg shadow-sm">
           <div className="flex items-center gap-3">
             <Typography variant="h1" className="text-2xl font-bold">
               Trading Dashboard
@@ -142,69 +164,194 @@ export default function TradingPage() {
             <ConnectionStatus />
           </div>
 
-          <div className="w-full md:w-64">
-            <SymbolSelector />
+          <div className="flex items-center gap-2 w-full md:w-auto">
+            <div className="w-full md:w-64">
+              <SymbolSelector />
+            </div>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => setShowDebug(!showDebug)}
+              title={showDebug ? "Hide Debug Panel" : "Show Debug Panel"}
+            >
+              {showDebug ? (
+                <EyeOff className="h-4 w-4" />
+              ) : (
+                <Eye className="h-4 w-4" />
+              )}
+            </Button>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        {/* Main trading interface */}
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
           {/* Main content area */}
-          <div className="lg:col-span-3 space-y-6">
-            <Tabs
-              value={activeTab}
-              onValueChange={setActiveTab}
-              className="w-full"
-            >
-              <TabsList>
-                <TabsTrigger value="chart">Chart</TabsTrigger>
-                <TabsTrigger value="orderbook">Order Book</TabsTrigger>
-                <TabsTrigger value="trades">Recent Trades</TabsTrigger>
-              </TabsList>
+          <div className="lg:col-span-3 space-y-4">
+            {/* Market ticker at the top */}
+            <MarketTicker symbol={selectedSymbol} />
 
-              <TabsContent value="chart" className="mt-4">
-                <PriceChart
-                  symbol={selectedSymbol}
-                  height={500}
-                  useMockData={false} // Use real data from backend
-                />
-              </TabsContent>
+            {/* Chart and data tabs */}
+            <Card className="overflow-hidden border-none shadow-md">
+              <Tabs
+                value={activeTab}
+                onValueChange={setActiveTab}
+                className="w-full"
+              >
+                <CardHeader className="pb-0">
+                  <div className="flex justify-between items-center">
+                    <CardTitle className="text-xl">
+                      {selectedSymbol.toUpperCase()} Market Data
+                    </CardTitle>
+                    <TabsList>
+                      <TabsTrigger
+                        value="chart"
+                        className="flex items-center gap-1"
+                      >
+                        <LineChart className="h-4 w-4" />
+                        <span className="hidden sm:inline">Chart</span>
+                      </TabsTrigger>
+                      <TabsTrigger
+                        value="orderbook"
+                        className="flex items-center gap-1"
+                      >
+                        <BookOpen className="h-4 w-4" />
+                        <span className="hidden sm:inline">Order Book</span>
+                      </TabsTrigger>
+                      <TabsTrigger
+                        value="trades"
+                        className="flex items-center gap-1"
+                      >
+                        <ListOrdered className="h-4 w-4" />
+                        <span className="hidden sm:inline">Trades</span>
+                      </TabsTrigger>
+                    </TabsList>
+                  </div>
+                </CardHeader>
 
-              <TabsContent value="orderbook" className="mt-4">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Order Book</CardTitle>
-                  </CardHeader>
-                  <CardContent>
+                <CardContent className="pt-4">
+                  <TabsContent value="chart" className="mt-0">
+                    <PriceChart
+                      symbol={selectedSymbol}
+                      height={500}
+                      useMockData={false} // Use real data from backend
+                    />
+                  </TabsContent>
+
+                  <TabsContent value="orderbook" className="mt-0">
                     <div className="flex items-center justify-center h-[500px] text-muted-foreground">
-                      Order book will be implemented in a future update
+                      <div className="text-center">
+                        <BookOpen className="h-12 w-12 mx-auto mb-2 text-muted-foreground/50" />
+                        <p>Order book will be implemented in a future update</p>
+                      </div>
                     </div>
-                  </CardContent>
-                </Card>
-              </TabsContent>
+                  </TabsContent>
 
-              <TabsContent value="trades" className="mt-4">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Recent Trades</CardTitle>
-                  </CardHeader>
-                  <CardContent>
+                  <TabsContent value="trades" className="mt-0">
                     <div className="flex items-center justify-center h-[500px] text-muted-foreground">
-                      Recent trades will be implemented in a future update
+                      <div className="text-center">
+                        <ListOrdered className="h-12 w-12 mx-auto mb-2 text-muted-foreground/50" />
+                        <p>
+                          Recent trades will be implemented in a future update
+                        </p>
+                      </div>
                     </div>
-                  </CardContent>
-                </Card>
-              </TabsContent>
-            </Tabs>
+                  </TabsContent>
+                </CardContent>
+              </Tabs>
+            </Card>
           </div>
 
           {/* Sidebar */}
-          <div className="space-y-6">
-            <MarketTicker symbol={selectedSymbol} />
-            <OrderForm symbol={selectedSymbol} />
-            <OrderList symbol={selectedSymbol} />
+          <div className="space-y-4">
+            <Card className="shadow-md border-none">
+              <CardHeader className="pb-2">
+                <div className="flex justify-between items-center">
+                  <CardTitle className="text-lg">Trading Panel</CardTitle>
+                  <div className="flex gap-1">
+                    <Button
+                      variant={sidebarView === "form" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setSidebarView("form")}
+                      className="h-8"
+                    >
+                      Order
+                    </Button>
+                    <Button
+                      variant={sidebarView === "orders" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setSidebarView("orders")}
+                      className="h-8"
+                    >
+                      Positions
+                    </Button>
+                  </div>
+                </div>
+                <CardDescription>
+                  {sidebarView === "form"
+                    ? "Place a new market or limit order"
+                    : "Manage your open positions"}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="pt-0">
+                {sidebarView === "form" ? (
+                  <OrderForm symbol={selectedSymbol} />
+                ) : (
+                  <OrderList symbol={selectedSymbol} />
+                )}
+              </CardContent>
+            </Card>
 
             {/* WebSocket Debug Panel - Press Ctrl+Shift+D to toggle */}
-            {showDebug && <WebSocketDebug />}
+            {showDebug && (
+              <Card className="shadow-md border-none">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-lg">Debug Panel</CardTitle>
+                  <CardDescription>
+                    WebSocket connection details
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="pt-0">
+                  <WebSocketDebug />
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        </div>
+
+        {/* Analytics Section */}
+        <div className="mt-6">
+          <div
+            className="flex items-center justify-between cursor-pointer p-4 bg-card rounded-lg shadow-sm mb-4"
+            onClick={() => setIsAnalyticsExpanded(!isAnalyticsExpanded)}
+          >
+            <div className="flex items-center gap-2">
+              <BarChart4 className="h-5 w-5" />
+              <Typography variant="h2" className="text-xl font-semibold">
+                Trading Analytics
+              </Typography>
+            </div>
+            <Button variant="ghost" size="icon">
+              {isAnalyticsExpanded ? (
+                <ChevronUp className="h-5 w-5" />
+              ) : (
+                <ChevronDown className="h-5 w-5" />
+              )}
+            </Button>
+          </div>
+
+          <div
+            className={cn(
+              "transition-all duration-300 ease-in-out overflow-hidden",
+              isAnalyticsExpanded
+                ? "max-h-[2000px] opacity-100"
+                : "max-h-0 opacity-0"
+            )}
+          >
+            <Card className="shadow-md border-none">
+              <CardContent className="p-4">
+                <TradingAnalytics />
+              </CardContent>
+            </Card>
           </div>
         </div>
       </div>

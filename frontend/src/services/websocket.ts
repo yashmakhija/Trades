@@ -172,7 +172,11 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
               const tickerInfo = data as any;
               tickerData[symbol] = {
                 symbol,
-                price: tickerInfo.price,
+                // Convert price from integer to floating-point (divide by 100)
+                price:
+                  typeof tickerInfo.price === "number"
+                    ? tickerInfo.price / 100
+                    : tickerInfo.price,
                 priceChangePercent: tickerInfo.priceChangePercent || 0,
                 volume: tickerInfo.volume || 0,
                 timestamp: tickerInfo.timestamp || Date.now(),
@@ -206,6 +210,8 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
                     ...state.tickerData,
                     [symbol]: {
                       ...currentTicker,
+                      // Convert price from string to number and then divide by 100 if it's from the backend
+                      // If it's directly from Binance, it's already a floating-point number as a string
                       price: parseFloat(kline.c),
                       volume: parseFloat(kline.v),
                       timestamp: rawData.E,
@@ -273,6 +279,8 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
                   ...state.tickerData,
                   [symbol]: {
                     symbol,
+                    // Convert price from string to number
+                    // If it's from Binance, it's already a floating-point number as a string
                     price: parseFloat(rawData.c),
                     priceChangePercent: parseFloat(rawData.P),
                     volume: parseFloat(rawData.v),
@@ -296,6 +304,8 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
                     ...state.tickerData,
                     [symbol]: {
                       ...currentTicker,
+                      // Convert price from string to number
+                      // If it's from Binance, it's already a floating-point number as a string
                       price: parseFloat(rawData.p),
                       timestamp: rawData.T,
                     },
@@ -313,7 +323,11 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
                 ...state.tickerData,
                 [message.symbol!]: {
                   symbol: message.symbol!,
-                  price: message.data.price,
+                  // Convert price from integer to floating-point (divide by 100)
+                  price:
+                    typeof message.data.price === "number"
+                      ? message.data.price / 100
+                      : message.data.price,
                   priceChangePercent: message.data.priceChangePercent || 0,
                   volume: message.data.volume || 0,
                   timestamp: message.data.timestamp || Date.now(),

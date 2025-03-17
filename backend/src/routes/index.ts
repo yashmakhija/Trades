@@ -6,6 +6,7 @@ import symbolRoutes from "./symbolRoutes";
 import authRoutes from "./authRoutes";
 import orderRoutes from "./orderRoutes";
 import candleRoutes from "./candleRoutes";
+import analyticsRoutes from "./analyticsRoutes";
 import { orderManager } from "../services/orderManager";
 
 export function initRoutes(app: Express): void {
@@ -28,6 +29,7 @@ export function initRoutes(app: Express): void {
   app.use("/api/auth", authRoutes);
   app.use("/api/orders", orderRoutes);
   app.use("/api/candles", candleRoutes);
+  app.use("/api/analytics", analyticsRoutes);
 
   // Health Check
   app.get("/health", (req: Request, res: Response) => {

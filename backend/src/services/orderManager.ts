@@ -170,21 +170,69 @@ class OrderManager extends EventEmitter {
    * @param price Current price
    */
   async checkPriceTriggers(symbol: string, price: number): Promise<void> {
-    // Check stop loss orders
+    // Log the check operation
+    console.log(
+      `Checking price triggers for ${symbol} at price ${price / 100} USD`
+    );
+
+    // Check if we have any orders for this symbol
     const stopLossMap = this.stopLossOrders.get(symbol);
-    if (stopLossMap) {
+    const takeProfitMap = this.takeProfitOrders.get(symbol);
+
+    if (!stopLossMap && !takeProfitMap) {
+      // No orders with stop-loss or take-profit for this symbol
+      return;
+    }
+
+    console.log(
+      `Found ${stopLossMap?.size || 0} stop-loss orders and ${
+        takeProfitMap?.size || 0
+      } take-profit orders for ${symbol}`
+    );
+
+    // Check stop loss orders
+    if (stopLossMap && stopLossMap.size > 0) {
+      console.log(
+        `Checking ${stopLossMap.size} stop-loss orders for ${symbol}`
+      );
+
       for (const [orderId, order] of stopLossMap.entries()) {
+        console.log(
+          `Checking stop-loss for order ${orderId}: current price ${
+            price / 100
+          }, stop-loss ${order.stopLoss! / 100}`
+        );
+
         if (this.shouldTriggerStopLoss(order, price)) {
+          console.log(
+            `🔴 STOP-LOSS TRIGGERED for order ${orderId} at price ${
+              price / 100
+            }`
+          );
           await this.executeOrder(orderId, price, "STOP_LOSS");
         }
       }
     }
 
     // Check take profit orders
-    const takeProfitMap = this.takeProfitOrders.get(symbol);
-    if (takeProfitMap) {
+    if (takeProfitMap && takeProfitMap.size > 0) {
+      console.log(
+        `Checking ${takeProfitMap.size} take-profit orders for ${symbol}`
+      );
+
       for (const [orderId, order] of takeProfitMap.entries()) {
+        console.log(
+          `Checking take-profit for order ${orderId}: current price ${
+            price / 100
+          }, take-profit ${order.takeProfit! / 100}`
+        );
+
         if (this.shouldTriggerTakeProfit(order, price)) {
+          console.log(
+            `🟢 TAKE-PROFIT TRIGGERED for order ${orderId} at price ${
+              price / 100
+            }`
+          );
           await this.executeOrder(orderId, price, "TAKE_PROFIT");
         }
       }
@@ -201,12 +249,35 @@ class OrderManager extends EventEmitter {
   private shouldTriggerStopLoss(order: Order, currentPrice: number): boolean {
     if (!order.stopLoss) return false;
 
+    // Log the comparison values
+    console.log(
+      `Stop-loss check for ${order.id}: type=${order.type}, isShort=${
+        order.isShort
+      }, currentPrice=${currentPrice / 100}, stopLoss=${order.stopLoss / 100}`
+    );
+
     if (order.type === OrderType.BUY && !order.isShort) {
       // Long position - trigger if price falls below stop loss
-      return currentPrice <= order.stopLoss;
+      const shouldTrigger = currentPrice <= order.stopLoss;
+      if (shouldTrigger) {
+        console.log(
+          `Stop-loss triggered for LONG position: ${currentPrice / 100} <= ${
+            order.stopLoss / 100
+          }`
+        );
+      }
+      return shouldTrigger;
     } else {
       // Short position - trigger if price rises above stop loss
-      return currentPrice >= order.stopLoss;
+      const shouldTrigger = currentPrice >= order.stopLoss;
+      if (shouldTrigger) {
+        console.log(
+          `Stop-loss triggered for SHORT position: ${currentPrice / 100} >= ${
+            order.stopLoss / 100
+          }`
+        );
+      }
+      return shouldTrigger;
     }
   }
 
@@ -220,12 +291,37 @@ class OrderManager extends EventEmitter {
   private shouldTriggerTakeProfit(order: Order, currentPrice: number): boolean {
     if (!order.takeProfit) return false;
 
+    // Log the comparison values
+    console.log(
+      `Take-profit check for ${order.id}: type=${order.type}, isShort=${
+        order.isShort
+      }, currentPrice=${currentPrice / 100}, takeProfit=${
+        order.takeProfit / 100
+      }`
+    );
+
     if (order.type === OrderType.BUY && !order.isShort) {
       // Long position - trigger if price rises above take profit
-      return currentPrice >= order.takeProfit;
+      const shouldTrigger = currentPrice >= order.takeProfit;
+      if (shouldTrigger) {
+        console.log(
+          `Take-profit triggered for LONG position: ${currentPrice / 100} >= ${
+            order.takeProfit / 100
+          }`
+        );
+      }
+      return shouldTrigger;
     } else {
       // Short position - trigger if price falls below take profit
-      return currentPrice <= order.takeProfit;
+      const shouldTrigger = currentPrice <= order.takeProfit;
+      if (shouldTrigger) {
+        console.log(
+          `Take-profit triggered for SHORT position: ${currentPrice / 100} <= ${
+            order.takeProfit / 100
+          }`
+        );
+      }
+      return shouldTrigger;
     }
   }
 
@@ -242,78 +338,157 @@ class OrderManager extends EventEmitter {
     triggerType: "MARKET" | "STOP_LOSS" | "TAKE_PROFIT"
   ): Promise<void> {
     try {
+      console.log(
+        `⚡ Executing order ${orderId} at price ${price / 100} (${triggerType})`
+      );
+
       const order = this.openOrders.get(orderId);
-      if (!order) return;
+      if (!order) {
+        console.error(`Order ${orderId} not found in openOrders map`);
+        return;
+      }
+
+      console.log(
+        `Order details: ${JSON.stringify({
+          id: order.id,
+          symbol: order.symbolName,
+          type: order.type,
+          isShort: order.isShort,
+          price: order.price / 100,
+          quantity: order.quantity,
+          stopLoss: order.stopLoss ? order.stopLoss / 100 : null,
+          takeProfit: order.takeProfit ? order.takeProfit / 100 : null,
+        })}`
+      );
 
       // Calculate PnL
       const pnl = this.calculatePnL(order, price);
+      console.log(`Calculated PnL: ${pnl / 100} USD`);
 
-      // Update order in database first
-      await prisma.order.update({
-        where: { id: orderId },
-        data: {
-          status: OrderStatus.CLOSED,
-          exitPrice: price,
-          pnl,
-          closedAt: new Date(),
-        },
-      });
+      try {
+        // Update order in database first
+        const updatedOrder = await prisma.order.update({
+          where: { id: orderId },
+          data: {
+            status: OrderStatus.CLOSED,
+            exitPrice: price,
+            pnl,
+            closedAt: new Date(),
+          },
+        });
 
-      // Update balance manager with position info - this will handle broadcasting balance updates
-      await balanceManager.updateBalanceAfterExecution(
-        order.userId,
-        orderId,
-        order.symbolName,
-        order.quantity,
-        price,
-        order.type
-      );
+        console.log(
+          `Order updated in database: ${updatedOrder.id}, status: ${updatedOrder.status}`
+        );
+      } catch (dbError) {
+        console.error(`Database error updating order ${orderId}:`, dbError);
+        throw dbError; // Re-throw to be caught by outer try/catch
+      }
+
+      try {
+        // Update balance manager with position info - this will handle broadcasting balance updates
+        await balanceManager.updateBalanceAfterExecution(
+          order.userId,
+          orderId,
+          order.symbolName,
+          order.quantity,
+          price,
+          order.type
+        );
+
+        console.log(
+          `Balance updated for user ${order.userId} after order execution`
+        );
+      } catch (balanceError) {
+        console.error(
+          `Error updating balance for order ${orderId}:`,
+          balanceError
+        );
+        // Continue execution even if balance update fails - we'll need to handle this manually
+      }
 
       // Remove from in-memory maps
       this.openOrders.delete(orderId);
-      this.userOrders.get(order.userId)?.delete(orderId);
+      console.log(`Removed order ${orderId} from openOrders map`);
 
-      if (order.stopLoss) {
-        this.stopLossOrders.get(order.symbolName)?.delete(orderId);
+      if (this.userOrders.has(order.userId)) {
+        this.userOrders.get(order.userId)?.delete(orderId);
+        console.log(
+          `Removed order ${orderId} from userOrders map for user ${order.userId}`
+        );
       }
 
-      if (order.takeProfit) {
+      if (order.stopLoss && this.stopLossOrders.has(order.symbolName)) {
+        this.stopLossOrders.get(order.symbolName)?.delete(orderId);
+        console.log(
+          `Removed order ${orderId} from stopLossOrders map for symbol ${order.symbolName}`
+        );
+      }
+
+      if (order.takeProfit && this.takeProfitOrders.has(order.symbolName)) {
         this.takeProfitOrders.get(order.symbolName)?.delete(orderId);
+        console.log(
+          `Removed order ${orderId} from takeProfitOrders map for symbol ${order.symbolName}`
+        );
       }
 
       // Broadcast order update via WebSocket
-      broadcastOrderUpdate(order.userId, {
-        id: orderId,
-        status: OrderStatus.CLOSED,
-        exitPrice: price,
-        pnl,
-        symbolName: order.symbolName,
-        type: order.type,
-        price: order.price,
-        quantity: order.quantity,
-        isShort: order.isShort,
-      });
+      try {
+        broadcastOrderUpdate(order.userId, {
+          id: orderId,
+          status: OrderStatus.CLOSED,
+          exitPrice: price,
+          pnl,
+          symbolName: order.symbolName,
+          type: order.type,
+          price: order.price,
+          quantity: order.quantity,
+          isShort: order.isShort,
+        });
+
+        console.log(`Order update broadcasted to user ${order.userId}`);
+      } catch (broadcastError) {
+        console.error(
+          `Error broadcasting order update for ${orderId}:`,
+          broadcastError
+        );
+        // Continue execution even if broadcast fails
+      }
 
       // Get updated trade analytics and broadcast
-      const [userStats, symbolStats, dailyPnL] = await Promise.all([
-        tradeAnalytics.getUserStats(order.userId),
-        tradeAnalytics.getSymbolStats(order.userId),
-        tradeAnalytics.getDailyPnL(
-          order.userId,
-          new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
-          new Date()
-        ),
-      ]);
+      try {
+        const [userStats, symbolStats, dailyPnL] = await Promise.all([
+          tradeAnalytics.getUserStats(order.userId),
+          tradeAnalytics.getSymbolStats(order.userId),
+          tradeAnalytics.getDailyPnL(
+            order.userId,
+            new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+            new Date()
+          ),
+        ]);
 
-      broadcastTradeAnalytics(order.userId, {
-        userStats,
-        symbolStats,
-        dailyPnL,
-      });
+        broadcastTradeAnalytics(order.userId, {
+          userStats,
+          symbolStats,
+          dailyPnL,
+        });
 
-      console.log(`Order ${orderId} executed at ${price} (${triggerType})`);
+        console.log(`Trade analytics broadcasted to user ${order.userId}`);
+      } catch (analyticsError) {
+        console.error(
+          `Error processing trade analytics for order ${orderId}:`,
+          analyticsError
+        );
+        // Continue execution even if analytics fails
+      }
+
+      console.log(
+        `✅ Order ${orderId} successfully executed at ${
+          price / 100
+        } (${triggerType})`
+      );
     } catch (error) {
-      console.error(`Error executing order ${orderId}:`, error);
+      console.error(`❌ Error executing order ${orderId}:`, error);
     }
   }
 
@@ -322,19 +497,42 @@ class OrderManager extends EventEmitter {
    *
    * @param order Order to calculate PnL for
    * @param exitPrice Exit price
-   * @returns Calculated PnL
+   * @returns PnL in cents
    */
   private calculatePnL(order: Order, exitPrice: number): number {
-    const entryValue = order.price * order.quantity;
-    const exitValue = exitPrice * order.quantity;
+    console.log(`Calculating PnL for order ${order.id}:`);
+    console.log(`- Entry price: ${order.price / 100} USD`);
+    console.log(`- Exit price: ${exitPrice / 100} USD`);
+    console.log(`- Quantity: ${order.quantity}`);
+    console.log(`- Type: ${order.type}`);
+    console.log(`- Is short: ${order.isShort}`);
+
+    let pnl = 0;
 
     if (order.type === OrderType.BUY && !order.isShort) {
-      // Long position: profit when exit price > entry price
-      return exitValue - entryValue;
+      // Long position: profit = (exit price - entry price) * quantity
+      pnl = (exitPrice - order.price) * order.quantity;
+      console.log(
+        `Long position PnL calculation: (${exitPrice / 100} - ${
+          order.price / 100
+        }) * ${order.quantity} = ${pnl / 100} USD`
+      );
+    } else if (order.type === OrderType.SELL && order.isShort) {
+      // Short position: profit = (entry price - exit price) * quantity
+      pnl = (order.price - exitPrice) * order.quantity;
+      console.log(
+        `Short position PnL calculation: (${order.price / 100} - ${
+          exitPrice / 100
+        }) * ${order.quantity} = ${pnl / 100} USD`
+      );
     } else {
-      // Short position: profit when entry price > exit price
-      return entryValue - exitValue;
+      console.warn(
+        `Unexpected order type/isShort combination: type=${order.type}, isShort=${order.isShort}`
+      );
     }
+
+    console.log(`Final PnL: ${pnl / 100} USD`);
+    return pnl;
   }
 
   /**

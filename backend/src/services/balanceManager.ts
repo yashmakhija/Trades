@@ -287,7 +287,10 @@ export class BalanceManager extends EventEmitter {
    *
    * @param userId User ID
    * @param orderId Order ID
-   * @param pnl Profit/loss
+   * @param symbol Symbol name
+   * @param quantity Order quantity
+   * @param price Execution price
+   * @param type Order type
    */
   async updateBalanceAfterExecution(
     userId: string,
@@ -297,47 +300,142 @@ export class BalanceManager extends EventEmitter {
     price: number,
     type: OrderType
   ): Promise<void> {
-    const cachedBalance = this.userBalances.get(userId);
-    if (!cachedBalance) return;
+    console.log(
+      `Updating balance after execution for user ${userId}, order ${orderId}`
+    );
+    console.log(
+      `Order details: symbol=${symbol}, quantity=${quantity}, price=${
+        price / 100
+      }, type=${type}`
+    );
 
-    const position: Position = {
-      symbol,
-      quantity,
-      averagePrice: price,
-      currentPrice: price,
-      orderId,
-      pnl: 0,
-      status: OrderStatus.CLOSED,
-    };
+    try {
+      // Get the order to calculate PnL
+      const order = await prisma.order.findUnique({
+        where: { id: orderId },
+        select: {
+          price: true,
+          quantity: true,
+          type: true,
+          isShort: true,
+          reservedAmount: true,
+          exitPrice: true,
+          pnl: true,
+        },
+      });
 
-    // Update position
-    cachedBalance.positions.set(orderId, position);
+      if (!order) {
+        console.error(`Order ${orderId} not found when updating balance`);
+        return;
+      }
 
-    // Remove from open orders since it's executed
-    cachedBalance.openOrders.delete(orderId);
-
-    // If no more open orders, update DB balance
-    if (cachedBalance.openOrders.size === 0) {
-      const totalPnl = Array.from(cachedBalance.positions.values()).reduce(
-        (sum, pos) => sum + pos.pnl,
-        0
+      console.log(
+        `Order found: entry price=${order.price / 100}, exit price=${
+          order.exitPrice ? order.exitPrice / 100 : "N/A"
+        }, reserved=${order.reservedAmount ? order.reservedAmount / 100 : "N/A"}`
       );
 
-      if (totalPnl !== 0) {
-        await this.updateBalance(
-          userId,
-          Math.abs(totalPnl),
-          totalPnl > 0 ? "INCREASE" : "DECREASE"
+      // Calculate PnL based on entry and exit prices
+      let pnl = 0;
+      if (order.exitPrice) {
+        if (type === OrderType.BUY && !order.isShort) {
+          // Long position: profit = (exit price - entry price) * quantity
+          pnl = (order.exitPrice - order.price) * order.quantity;
+        } else if (type === OrderType.SELL && order.isShort) {
+          // Short position: profit = (entry price - exit price) * quantity
+          pnl = (order.price - order.exitPrice) * order.quantity;
+        }
+      }
+
+      console.log(`Calculated PnL: ${pnl / 100} USD`);
+
+      // Get cached balance
+      const cachedBalance = this.userBalances.get(userId);
+      if (!cachedBalance) {
+        console.error(`No cached balance found for user ${userId}`);
+        await this.initializeUserBalance(userId);
+        return;
+      }
+
+      // Update the database with the final balance
+      await prisma.$transaction(async (tx) => {
+        // Release the reserved amount
+        if (
+          order.reservedAmount !== null &&
+          order.reservedAmount !== undefined
+        ) {
+          console.log(
+            `Releasing reserved amount: ${order.reservedAmount / 100} USD`
+          );
+
+          // Update user balance: return reserved amount + add PnL
+          await tx.user.update({
+            where: { id: userId },
+            data: {
+              usdcBalance: {
+                increment: order.reservedAmount + pnl,
+              },
+            },
+          });
+
+          // Record the balance history
+          await tx.balanceHistory.create({
+            data: {
+              userId,
+              orderId,
+              amount: pnl,
+              type: pnl >= 0 ? "TRADE_CLOSE" : "TRADE_CLOSE",
+              description: `Order ${orderId} closed with ${
+                pnl >= 0 ? "profit" : "loss"
+              } of ${Math.abs(pnl) / 100} USD`,
+            },
+          });
+
+          console.log(
+            `User balance updated in database: returned ${
+              order.reservedAmount / 100
+            } USD + PnL ${pnl / 100} USD`
+          );
+        }
+      });
+
+      // Update the cache
+      if (cachedBalance) {
+        // Release the reserved amount
+        if (
+          order.reservedAmount !== null &&
+          order.reservedAmount !== undefined
+        ) {
+          cachedBalance.reserved -= order.reservedAmount;
+          cachedBalance.total += pnl; // Add PnL to total balance
+          cachedBalance.available =
+            cachedBalance.total - cachedBalance.reserved;
+        }
+
+        // Remove from open orders
+        cachedBalance.openOrders.delete(orderId);
+
+        // Remove from positions
+        cachedBalance.positions.delete(orderId);
+
+        cachedBalance.lastUpdate = new Date();
+
+        console.log(
+          `Cache updated: total=${cachedBalance.total / 100}, reserved=${
+            cachedBalance.reserved / 100
+          }, available=${cachedBalance.available / 100}`
         );
       }
 
-      // Clear positions after final balance update
-      cachedBalance.positions.clear();
-    }
+      // Broadcast the updated balance
+      this.broadcastBalanceUpdate(userId);
 
-    cachedBalance.lastUpdate = new Date();
-    this.broadcastBalanceUpdate(userId);
-    this.emit("balanceUpdated", { userId, orderId, position });
+      console.log(
+        `Balance update completed for user ${userId}, order ${orderId}`
+      );
+    } catch (error) {
+      console.error(`Error updating balance after execution:`, error);
+    }
   }
 
   /**
@@ -358,8 +456,20 @@ export class BalanceManager extends EventEmitter {
   } | null> {
     // Check if userId is valid
     if (!userId) {
-      console.warn("getUserBalance called with no userId - returning null");
-      return null;
+      console.warn(
+        "getUserBalance called with no userId - returning default balance for anonymous user"
+      );
+      // Return a default balance for anonymous users (market data only)
+      return {
+        total: 0,
+        reserved: 0,
+        available: 0,
+        positions: [],
+        totalValue: 0,
+        totalPnl: 0,
+        totalPositionValue: 0,
+        openOrdersCount: 0,
+      };
     }
 
     console.log(`Getting balance for user ${userId}`);

@@ -15,7 +15,7 @@ export async function placeOrder(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    const userId = req.user.userId;
+    const userId = req.user.id;
     const {
       symbolId,
       type,
@@ -25,6 +25,16 @@ export async function placeOrder(req: Request, res: Response): Promise<void> {
       takeProfit,
       isShort = false,
     } = req.body;
+
+    console.log("Received order request:", {
+      symbolId,
+      type,
+      price,
+      quantity,
+      stopLoss,
+      takeProfit,
+      isShort,
+    });
 
     if (!symbolId || !type || !price || !quantity) {
       res.status(400).json({
@@ -43,7 +53,26 @@ export async function placeOrder(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    const orderCost = price * quantity;
+    // The frontend is sending integers with decimal point removed (e.g., 8325632 for $83,256.32)
+    // We need to convert to our internal representation (cents) by dividing by 100
+    const normalizedPrice = Math.round(price / 100);
+    const normalizedStopLoss = stopLoss
+      ? Math.round(stopLoss / 100)
+      : undefined;
+    const normalizedTakeProfit = takeProfit
+      ? Math.round(takeProfit / 100)
+      : undefined;
+
+    console.log("Normalized price values:", {
+      price: `${price} → ${normalizedPrice}`,
+      stopLoss: stopLoss ? `${stopLoss} → ${normalizedStopLoss}` : undefined,
+      takeProfit: takeProfit
+        ? `${takeProfit} → ${normalizedTakeProfit}`
+        : undefined,
+    });
+
+    // Calculate order cost in cents
+    const orderCost = normalizedPrice * quantity;
 
     const hasBalance = await balanceManager.canPlaceOrder(userId, orderCost);
 
@@ -59,15 +88,15 @@ export async function placeOrder(req: Request, res: Response): Promise<void> {
         userId,
         symbolId,
         symbolName: symbol.name,
-        price,
+        price: normalizedPrice,
         quantity,
         type: type as OrderType,
         isShort,
-        stopLoss,
-        takeProfit,
+        stopLoss: normalizedStopLoss,
+        takeProfit: normalizedTakeProfit,
       });
 
-      balanceManager.releaseBalance(userId, `pending_${Date.now()}`);
+      balanceManager.releaseReservedBalance(userId, `pending_${Date.now()}`);
       balanceManager.reserveBalance(userId, order.id, orderCost);
 
       const updatedBalance = await balanceManager.getUserBalance(userId);
@@ -96,7 +125,7 @@ export async function placeOrder(req: Request, res: Response): Promise<void> {
         },
       });
     } catch (orderError) {
-      balanceManager.releaseBalance(userId, `pending_${Date.now()}`);
+      balanceManager.releaseReservedBalance(userId, `pending_${Date.now()}`);
       throw orderError;
     }
   } catch (error) {
@@ -112,7 +141,7 @@ export async function cancelOrder(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    const userId = req.user.userId;
+    const userId = req.user.id;
     const { orderId } = req.params;
 
     if (!orderId) {
@@ -127,7 +156,7 @@ export async function cancelOrder(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    balanceManager.releaseBalance(userId, orderId);
+    balanceManager.releaseReservedBalance(userId, orderId);
 
     const updatedBalance = await balanceManager.getUserBalance(userId);
 
@@ -159,7 +188,7 @@ export async function getUserOrders(
       return;
     }
 
-    const userId = req.user.userId;
+    const userId = req.user.id;
 
     const openOrders = orderManager.getUserOpenOrders(userId);
 
@@ -219,8 +248,7 @@ export async function getUserPortfolio(
       return;
     }
 
-    const userId = req.user.userId;
-
+    const userId = req.user.id;
 
     const balance = await balanceManager.getUserBalance(userId);
 

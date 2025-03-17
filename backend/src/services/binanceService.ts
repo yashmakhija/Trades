@@ -198,6 +198,7 @@ function handleWebSocketMessage(message: WebSocket.Data): void {
       broadcastRawData(symbolKey, data);
     }
 
+    // Process different message types that contain price information
     if (data.e === "ticker") {
       const tickerData = processTickerData(data as BinanceTickerMessage);
 
@@ -207,16 +208,83 @@ function handleWebSocketMessage(message: WebSocket.Data): void {
         updateSymbolPrice(tickerData);
       }
 
+      // Check for stop-loss and take-profit triggers
+      console.log(
+        `Checking price triggers for ${tickerData.symbol} at price ${
+          tickerData.price / 100
+        }`
+      );
       orderManager.checkPriceTriggers(tickerData.symbol, tickerData.price);
 
       broadcastTickerUpdate(tickerData.symbol, {
         ...tickerData,
         displayPrice: tickerData.price / 100,
       });
+    } else if (data.e === "24hrTicker") {
+      // Handle 24hr ticker updates which also contain price information
+      const symbol = data.s.toLowerCase();
+      const price = Math.round(parseFloat(data.c) * 100);
+
+      console.log(
+        `Received 24hrTicker for ${symbol} with price ${price / 100}`
+      );
+
+      // Update the ticker cache
+      if (!tickerCache[symbol]) {
+        tickerCache[symbol] = {
+          symbol,
+          price,
+          priceChangePercent: parseFloat(data.P),
+          volume: parseFloat(data.v),
+          timestamp: data.E,
+        };
+      } else {
+        tickerCache[symbol].price = price;
+        tickerCache[symbol].timestamp = data.E;
+      }
+
+      // Check for stop-loss and take-profit triggers
+      console.log(
+        `Checking price triggers for ${symbol} at price ${price / 100}`
+      );
+      orderManager.checkPriceTriggers(symbol, price);
+
+      // Broadcast the ticker update
+      broadcastTickerUpdate(symbol, {
+        ...tickerCache[symbol],
+        displayPrice: price / 100,
+      });
+    } else if (data.e === "trade") {
+      // Handle individual trade updates
+      const symbol = data.s.toLowerCase();
+      const price = Math.round(parseFloat(data.p) * 100);
+
+      console.log(`Received trade for ${symbol} with price ${price / 100}`);
+
+      // Check for stop-loss and take-profit triggers on each trade
+      console.log(
+        `Checking price triggers for ${symbol} at price ${price / 100}`
+      );
+      orderManager.checkPriceTriggers(symbol, price);
     }
 
     if (data.e === "kline") {
       processKlineData(data as BinanceKlineMessage);
+
+      // Also check price triggers based on candle close price
+      const kline = data.k;
+      const symbol = data.s.toLowerCase();
+      const closePrice = Math.round(parseFloat(kline.c) * 100);
+
+      console.log(
+        `Received kline for ${symbol} with close price ${closePrice / 100}`
+      );
+
+      // Check for stop-loss and take-profit triggers
+      console.log(
+        `Checking price triggers for ${symbol} at price ${closePrice / 100}`
+      );
+      orderManager.checkPriceTriggers(symbol, closePrice);
     }
   } catch (error) {
     console.error("Error processing WebSocket message:", error);

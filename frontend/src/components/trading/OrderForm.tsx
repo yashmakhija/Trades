@@ -108,28 +108,34 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
         return;
       }
 
-      // Convert price to cents/satoshis for backend
-      const priceInCents = Math.round(parseFloat(price) * 100);
-      const stopLossInCents = stopLoss
-        ? Math.round(parseFloat(stopLoss) * 100)
-        : undefined;
-      const takeProfitInCents = takeProfit
-        ? Math.round(parseFloat(takeProfit) * 100)
-        : undefined;
+      // Parse values as floating point
+      const priceValue = parseFloat(price);
+      const quantityValue = parseFloat(quantity);
+      const stopLossValue = stopLoss ? parseFloat(stopLoss) : undefined;
+      const takeProfitValue = takeProfit ? parseFloat(takeProfit) : undefined;
+
+      console.log("Order values before conversion:", {
+        price: priceValue,
+        stopLoss: stopLossValue,
+        takeProfit: takeProfitValue,
+      });
 
       // Prepare order data
       const orderData = {
         symbolId: symbolData.id,
         type: orderSide,
-        price: priceInCents,
-        quantity: parseFloat(quantity),
+        price: priceValue,
+        quantity: quantityValue,
         isShort: false,
-        stopLoss: stopLossInCents,
-        takeProfit: takeProfitInCents,
+        stopLoss: stopLossValue,
+        takeProfit: takeProfitValue,
       };
 
       // Send order to API using the service
-      await createOrder(orderData);
+      // The createOrder function will handle conversion to integers for the backend
+      const createdOrder = await createOrder(orderData);
+
+      console.log("Order created successfully:", createdOrder);
 
       // Reset form
       setQuantity(DEFAULT_ORDER_QUANTITY.toString());

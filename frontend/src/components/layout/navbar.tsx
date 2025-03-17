@@ -17,15 +17,27 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { LogOut, User, BarChart2, Settings } from "lucide-react";
+import { LogOut, User, BarChart2, Settings, Wallet } from "lucide-react";
 import { useEffect, useState } from "react";
-import { BalanceDisplay } from "@/components/balance/balance-display";
+import { useBalanceStore, useBalanceSync } from "@/store/use-balance-store";
+import { formatCurrency } from "@/lib/utils";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 // import { UserNav } from "@/components/user/user-nav";
 
 export function Navbar() {
   const pathname = usePathname();
   const { isAuthenticated, user } = useAuthStore();
-  const { logout,  } = useDemoAuth();
+  const { logout } = useDemoAuth();
+  const { total, available, reserved, totalPnl, isLoading } = useBalanceStore();
+
+  // Use the balance sync hook to keep balance updated via WebSocket
+  useBalanceSync();
+
   // Add client-side only state to prevent hydration mismatch
   const [isMounted, setIsMounted] = useState(false);
 
@@ -86,9 +98,70 @@ export function Navbar() {
             {isMounted ? (
               isAuthenticated && user ? (
                 <>
-                  <div className="hidden md:block w-64">
-                    <BalanceDisplay />
-                  </div>
+                  {/* Simplified balance display */}
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-background border border-border hover:bg-accent transition-colors">
+                          <Wallet className="h-4 w-4 text-primary" />
+                          <span className="font-medium">
+                            {isLoading ? (
+                              <span className="animate-pulse">Loading...</span>
+                            ) : (
+                              formatCurrency(total)
+                            )}
+                          </span>
+                          {totalPnl !== 0 && (
+                            <span
+                              className={`text-xs ${
+                                totalPnl >= 0
+                                  ? "text-green-500"
+                                  : "text-red-500"
+                              }`}
+                            >
+                              {totalPnl > 0 ? "+" : ""}
+                              {formatCurrency(totalPnl)}
+                            </span>
+                          )}
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <div className="space-y-1">
+                          <div className="flex justify-between gap-4">
+                            <span className="text-xs text-muted-foreground">
+                              Available:
+                            </span>
+                            <span className="text-xs font-medium">
+                              {formatCurrency(available)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between gap-4">
+                            <span className="text-xs text-muted-foreground">
+                              Reserved:
+                            </span>
+                            <span className="text-xs font-medium">
+                              {formatCurrency(reserved)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between gap-4">
+                            <span className="text-xs text-muted-foreground">
+                              P&L:
+                            </span>
+                            <span
+                              className={`text-xs font-medium ${
+                                totalPnl >= 0
+                                  ? "text-green-500"
+                                  : "text-red-500"
+                              }`}
+                            >
+                              {formatCurrency(totalPnl)}
+                            </span>
+                          </div>
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button
