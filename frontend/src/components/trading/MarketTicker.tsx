@@ -276,26 +276,6 @@ export function MarketTicker({ symbol, className = "" }: MarketTickerProps) {
             </div>
           </div>
 
-          {/* 24h Range */}
-          <div className="space-y-1">
-            <div className="text-sm text-muted-foreground">24h Range</div>
-            <div className="text-lg font-medium">
-              {ticker?.low && ticker?.high ? (
-                <div className="flex justify-between items-center">
-                  <span className="text-red-500">
-                    {formatPrice(ticker.low)}
-                  </span>
-                  <span className="mx-1 text-muted-foreground"> - </span>
-                  <span className="text-green-500">
-                    {formatPrice(ticker.high)}
-                  </span>
-                </div>
-              ) : (
-                "--.-- - --.--"
-              )}
-            </div>
-          </div>
-
           {/* 24h Volume */}
           <div className="space-y-1">
             <div className="text-sm text-muted-foreground">24h Volume</div>
@@ -305,7 +285,7 @@ export function MarketTicker({ symbol, className = "" }: MarketTickerProps) {
           </div>
 
           {/* Last Updated */}
-          <div className="space-y-1 col-span-2">
+          <div className="space-y-1 ">
             <div className="text-sm text-muted-foreground">Last Updated</div>
             <div className="text-lg font-medium">
               {formatTime(ticker?.timestamp)}
