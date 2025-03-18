@@ -7,24 +7,15 @@ import { Footer } from "@/components/landing/footer";
 
 export default function HomePage() {
   return (
-    <main className="min-h-screen flex flex-col">
-      {/* Hero Section */}
-      <HeroSection />
-
-      {/* Market Overview */}
-      <MarketOverview />
-
-      {/* Feature Section */}
-      <FeatureSection />
-
-      {/* Testimonial Section */}
-      <TestimonialSection />
-
-      {/* CTA Section */}
-      <CTASection />
-
-      {/* Footer */}
+    <div className="flex flex-col min-h-screen bg-background text-foreground w-full mx-auto overflow-x-hidden">
+      <main className="flex-1 w-full">
+        <HeroSection />
+        <MarketOverview />
+        <FeatureSection />
+        <TestimonialSection />
+        <CTASection />
+      </main>
       <Footer />
-    </main>
+    </div>
   );
 }

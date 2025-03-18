@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 
 export function HeroSection() {
   return (
-    <section className="relative py-24 overflow-hidden">
+    <section className="relative w-full py-20 md:py-28 overflow-hidden">
       {/* Gradient Background */}
       <div className="absolute inset-0 z-0">
         <div className="absolute inset-0 bg-gradient-to-b from-background to-background/80"></div>
@@ -23,9 +23,9 @@ export function HeroSection() {
       <div className="absolute top-1/4 right-1/3 w-16 h-16 bg-gradient-to-tr from-indigo-500/20 to-purple-500/20 rounded-lg rotate-12 animate-pulse-slow"></div>
       <div className="absolute bottom-1/3 right-1/4 w-20 h-20 bg-gradient-to-br from-cyan-500/20 to-blue-500/20 rounded-lg -rotate-12 animate-pulse-slow delay-700"></div>
 
-      <div className="container relative z-10 mx-auto px-4 py-12 flex flex-col items-center text-center">
+      <div className="container relative z-10 mx-auto px-4 flex flex-col items-center justify-center text-center">
         {/* Logo Section */}
-        <div className="flex items-center gap-3 mb-6 group">
+        <div className="flex items-center gap-3 mb-8 group">
           <div className="w-14 h-14 rounded-xl bg-primary flex items-center justify-center text-primary-foreground font-bold text-2xl transition-all duration-300 relative overflow-hidden group-hover:blue-glow">
             CS
             <div className="absolute inset-0 bg-white/20 transform translate-y-full group-hover:translate-y-0 transition-transform duration-500"></div>
@@ -51,7 +51,7 @@ export function HeroSection() {
 
         <Typography
           variant="h2"
-          className="text-2xl md:text-3xl font-medium text-foreground/90 mb-4"
+          className="text-2xl md:text-3xl font-medium text-foreground/90 mb-4 max-w-2xl"
         >
           Advanced Trading Solutions
         </Typography>
