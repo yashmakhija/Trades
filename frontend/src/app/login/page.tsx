@@ -7,6 +7,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { Loader2, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
+import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,6 +43,7 @@ type LoginFormValues = z.infer<typeof loginSchema>;
 export default function LoginPage() {
   const { login, createQuickDemo, isLoading } = useDemoAuth();
   const [quickDemoLoading, setQuickDemoLoading] = useState(false);
+  const router = useRouter();
 
   // Initialize form
   const form = useForm<LoginFormValues>({
@@ -56,8 +58,25 @@ export default function LoginPage() {
   const onSubmit = async (values: LoginFormValues) => {
     try {
       await login(values.email, values.password);
+
+      toast.success("Login successful!", {
+        description: "Welcome back to your trading dashboard.",
+        action: {
+          label: "Go to Trading Platform",
+          onClick: () => (window.location.href = "/trading"),
+        },
+        duration: 3000,
+      });
+
+      router.push("/trading");
     } catch (error) {
-      // Error handling is done in the hook
+      toast.error("Login failed", {
+        description:
+          error instanceof Error
+            ? error.message
+            : "Invalid credentials or server error.",
+        duration: 5000,
+      });
     }
   };
 
@@ -66,8 +85,22 @@ export default function LoginPage() {
     setQuickDemoLoading(true);
     try {
       await createQuickDemo();
+
+      toast.success("Demo account created!", {
+        description: "You've been logged in with a demo account.",
+        action: {
+          label: "Go to Trading Platform",
+          onClick: () => (window.location.href = "/trading"),
+        },
+        duration: 3000,
+      });
+
+      router.push("/trading");
     } catch (error) {
-      // Error handling is done in the hook
+      toast.error("Demo account creation failed", {
+        description: "Please try again later.",
+        duration: 5000,
+      });
     } finally {
       setQuickDemoLoading(false);
     }

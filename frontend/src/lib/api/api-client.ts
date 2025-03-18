@@ -63,10 +63,33 @@ async function fetchApi<T>(
       throw new Error("Your session has expired. Please log in again.");
     }
 
-    const error = await response.json().catch(() => ({}));
-    throw new Error(
-      error.error || error.message || `API error: ${response.status}`
-    );
+    try {
+      const errorData = await response.json();
+      const errorMessage =
+        errorData.error ||
+        errorData.message ||
+        errorData.detail ||
+        `Request failed with status ${response.status}`;
+
+      console.error("API Error:", {
+        status: response.status,
+        endpoint,
+        errorData,
+      });
+
+      throw new Error(errorMessage);
+    } catch (jsonError) {
+      // If JSON parsing fails, use status text
+      console.error("API Error (non-JSON):", {
+        status: response.status,
+        statusText: response.statusText,
+        endpoint,
+      });
+
+      throw new Error(
+        `Request failed: ${response.statusText || response.status}`
+      );
+    }
   }
 
   // Parse JSON response

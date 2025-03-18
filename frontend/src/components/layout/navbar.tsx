@@ -1,246 +1,409 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import { Container } from "@/components/ui/container";
-import { Typography } from "@/components/ui/typography";
+import { usePathname, useRouter } from "next/navigation";
+import { useState, useEffect } from "react";
+import {
+  ArrowRight,
+  Menu,
+  X,
+  LogOut,
+  BarChart2,
+  Home,
+  User,
+} from "lucide-react";
+import { toast } from "sonner";
+
 import { cn } from "@/lib/utils";
-import { useAuthStore } from "@/store/use-auth-store";
-import { useDemoAuth } from "@/hooks/use-demo-auth";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
+import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { LogOut, User, BarChart2, Settings, Wallet } from "lucide-react";
-import { useEffect, useState } from "react";
-import { useBalanceStore, useBalanceSync } from "@/store/use-balance-store";
-import { formatCurrency } from "@/lib/utils";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-// import { UserNav } from "@/components/user/user-nav";
+import { useAuthStore } from "@/store/use-auth-store";
+import { useDemoAuth } from "@/hooks/use-demo-auth";
+import { Typography } from "@/components/ui/typography";
+
+// Navigation items
+const navItems = [
+  { name: "Home", path: "/", icon: Home },
+  { name: "Trading", path: "/trading", icon: BarChart2 },
+];
 
 export function Navbar() {
   const pathname = usePathname();
-  const { isAuthenticated, user } = useAuthStore();
+  const router = useRouter();
+  const [scrolled, setScrolled] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const { user } = useAuthStore();
   const { logout } = useDemoAuth();
-  const { total, available, reserved, totalPnl, isLoading } = useBalanceStore();
 
-  // Use the balance sync hook to keep balance updated via WebSocket
-  useBalanceSync();
-
-  // Add client-side only state to prevent hydration mismatch
-  const [isMounted, setIsMounted] = useState(false);
-
-  // Set isMounted to true after component mounts on the client
+  // Handle scroll event to change navbar appearance
   useEffect(() => {
-    setIsMounted(true);
+    const handleScroll = () => {
+      setScrolled(window.scrollY > 10);
+    };
+
+    window.addEventListener("scroll", handleScroll);
+    return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
-  const navItems = [
-    { label: "Home", href: "/" },
-    { label: "Trading", href: "/trading" },
-    { label: "Markets", href: "/markets" },
-    { label: "Learn", href: "/learn" },
-  ];
+  // Handle authentication redirects
+  useEffect(() => {
+    if (user) {
+      // If logged in user tries to access login or register pages, redirect to profile
+      if (pathname === "/login" || pathname === "/register") {
+        router.push("/profile");
+      }
+    } else {
+      // If not logged in user tries to access profile page, redirect to login
+      if (pathname === "/profile") {
+        router.push("/login");
+        toast.info("Please log in", {
+          description: "You need to be logged in to access your profile.",
+        });
+      }
+    }
+  }, [pathname, user, router]);
 
-  // Get user initials for avatar fallback
-  const getUserInitials = () => {
-    if (!user?.username) return "U";
-    return user.username
+  // Handle logout
+  const handleLogout = () => {
+    logout();
+    // toast.success("Logged out successfully", {
+    //   description: "You have been logged out of your account.",
+    // });
+  };
+
+  // Skip rendering on auth pages
+  if (pathname === "/login" || pathname === "/register") {
+    return null;
+  }
+
+  // Get user initials for avatar
+  const getUserInitials = (name: string = "User") => {
+    return name
       .split(" ")
-      .map((n: string) => n[0])
+      .map((n) => n[0])
       .join("")
       .toUpperCase()
       .substring(0, 2);
   };
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-      <Container>
-        <div className="flex h-16 items-center justify-between">
-          <div className="flex items-center gap-6">
-            <Link href="/" className="flex items-center space-x-2">
-              <Typography variant="h3" className="gradient-primary font-bold">
-                100x Trading
-              </Typography>
-            </Link>
-
-            <nav className="hidden md:flex gap-6">
-              {navItems.map((item) => (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={cn(
-                    "text-sm font-medium transition-colors hover:text-primary",
-                    pathname === item.href
-                      ? "text-foreground"
-                      : "text-muted-foreground"
-                  )}
-                >
-                  {item.label}
-                </Link>
-              ))}
-            </nav>
+    <nav
+      className={cn(
+        "fixed top-0 left-0 w-full z-50 transition-all duration-300 border-b",
+        scrolled
+          ? "bg-background/90 backdrop-blur-lg border-primary/10 py-3"
+          : "bg-transparent border-transparent py-5"
+      )}
+    >
+      <div className="container mx-auto px-4 flex items-center justify-between">
+        {/* Logo */}
+        <Link href="/" className="flex items-center gap-3 group">
+          <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center text-primary-foreground font-bold text-xl transition-all duration-300 relative overflow-hidden group-hover:shadow-lg group-hover:shadow-primary/20">
+            CS
+            <div className="absolute inset-0 bg-white/20 transform translate-y-full group-hover:translate-y-0 transition-transform duration-500"></div>
           </div>
+          <Typography
+            variant="h3"
+            className="text-xl font-bold hidden sm:block gradient-primary"
+          >
+            CodeSquare
+          </Typography>
+        </Link>
 
-          {/* Only render auth-dependent content after client-side hydration */}
-          <div className="flex items-center gap-4">
-            {isMounted ? (
-              isAuthenticated && user ? (
+        {/* Desktop navigation */}
+        <div className="hidden md:flex items-center gap-8">
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = pathname === item.path;
+
+            return (
+              <Link
+                key={item.path}
+                href={item.path}
+                className={cn(
+                  "flex items-center gap-1.5 text-sm font-medium transition-colors hover:text-primary relative group",
+                  isActive ? "text-primary" : "text-foreground/80"
+                )}
+              >
+                <Icon className="w-4 h-4" />
+                {item.name}
+                <span
+                  className={cn(
+                    "absolute -bottom-1 left-0 w-0 h-0.5 bg-primary transition-all duration-300 group-hover:w-full",
+                    isActive && "w-full"
+                  )}
+                />
+              </Link>
+            );
+          })}
+        </div>
+
+        {/* Auth buttons or user menu */}
+        <div className="hidden md:flex items-center gap-3">
+          {user ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  className="relative h-9 w-9 rounded-full p-0 overflow-hidden"
+                >
+                  <Avatar className="h-9 w-9 transition-all hover:scale-105 border-2 border-transparent hover:border-primary/50">
+                    <AvatarImage
+                      src={`https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(
+                        user.username
+                      )}`}
+                      alt={user.username}
+                    />
+                    <AvatarFallback className="bg-primary/20 text-primary font-medium">
+                      {getUserInitials(user.username)}
+                    </AvatarFallback>
+                  </Avatar>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                sideOffset={8}
+                className="w-64 p-0 mt-1 border border-primary/20 bg-background/95 backdrop-blur-md shadow-xl rounded-xl overflow-hidden"
+              >
+                {/* User profile header */}
+                <div className="bg-gradient-to-r from-primary/10 to-primary/5 pt-6 pb-4 px-4 border-b border-primary/10 cursor-pointer">
+                  <div className="flex items-center gap-3">
+                    <Avatar className="h-12 w-12 border-2 border-white/10 shadow-lg">
+                      <AvatarImage
+                        src={`https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(
+                          user.username
+                        )}`}
+                        alt={user.username}
+                      />
+                      <AvatarFallback className="bg-primary/20 text-primary font-semibold">
+                        {getUserInitials(user.username)}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="space-y-0.5">
+                      <p className="text-base font-medium leading-none">
+                        {user.username}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {user.email}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Menu items */}
+                <div className="p-2">
+                  <Link href="/profile">
+                    <DropdownMenuItem className="cursor-pointer hover:bg-primary/5 py-2.5 rounded-lg transition-colors">
+                      <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center mr-3">
+                        <User className="h-4 w-4 text-white" />
+                      </div>
+                      <span className="font-medium">My Profile</span>
+                    </DropdownMenuItem>
+                  </Link>
+                  <Link href="/trading">
+                    <DropdownMenuItem className="cursor-pointer hover:bg-primary/5 py-2.5 rounded-lg transition-colors">
+                      <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center mr-3">
+                        <BarChart2 className="h-4 w-4 text-white" />
+                      </div>
+                      <span className="font-medium">Trading Dashboard</span>
+                    </DropdownMenuItem>
+                  </Link>
+                  <DropdownMenuSeparator className="my-2 bg-primary/10" />
+                  <DropdownMenuItem
+                    onClick={handleLogout}
+                    className="cursor-pointer hover:bg-red-500/5 py-2.5 rounded-lg transition-colors"
+                  >
+                    <div className="w-8 h-8 rounded-full bg-red-500/10 flex items-center justify-center mr-3">
+                      <LogOut className="h-4 w-4 text-red-500" />
+                    </div>
+                    <span className="text-red-500 font-medium">Log out</span>
+                  </DropdownMenuItem>
+                </div>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : (
+            <>
+              <Link href="/login">
+                <Button
+                  variant="ghost"
+                  className="hover:bg-primary/10 transition-all duration-300"
+                >
+                  Log In
+                </Button>
+              </Link>
+              <Link href="/register">
+                <Button className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 hover:shadow-md hover:shadow-primary/20 transition-all duration-300 group">
+                  <span className="flex items-center">
+                    Get Started
+                    <ArrowRight className="ml-2 h-4 w-4 transition-transform group-hover:translate-x-1" />
+                  </span>
+                </Button>
+              </Link>
+            </>
+          )}
+        </div>
+
+        {/* Mobile menu button */}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="md:hidden"
+          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+        >
+          {mobileMenuOpen ? (
+            <X className="h-6 w-6" />
+          ) : (
+            <Menu className="h-6 w-6" />
+          )}
+        </Button>
+      </div>
+
+      {/* Mobile menu */}
+      {mobileMenuOpen && (
+        <div className="md:hidden border-t border-primary/10 bg-background/95 backdrop-blur-md animate-in slide-in-from-top-2 duration-200">
+          <div className="container px-4 py-4 flex flex-col space-y-3">
+            {/* Navigation items */}
+            <div className="space-y-1">
+              {navItems.map((item) => {
+                const Icon = item.icon;
+                const isActive = pathname === item.path;
+
+                return (
+                  <Link
+                    key={item.path}
+                    href={item.path}
+                    className={cn(
+                      "flex items-center gap-3 py-3 px-4 rounded-lg transition-colors",
+                      isActive
+                        ? "bg-primary/10 text-primary"
+                        : "text-foreground/80 hover:bg-secondary/50 hover:text-foreground"
+                    )}
+                    onClick={() => setMobileMenuOpen(false)}
+                  >
+                    <div
+                      className={cn(
+                        "w-8 h-8 rounded-full flex items-center justify-center",
+                        isActive ? "bg-primary/20" : "bg-secondary/80"
+                      )}
+                    >
+                      <Icon className="w-4 h-4" />
+                    </div>
+                    <span className="font-medium">{item.name}</span>
+                  </Link>
+                );
+              })}
+            </div>
+
+            {/* Auth section */}
+            <div className="border-t border-primary/10 pt-4 mt-2">
+              {user ? (
                 <>
-                  {/* Simplified balance display */}
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-background border border-border hover:bg-accent transition-colors">
-                          <Wallet className="h-4 w-4 text-primary" />
-                          <span className="font-medium">
-                            {isLoading ? (
-                              <span className="animate-pulse">Loading...</span>
-                            ) : (
-                              formatCurrency(total)
-                            )}
-                          </span>
-                          {totalPnl !== 0 && (
-                            <span
-                              className={`text-xs ${
-                                totalPnl >= 0
-                                  ? "text-green-500"
-                                  : "text-red-500"
-                              }`}
-                            >
-                              {totalPnl > 0 ? "+" : ""}
-                              {formatCurrency(totalPnl)}
-                            </span>
-                          )}
-                        </div>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <div className="space-y-1">
-                          <div className="flex justify-between gap-4">
-                            <span className="text-xs text-muted-foreground">
-                              Available:
-                            </span>
-                            <span className="text-xs font-medium">
-                              {formatCurrency(available)}
-                            </span>
-                          </div>
-                          <div className="flex justify-between gap-4">
-                            <span className="text-xs text-muted-foreground">
-                              Reserved:
-                            </span>
-                            <span className="text-xs font-medium">
-                              {formatCurrency(reserved)}
-                            </span>
-                          </div>
-                          <div className="flex justify-between gap-4">
-                            <span className="text-xs text-muted-foreground">
-                              P&L:
-                            </span>
-                            <span
-                              className={`text-xs font-medium ${
-                                totalPnl >= 0
-                                  ? "text-green-500"
-                                  : "text-red-500"
-                              }`}
-                            >
-                              {formatCurrency(totalPnl)}
-                            </span>
-                          </div>
-                        </div>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
+                  {/* User info */}
+                  <div className="bg-gradient-to-r from-primary/10 to-primary/5 p-4 mb-4 rounded-xl border border-primary/10">
+                    <div className="flex items-center gap-3">
+                      <Avatar className="h-12 w-12 border-2 border-white/10 shadow-lg">
+                        <AvatarImage
+                          src={`https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(
+                            user.username
+                          )}`}
+                          alt={user.username}
+                        />
+                        <AvatarFallback className="bg-primary/20 text-primary font-semibold">
+                          {getUserInitials(user.username)}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="space-y-0.5">
+                        <p className="text-base font-medium leading-none">
+                          {user.username}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {user.email}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
 
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
+                  {/* User menu options */}
+                  <div className="space-y-2">
+                    <Link
+                      href="/profile"
+                      onClick={() => setMobileMenuOpen(false)}
+                    >
                       <Button
-                        variant="ghost"
-                        className="relative h-10 w-10 rounded-full"
+                        variant="outline"
+                        className="w-full justify-start py-5 border-primary/20 hover:bg-primary/5 hover:border-primary/30"
                       >
-                        <Avatar>
-                          <AvatarImage
-                            src={`https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(
-                              user.username
-                            )}`}
-                            alt={user.username}
-                          />
-                          <AvatarFallback>{getUserInitials()}</AvatarFallback>
-                        </Avatar>
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuLabel>
-                        <div className="flex flex-col space-y-1">
-                          <p className="text-sm font-medium leading-none">
-                            {user.username}
-                          </p>
-                          <p className="text-xs leading-none text-muted-foreground">
-                            {user.email}
-                          </p>
+                        <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center mr-3">
+                          <User className="h-4 w-4 text-primary" />
                         </div>
-                      </DropdownMenuLabel>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem asChild>
-                        <Link href="/profile" className="cursor-pointer">
-                          <User className="mr-2 h-4 w-4" />
-                          <span>Profile</span>
-                        </Link>
-                      </DropdownMenuItem>
-                      <DropdownMenuItem asChild>
-                        <Link href="/trading" className="cursor-pointer">
-                          <BarChart2 className="mr-2 h-4 w-4" />
-                          <span>Trading</span>
-                        </Link>
-                      </DropdownMenuItem>
-                      <DropdownMenuItem asChild>
-                        <Link href="/settings" className="cursor-pointer">
-                          <Settings className="mr-2 h-4 w-4" />
-                          <span>Settings</span>
-                        </Link>
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        className="text-destructive focus:text-destructive cursor-pointer"
-                        onClick={logout}
+                        <span className="font-medium">My Profile</span>
+                      </Button>
+                    </Link>
+                    <Link
+                      href="/trading"
+                      onClick={() => setMobileMenuOpen(false)}
+                    >
+                      <Button
+                        variant="outline"
+                        className="w-full justify-start py-5 border-primary/20 hover:bg-primary/5 hover:border-primary/30"
                       >
-                        <LogOut className="mr-2 h-4 w-4" />
-                        <span>Logout</span>
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                        <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center mr-3">
+                          <BarChart2 className="h-4 w-4 text-primary" />
+                        </div>
+                        <span className="font-medium">Trading Dashboard</span>
+                      </Button>
+                    </Link>
+                    <Button
+                      variant="outline"
+                      className="w-full justify-start py-5 border-red-500/20 text-red-500 hover:bg-red-500/5 hover:border-red-500/30 hover:text-red-500"
+                      onClick={() => {
+                        handleLogout();
+                        setMobileMenuOpen(false);
+                      }}
+                    >
+                      <div className="w-8 h-8 rounded-full bg-red-500/10 flex items-center justify-center mr-3">
+                        <LogOut className="h-4 w-4 text-red-500" />
+                      </div>
+                      <span className="font-medium">Log out</span>
+                    </Button>
+                  </div>
                 </>
               ) : (
-                <>
-                  <Button variant="outline" size="sm" asChild>
-                    <Link href="/login">Login</Link>
-                  </Button>
-
-                  <Button size="sm" asChild>
-                    <Link href="/register">Register</Link>
-                  </Button>
-                </>
-              )
-            ) : (
-              // Skeleton loader while client is hydrating
-              <div className="flex items-center gap-4">
-                <div className="w-20 h-9 bg-muted rounded-md animate-pulse"></div>
-                <div className="w-24 h-9 bg-muted rounded-md animate-pulse"></div>
-              </div>
-            )}
+                <div className="flex flex-col gap-3 pt-2">
+                  <Link href="/login" onClick={() => setMobileMenuOpen(false)}>
+                    <Button
+                      variant="outline"
+                      className="w-full py-6 text-base border-primary/20 hover:bg-primary/5 hover:border-primary/30"
+                    >
+                      Log In
+                    </Button>
+                  </Link>
+                  <Link
+                    href="/register"
+                    onClick={() => setMobileMenuOpen(false)}
+                  >
+                    <Button className="w-full py-6 text-base bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700">
+                      Create Account
+                    </Button>
+                  </Link>
+                </div>
+              )}
+            </div>
           </div>
         </div>
-      </Container>
-    </header>
+      )}
+    </nav>
   );
+}
+
+// Add the following to the main content to fix layout with fixed navbar
+export function NavbarSpacer() {
+  return <div className="h-20" />;
 }
