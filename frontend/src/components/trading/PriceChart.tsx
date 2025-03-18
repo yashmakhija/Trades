@@ -158,15 +158,37 @@ export function PriceChart({
     }
   }, []);
 
-  // Normalize price values for display
+  // Update the normalizePrice function to properly handle different cryptocurrency price scales
   const normalizePrice = useCallback(
     (price: number): number => {
-      // If price is very large (like in the screenshot), it might need normalization
-      // This handles cases where prices are sent as integers (e.g., 8374291 instead of 83742.91)
-      if (normalizedSymbol.includes("btc") && price > 1000000) {
-        return price / 100; // Adjust divisor based on your data format
+      // If price is already in proper format (floating point), return it
+      if (price < 1_000_000) {
+        return price;
       }
-      return price;
+
+      // Handle different cryptocurrencies with different price scales
+      const symbolLower = normalizedSymbol.toLowerCase();
+
+      // For debugging
+      console.log(`PriceChart: Normalizing price ${price} for ${symbolLower}`);
+
+      // High value coins use 2 decimal places (price in cents)
+      if (symbolLower.includes("btc") || symbolLower.includes("eth")) {
+        return price / 100;
+      }
+
+      // Mid value coins
+      if (symbolLower.includes("bnb") || symbolLower.includes("sol")) {
+        return price / 100;
+      }
+
+      // Lower value coins
+      if (symbolLower.includes("ada") || symbolLower.includes("doge")) {
+        return price / 100;
+      }
+
+      // Default - assume price is in cents (divide by 100)
+      return price / 100;
     },
     [normalizedSymbol]
   );

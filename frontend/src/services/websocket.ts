@@ -15,6 +15,9 @@ export interface TickerData {
   priceChangePercent: number;
   volume: number;
   timestamp: number;
+  high?: number; // 24h high price
+  low?: number; // 24h low price
+  openPrice?: number; // 24h open price
 }
 
 export interface CandleData {
@@ -123,14 +126,244 @@ interface WebSocketStore {
   removeOrder: (orderId: string) => void;
 }
 
+// Create a singleton instance to control the WebSocket connection
+let globalSocketInstance: WebSocket | null = null;
+let globalReconnectTimeout: NodeJS.Timeout | null = null;
+let globalHeartbeatInterval: NodeJS.Timeout | null = null;
+let globalReconnectAttempts = 0;
+let globalIsReconnecting = false;
+
 // Create WebSocket store
 export const useWebSocketStore = create<WebSocketStore>((set, get) => {
-  // WebSocket instance
-  let socketInstance: WebSocket | null = null;
-  let heartbeatInterval: NodeJS.Timeout | null = null;
-  let reconnectTimeout: NodeJS.Timeout | null = null;
-  let reconnectAttempts = 0;
-  let isReconnecting = false;
+  // Setup WebSocket connection
+  const connect = () => {
+    console.log("WebSocket: Connect method called");
+
+    // Don't create a new connection if one already exists
+    if (
+      globalSocketInstance &&
+      (globalSocketInstance.readyState === WebSocket.OPEN ||
+        globalSocketInstance.readyState === WebSocket.CONNECTING)
+    ) {
+      console.log(
+        "WebSocket: Connection already exists, not creating a new one"
+      );
+      return;
+    }
+
+    // Get authentication state
+    const { token, isAuthenticated } = useAuthStore.getState();
+
+    console.log(
+      `WebSocket: ${
+        isAuthenticated ? "Authenticated" : "Non-authenticated"
+      } connection`
+    );
+
+    // Reset connection state
+    set({
+      connectionState: "connecting",
+      lastError: null,
+    });
+
+    try {
+      // Initialize reconnection counter
+      globalReconnectAttempts = 0;
+
+      // Create WebSocket connection
+      globalSocketInstance = new WebSocket(WS_BASE_URL);
+
+      // Set up event handlers
+      globalSocketInstance.onopen = () => {
+        console.log("WebSocket: Connection established");
+
+        if (globalReconnectTimeout) {
+          clearTimeout(globalReconnectTimeout);
+          globalReconnectTimeout = null;
+        }
+
+        // Set connection state
+        set({ connectionState: "connected" });
+
+        // Authenticate if user is logged in
+        if (isAuthenticated && token) {
+          console.log("WebSocket: Sending authentication token");
+          globalSocketInstance?.send(
+            JSON.stringify({
+              type: "AUTHENTICATE",
+              token,
+            })
+          );
+        } else {
+          console.log(
+            "WebSocket: Proceeding with non-authenticated connection"
+          );
+          set({ isAuthenticated: false });
+        }
+
+        // Resubscribe to active symbols if needed
+        const { subscribedSymbols, activeSymbol } = get();
+
+        // Add current active symbol to subscriptions if not already there
+        if (activeSymbol && !subscribedSymbols.has(activeSymbol)) {
+          const newSubscribedSymbols = new Set(subscribedSymbols);
+          newSubscribedSymbols.add(activeSymbol);
+          set({ subscribedSymbols: newSubscribedSymbols });
+        }
+
+        if (subscribedSymbols.size > 0) {
+          console.log(
+            `WebSocket: Resubscribing to ${subscribedSymbols.size} symbols:`,
+            Array.from(subscribedSymbols)
+          );
+
+          subscribedSymbols.forEach((symbol) => {
+            globalSocketInstance?.send(
+              JSON.stringify({
+                type: "SUBSCRIBE",
+                symbol,
+              })
+            );
+          });
+        } else {
+          console.log("WebSocket: No symbols to resubscribe to");
+        }
+
+        // Set up heartbeat
+        if (globalHeartbeatInterval) {
+          clearInterval(globalHeartbeatInterval);
+        }
+
+        globalHeartbeatInterval = setInterval(() => {
+          if (
+            globalSocketInstance &&
+            globalSocketInstance.readyState === WebSocket.OPEN
+          ) {
+            globalSocketInstance.send(JSON.stringify({ type: "PING" }));
+          }
+        }, WS_HEARTBEAT_INTERVAL_MS);
+      };
+
+      globalSocketInstance.onmessage = (event) => {
+        handleMessage(event);
+      };
+
+      globalSocketInstance.onerror = (error) => {
+        console.error("WebSocket: Connection error", error);
+        set({
+          connectionState: "disconnected",
+          lastError: "Connection error",
+        });
+      };
+
+      globalSocketInstance.onclose = (event) => {
+        console.log(`WebSocket: Connection closed (${event.code})`);
+
+        // Clear intervals
+        if (globalHeartbeatInterval) {
+          clearInterval(globalHeartbeatInterval);
+          globalHeartbeatInterval = null;
+        }
+
+        // Update connection state
+        set({
+          connectionState: "disconnected",
+          isAuthenticated: false,
+        });
+
+        // Check if we should attempt to reconnect
+        if (
+          !globalIsReconnecting &&
+          globalReconnectAttempts < WS_RECONNECT_ATTEMPTS
+        ) {
+          globalReconnectAttempts++;
+          console.log(
+            `WebSocket: Reconnecting after close... Attempt ${globalReconnectAttempts} in ${WS_RECONNECT_DELAY_MS}ms`
+          );
+
+          globalReconnectTimeout = setTimeout(() => {
+            // Only reconnect if we haven't already started reconnecting
+            if (!globalIsReconnecting) {
+              reconnect();
+            }
+          }, WS_RECONNECT_DELAY_MS);
+        } else if (globalReconnectAttempts >= WS_RECONNECT_ATTEMPTS) {
+          console.log(
+            `WebSocket: Max reconnection attempts (${WS_RECONNECT_ATTEMPTS}) reached`
+          );
+          set({
+            lastError: "Max reconnection attempts reached",
+          });
+        }
+      };
+    } catch (error) {
+      console.error("WebSocket: Error creating connection", error);
+      set({
+        connectionState: "disconnected",
+        lastError: "Error creating connection",
+      });
+    }
+  };
+
+  // Reconnect to WebSocket with current auth token
+  const reconnect = () => {
+    // Close existing connection if it's open
+    if (globalSocketInstance) {
+      if (globalSocketInstance.readyState === WebSocket.OPEN) {
+        globalSocketInstance.close();
+      }
+      globalSocketInstance = null;
+    }
+
+    // Clear any existing intervals or timeouts
+    if (globalHeartbeatInterval) {
+      clearInterval(globalHeartbeatInterval);
+      globalHeartbeatInterval = null;
+    }
+
+    if (globalReconnectTimeout) {
+      clearTimeout(globalReconnectTimeout);
+      globalReconnectTimeout = null;
+    }
+
+    // Wait a moment to ensure the connection is closed
+    setTimeout(() => {
+      globalIsReconnecting = true;
+      console.log("WebSocket: Reconnecting with new connection");
+
+      // Set up a new connection
+      set({ connectionState: "connecting" });
+      connect();
+
+      // Reset reconnecting flag
+      setTimeout(() => {
+        globalIsReconnecting = false;
+      }, 1000);
+    }, 500);
+  };
+
+  // Disconnect from WebSocket
+  const disconnect = () => {
+    if (globalSocketInstance) {
+      globalSocketInstance.close();
+      globalSocketInstance = null;
+    }
+
+    if (globalHeartbeatInterval) {
+      clearInterval(globalHeartbeatInterval);
+      globalHeartbeatInterval = null;
+    }
+
+    if (globalReconnectTimeout) {
+      clearTimeout(globalReconnectTimeout);
+      globalReconnectTimeout = null;
+    }
+
+    set({
+      connectionState: "disconnected",
+      isAuthenticated: false,
+    });
+  };
 
   // Handle WebSocket messages
   const handleMessage = (event: MessageEvent) => {
@@ -191,6 +424,11 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
             const symbol = message.symbol.toLowerCase();
             const rawData = message.data;
 
+            console.log(
+              `WebSocket: Processing RAW_DATA for ${symbol}, event type: ${rawData.e}`,
+              JSON.stringify(rawData).substring(0, 200) + "..." // Log truncated data for debugging
+            );
+
             // Handle different types of Binance WebSocket messages
             if (rawData.e === "kline" && rawData.k) {
               const kline = rawData.k;
@@ -218,6 +456,16 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
                     },
                   },
                 };
+              });
+
+              // Log kline data
+              console.log(`WebSocket: Kline update for ${symbol}`, {
+                time: kline.t,
+                open: kline.o,
+                high: kline.h,
+                low: kline.l,
+                close: kline.c,
+                volume: kline.v,
               });
 
               // Create candle data from kline
@@ -273,22 +521,44 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
                 });
               }
             } else if (rawData.e === "24hrTicker") {
-              // Update ticker data
+              // Log 24hr ticker data with full details
+              console.log(`WebSocket: 24hr ticker for ${symbol}`, {
+                price: parseFloat(rawData.c),
+                priceChangePercent: parseFloat(rawData.P),
+                volume: parseFloat(rawData.v),
+                high: parseFloat(rawData.h),
+                low: parseFloat(rawData.l),
+                open: parseFloat(rawData.o),
+                timestamp: rawData.E,
+                fullData: rawData, // Log the full raw data for debugging
+              });
+
+              // Update ticker data with full 24hr information
               set((state) => ({
                 tickerData: {
                   ...state.tickerData,
                   [symbol]: {
                     symbol,
                     // Convert price from string to number
-                    // If it's from Binance, it's already a floating-point number as a string
                     price: parseFloat(rawData.c),
                     priceChangePercent: parseFloat(rawData.P),
                     volume: parseFloat(rawData.v),
                     timestamp: rawData.E,
+                    // Include 24hr high, low and open prices
+                    high: parseFloat(rawData.h),
+                    low: parseFloat(rawData.l),
+                    openPrice: parseFloat(rawData.o),
                   },
                 },
               }));
             } else if (rawData.e === "trade") {
+              // Log trade data
+              console.log(`WebSocket: Trade update for ${symbol}`, {
+                price: rawData.p,
+                quantity: rawData.q,
+                time: rawData.T,
+              });
+
               // Update ticker with latest trade price
               set((state) => {
                 const currentTicker = state.tickerData[symbol] || {
@@ -318,22 +588,46 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
 
         case "TICKER_UPDATE":
           if (message.symbol && message.data) {
-            set((state) => ({
-              tickerData: {
-                ...state.tickerData,
-                [message.symbol!]: {
-                  symbol: message.symbol!,
-                  // Convert price from integer to floating-point (divide by 100)
-                  price:
-                    typeof message.data.price === "number"
-                      ? message.data.price / 100
-                      : message.data.price,
-                  priceChangePercent: message.data.priceChangePercent || 0,
-                  volume: message.data.volume || 0,
-                  timestamp: message.data.timestamp || Date.now(),
+            const updates = message.data;
+            console.log(
+              `WebSocket: Processing TICKER_UPDATE for ${message.symbol}`,
+              updates
+            );
+
+            set((state) => {
+              // Get current ticker data to preserve high/low/open if they already exist
+              const currentTicker = state.tickerData[message.symbol!] || {};
+
+              const updatedTicker = {
+                symbol: message.symbol!,
+                // Check if displayPrice is provided, otherwise convert price from integer to dollars
+                price:
+                  updates.displayPrice ||
+                  (typeof updates.price === "number"
+                    ? updates.price / 100
+                    : updates.price),
+                // Ensure we use the correct price change percentage value
+                priceChangePercent: updates.priceChangePercent || 0,
+                volume: updates.volume || 0,
+                timestamp: updates.timestamp || Date.now(),
+                // Preserve existing high/low/open data if not provided in the update
+                high: updates.high || currentTicker.high,
+                low: updates.low || currentTicker.low,
+                openPrice: updates.openPrice || currentTicker.openPrice,
+              };
+
+              console.log(
+                `WebSocket: Updated ticker for ${message.symbol}`,
+                updatedTicker
+              );
+
+              return {
+                tickerData: {
+                  ...state.tickerData,
+                  [message.symbol!]: updatedTicker,
                 },
-              },
-            }));
+              };
+            });
           }
           break;
 
@@ -587,249 +881,6 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
     }
   };
 
-  // Setup WebSocket connection
-  const setupWebSocket = () => {
-    if (isReconnecting) {
-      console.log("WebSocket: Already reconnecting, skipping setup");
-      return;
-    }
-
-    // Clear any existing reconnect timeout
-    if (reconnectTimeout) {
-      clearTimeout(reconnectTimeout);
-      reconnectTimeout = null;
-    }
-
-    // Set connection state to connecting
-    set({ connectionState: "connecting" });
-    console.log("WebSocket: Connect method called");
-
-    // Check if we already have a connection
-    if (
-      socketInstance &&
-      (socketInstance.readyState === WebSocket.CONNECTING ||
-        socketInstance.readyState === WebSocket.OPEN)
-    ) {
-      console.log(
-        "WebSocket: Connection already exists, not creating a new one"
-      );
-      return;
-    }
-
-    try {
-      // Get the current token from auth store
-      const { token } = useAuthStore.getState();
-
-      // Create WebSocket URL with token if available
-      let wsUrl = WS_BASE_URL;
-      if (token) {
-        wsUrl += `?token=${token}`;
-        console.log("WebSocket: Connecting with authentication token");
-      } else {
-        console.log("WebSocket: Connecting without authentication");
-      }
-
-      socketInstance = new WebSocket(wsUrl);
-
-      socketInstance.onopen = () => {
-        console.log("WebSocket: Connection established");
-        set({
-          connectionState: "connected",
-          lastError: null,
-          lastHeartbeat: Date.now(),
-        });
-        reconnectAttempts = 0;
-        isReconnecting = false;
-
-        // Subscribe to all symbols in the subscription set
-        const { subscribedSymbols } = get();
-        if (subscribedSymbols.size > 0) {
-          console.log(
-            `WebSocket: Resubscribing to ${subscribedSymbols.size} symbols:`,
-            Array.from(subscribedSymbols).join(", ")
-          );
-
-          // Subscribe to each symbol
-          subscribedSymbols.forEach((symbol) => {
-            if (
-              socketInstance &&
-              socketInstance.readyState === WebSocket.OPEN
-            ) {
-              console.log(`WebSocket: Sending subscription for ${symbol}`);
-              socketInstance.send(
-                JSON.stringify({
-                  type: "SUBSCRIBE",
-                  symbol,
-                })
-              );
-            }
-          });
-        }
-
-        // Set up heartbeat interval
-        if (heartbeatInterval) {
-          clearInterval(heartbeatInterval);
-        }
-
-        heartbeatInterval = setInterval(() => {
-          if (socketInstance && socketInstance.readyState === WebSocket.OPEN) {
-            // Check if we haven't received a message in a while
-            const lastHeartbeat = get().lastHeartbeat;
-            const now = Date.now();
-
-            if (now - lastHeartbeat > WS_HEARTBEAT_INTERVAL_MS * 2) {
-              console.log(
-                "WebSocket: No messages received recently, reconnecting..."
-              );
-              reconnect();
-              return;
-            }
-
-            // Send ping to keep connection alive
-            socketInstance.send(JSON.stringify({ type: "PING" }));
-          } else {
-            console.log(
-              "WebSocket: Connection not open during heartbeat check, reconnecting..."
-            );
-            reconnect();
-          }
-        }, WS_HEARTBEAT_INTERVAL_MS);
-      };
-
-      socketInstance.onmessage = handleMessage;
-
-      socketInstance.onclose = (event) => {
-        console.log(`WebSocket: Connection closed (${event.code})`);
-        set({
-          connectionState: "disconnected",
-          isAuthenticated: false,
-        });
-
-        // Clear heartbeat interval
-        if (heartbeatInterval) {
-          clearInterval(heartbeatInterval);
-          heartbeatInterval = null;
-        }
-
-        // Attempt to reconnect if not intentionally closed
-        if (!isReconnecting && event.code !== 1000) {
-          isReconnecting = true;
-
-          if (reconnectAttempts < WS_RECONNECT_ATTEMPTS) {
-            reconnectAttempts++;
-            const delay =
-              WS_RECONNECT_DELAY_MS * Math.pow(1.5, reconnectAttempts - 1);
-            console.log(
-              `WebSocket: Reconnecting after close... Attempt ${reconnectAttempts} in ${delay}ms`
-            );
-            reconnectTimeout = setTimeout(setupWebSocket, delay);
-          } else {
-            console.log("WebSocket: Max reconnect attempts reached, giving up");
-            set({
-              lastError: "Failed to reconnect after multiple attempts",
-            });
-            isReconnecting = false;
-          }
-        }
-      };
-
-      socketInstance.onerror = (error) => {
-        console.error("WebSocket: Connection error", error);
-        set({
-          lastError: "Connection error",
-          connectionState: "disconnected",
-          isAuthenticated: false,
-        });
-
-        // Clear heartbeat interval
-        if (heartbeatInterval) {
-          clearInterval(heartbeatInterval);
-          heartbeatInterval = null;
-        }
-
-        // Attempt to reconnect
-        if (!isReconnecting && reconnectAttempts < WS_RECONNECT_ATTEMPTS) {
-          isReconnecting = true;
-          reconnectAttempts++;
-          const delay =
-            WS_RECONNECT_DELAY_MS * Math.pow(1.5, reconnectAttempts - 1);
-          console.log(
-            `WebSocket: Reconnecting after error... Attempt ${reconnectAttempts} in ${delay}ms`
-          );
-          reconnectTimeout = setTimeout(setupWebSocket, delay);
-        } else if (reconnectAttempts >= WS_RECONNECT_ATTEMPTS) {
-          console.log("WebSocket: Max reconnect attempts reached, giving up");
-          set({
-            lastError: "Failed to reconnect after multiple attempts",
-          });
-          isReconnecting = false;
-        }
-      };
-    } catch (error) {
-      console.error("WebSocket: Error setting up connection", error);
-      set({
-        lastError: "Failed to set up connection",
-        connectionState: "disconnected",
-        isAuthenticated: false,
-      });
-    }
-  };
-
-  // Reconnect to WebSocket with current auth token
-  const reconnect = () => {
-    // Close existing connection if it's open
-    if (socketInstance) {
-      if (socketInstance.readyState === WebSocket.OPEN) {
-        socketInstance.close();
-      }
-      socketInstance = null;
-    }
-
-    // Clear any existing intervals or timeouts
-    if (heartbeatInterval) {
-      clearInterval(heartbeatInterval);
-      heartbeatInterval = null;
-    }
-
-    if (reconnectTimeout) {
-      clearTimeout(reconnectTimeout);
-      reconnectTimeout = null;
-    }
-
-    // Wait a moment to ensure the connection is closed
-    setTimeout(() => {
-      isReconnecting = true;
-      console.log("WebSocket: Reconnecting with new connection");
-
-      // Set up a new connection
-      set({ connectionState: "connecting" });
-      setupWebSocket();
-    }, 500);
-  };
-
-  // Disconnect from WebSocket
-  const disconnect = () => {
-    if (socketInstance) {
-      socketInstance.close();
-      socketInstance = null;
-    }
-
-    if (heartbeatInterval) {
-      clearInterval(heartbeatInterval);
-      heartbeatInterval = null;
-    }
-
-    if (reconnectTimeout) {
-      clearTimeout(reconnectTimeout);
-      reconnectTimeout = null;
-    }
-
-    set({
-      connectionState: "disconnected",
-      isAuthenticated: false,
-    });
-  };
-
   return {
     // Connection state
     connectionState: "disconnected",
@@ -852,7 +903,7 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
     orders: {},
 
     // Connection methods
-    connect: setupWebSocket,
+    connect,
     disconnect,
     reconnect,
 
@@ -866,13 +917,19 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
       });
 
       // Send subscription message if connected
-      if (socketInstance && socketInstance.readyState === WebSocket.OPEN) {
-        socketInstance.send(
+      if (
+        globalSocketInstance &&
+        globalSocketInstance.readyState === WebSocket.OPEN
+      ) {
+        globalSocketInstance.send(
           JSON.stringify({
             type: "SUBSCRIBE",
             symbol,
           })
         );
+      } else {
+        // If not connected, try to connect first
+        connect();
       }
     },
 
@@ -885,8 +942,11 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
       });
 
       // Send unsubscription message if connected
-      if (socketInstance && socketInstance.readyState === WebSocket.OPEN) {
-        socketInstance.send(
+      if (
+        globalSocketInstance &&
+        globalSocketInstance.readyState === WebSocket.OPEN
+      ) {
+        globalSocketInstance.send(
           JSON.stringify({
             type: "UNSUBSCRIBE",
             symbol,
@@ -907,8 +967,11 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
       });
 
       // Send subscription message if connected
-      if (socketInstance && socketInstance.readyState === WebSocket.OPEN) {
-        socketInstance.send(
+      if (
+        globalSocketInstance &&
+        globalSocketInstance.readyState === WebSocket.OPEN
+      ) {
+        globalSocketInstance.send(
           JSON.stringify({
             type: "SUBSCRIBE_CANDLES",
             symbol,
@@ -935,8 +998,11 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
       });
 
       // Send unsubscription message if connected
-      if (socketInstance && socketInstance.readyState === WebSocket.OPEN) {
-        socketInstance.send(
+      if (
+        globalSocketInstance &&
+        globalSocketInstance.readyState === WebSocket.OPEN
+      ) {
+        globalSocketInstance.send(
           JSON.stringify({
             type: "UNSUBSCRIBE_CANDLES",
             symbol,
@@ -947,7 +1013,37 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
     },
 
     setActiveSymbol: (symbol: string) => {
-      set({ activeSymbol: symbol });
+      const currentActiveSymbol = get().activeSymbol;
+
+      // Only update if the symbol has changed
+      if (currentActiveSymbol !== symbol) {
+        console.log(
+          `WebSocket: Setting active symbol from ${currentActiveSymbol} to ${symbol}`
+        );
+        set({ activeSymbol: symbol });
+
+        // Ensure we're subscribed to this symbol
+        if (
+          globalSocketInstance &&
+          globalSocketInstance.readyState === WebSocket.OPEN
+        ) {
+          // Add to subscription set if not already there
+          if (!get().subscribedSymbols.has(symbol)) {
+            set((state) => {
+              const newSubscribedSymbols = new Set(state.subscribedSymbols);
+              newSubscribedSymbols.add(symbol);
+              return { subscribedSymbols: newSubscribedSymbols };
+            });
+
+            globalSocketInstance.send(
+              JSON.stringify({
+                type: "SUBSCRIBE",
+                symbol,
+              })
+            );
+          }
+        }
+      }
     },
 
     setActiveTimeframe: (timeframe: string) => {
@@ -1127,6 +1223,7 @@ export function useWebSocket() {
     setActiveTimeframe,
     activeSymbol,
     activeTimeframe,
+    lastHeartbeat,
   } = useWebSocketStore();
 
   // Connect to WebSocket on component mount
@@ -1177,6 +1274,7 @@ export function useWebSocket() {
     setActiveTimeframe,
     activeSymbol,
     activeTimeframe,
+    lastHeartbeat,
   };
 }
 

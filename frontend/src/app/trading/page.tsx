@@ -8,7 +8,7 @@ import { SymbolSelector } from "@/components/trading/SymbolSelector";
 import { OrderForm } from "@/components/trading/OrderForm";
 import { OrderList } from "@/components/trading/OrderList";
 import { ConnectionStatus } from "@/components/trading/ConnectionStatus";
-import { WebSocketDebug } from "@/components/trading/WebSocketDebug";
+import { WebSocketDebugPanel } from "@/components/trading/WebSocketDebugPanel";
 import {
   Card,
   CardContent,
@@ -52,6 +52,7 @@ function TradingPageContent() {
   const [showDebug, setShowDebug] = useState(false);
   const [isAnalyticsExpanded, setIsAnalyticsExpanded] = useState(false);
   const [sidebarView, setSidebarView] = useState<"orders" | "form">("form");
+  const [showDebugPanel, setShowDebugPanel] = useState(false);
 
   // Use the WebSocket hook
   const {
@@ -60,6 +61,7 @@ function TradingPageContent() {
     subscribeToSymbol,
     unsubscribeFromSymbol,
     activeSymbol,
+    connectionState,
   } = useWebSocket();
 
   // Load symbols and resolve symbol ID to name if needed
@@ -97,45 +99,42 @@ function TradingPageContent() {
     loadSymbols();
   }, [symbolParam]);
 
-  // Ensure WebSocket connection is established
+  // Ensure WebSocket connection is established once on component mount
   useEffect(() => {
     console.log("TradingPage: Initializing WebSocket connection");
-
-    // Connect to WebSocket if not already connected
     connect();
-
-    // Return cleanup function
-    return () => {
-      console.log("TradingPage: Cleaning up");
-      // We don't disconnect here to maintain the connection for other pages
-    };
   }, [connect]);
 
-  // Handle symbol changes
+  // Handle symbol changes and ensure proper subscription
   useEffect(() => {
     if (!selectedSymbol) return;
 
-    console.log(`TradingPage: Setting active symbol to ${selectedSymbol}`);
+    console.log(`TradingPage: Symbol changed to ${selectedSymbol}`);
 
-    // Unsubscribe from previous symbol if it exists and is different
-    if (activeSymbol && activeSymbol !== selectedSymbol) {
-      console.log(
-        `TradingPage: Unsubscribing from previous symbol ${activeSymbol}`
-      );
-      unsubscribeFromSymbol(activeSymbol);
+    // Only handle subscription changes when the connection is established
+    if (connectionState === "connected") {
+      // If there's a different active symbol, unsubscribe from it first
+      if (activeSymbol && activeSymbol !== selectedSymbol) {
+        console.log(
+          `TradingPage: Unsubscribing from previous symbol ${activeSymbol}`
+        );
+        unsubscribeFromSymbol(activeSymbol);
+      }
+
+      // Set the new symbol as active
+      setActiveSymbol(selectedSymbol);
+
+      // Subscribe to the new symbol
+      console.log(`TradingPage: Subscribing to symbol ${selectedSymbol}`);
+      subscribeToSymbol(selectedSymbol);
     }
-
-    // Set the current symbol as active for optimized updates
-    setActiveSymbol(selectedSymbol);
-
-    // Subscribe to the selected symbol
-    subscribeToSymbol(selectedSymbol);
   }, [
     selectedSymbol,
+    connectionState,
+    activeSymbol,
     setActiveSymbol,
     subscribeToSymbol,
     unsubscribeFromSymbol,
-    activeSymbol,
   ]);
 
   // Toggle debug panel with keyboard shortcut
@@ -183,6 +182,17 @@ function TradingPageContent() {
               )}
             </Button>
           </div>
+        </div>
+
+        <div className="flex justify-end mb-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowDebugPanel(!showDebugPanel)}
+            className="text-xs"
+          >
+            {showDebugPanel ? "Hide Debug Panel" : "Show Debug Panel"}
+          </Button>
         </div>
 
         {/* Main trading interface */}
@@ -303,19 +313,11 @@ function TradingPageContent() {
               </CardContent>
             </Card>
 
-            {/* WebSocket Debug Panel - Press Ctrl+Shift+D to toggle */}
-            {showDebug && (
-              <Card className="shadow-md border-none">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-lg">Debug Panel</CardTitle>
-                  <CardDescription>
-                    WebSocket connection details
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="pt-0">
-                  <WebSocketDebug />
-                </CardContent>
-              </Card>
+            {/* WebSocket Debug Panel */}
+            {showDebugPanel && (
+              <div className="mt-4">
+                <WebSocketDebugPanel className="h-[500px]" />
+              </div>
             )}
           </div>
         </div>
