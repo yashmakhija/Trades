@@ -52,17 +52,7 @@ export function PositionsTable() {
                 </span>
               </TableCell>
               <TableCell>
-                <Badge
-                  variant={
-                    position.status === "OPEN"
-                      ? "default"
-                      : position.status === "CLOSED"
-                      ? "success"
-                      : "destructive"
-                  }
-                >
-                  {position.status}
-                </Badge>
+                <Badge variant="outline">{position.status}</Badge>
               </TableCell>
             </TableRow>
           ))}

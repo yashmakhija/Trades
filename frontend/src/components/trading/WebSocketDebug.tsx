@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useWebSocket } from "@/services/websocket";
+import { useWebSocketStore } from "@/services/websocket";
 import {
   Card,
   CardContent,
@@ -19,16 +20,20 @@ interface WebSocketDebugProps {
 export function WebSocketDebug({ className = "" }: WebSocketDebugProps) {
   const {
     connectionState,
-    subscribedSymbols,
     activeSymbol,
     lastError,
-    lastHeartbeat,
     connect,
     disconnect,
     reconnect,
   } = useWebSocket();
 
-  const [lastUpdate, setLastUpdate] = useState(Date.now());
+  // Get subscribedSymbols and lastHeartbeat directly from the store
+  const subscribedSymbols = useWebSocketStore(
+    (state) => state.subscribedSymbols
+  );
+  const lastHeartbeat = useWebSocketStore((state) => state.lastHeartbeat);
+
+  const [, setLastUpdate] = useState(Date.now());
   const [expanded, setExpanded] = useState(false);
 
   // Update the last update time periodically
@@ -130,7 +135,7 @@ export function WebSocketDebug({ className = "" }: WebSocketDebugProps) {
                 {Array.from(subscribedSymbols).length > 0 ? (
                   Array.from(subscribedSymbols).map((symbol) => (
                     <Badge
-                      key={symbol}
+                      key={symbol as string}
                       variant="outline"
                       className={
                         symbol === activeSymbol
@@ -138,7 +143,7 @@ export function WebSocketDebug({ className = "" }: WebSocketDebugProps) {
                           : ""
                       }
                     >
-                      {symbol}
+                      {symbol as string}
                     </Badge>
                   ))
                 ) : (

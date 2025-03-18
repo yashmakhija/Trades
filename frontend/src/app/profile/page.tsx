@@ -39,8 +39,8 @@ export default function ProfilePage() {
 
   // Get user initials for avatar fallback
   const getUserInitials = () => {
-    if (!user?.name) return "U";
-    return user.name
+    if (!user?.username) return "U";
+    return user.username
       .split(" ")
       .map((n) => n[0])
       .join("")
@@ -77,16 +77,16 @@ export default function ProfilePage() {
                   <Avatar className="h-24 w-24">
                     <AvatarImage
                       src={`https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(
-                        user.name
+                        user.username
                       )}`}
-                      alt={user.name}
+                      alt={user.username}
                     />
                     <AvatarFallback className="text-2xl">
                       {getUserInitials()}
                     </AvatarFallback>
                   </Avatar>
                 </div>
-                <CardTitle className="text-xl">{user.name}</CardTitle>
+                <CardTitle className="text-xl">{user.username}</CardTitle>
                 <CardDescription>{user.email}</CardDescription>
               </CardHeader>
               <CardContent>
@@ -96,7 +96,7 @@ export default function ProfilePage() {
                       Member since
                     </span>
                     <span className="text-sm font-medium">
-                      {formatDate(user.createdAt)}
+                      {formatDate(user.createdAt || "")}
                     </span>
                   </div>
                   <div className="flex justify-between items-center">

@@ -43,7 +43,7 @@ export function useBalanceWs() {
           currentPrice: order.price,
           orderId: order.orderId,
           pnl: 0,
-          status: order.status,
+          status: order.status as "CANCELLED" | "OPEN" | "CLOSED",
         });
       }
     });

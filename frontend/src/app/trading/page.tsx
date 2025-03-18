@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { PriceChart } from "@/components/trading/PriceChart";
 import { MarketTicker } from "@/components/trading/MarketTicker";
@@ -35,8 +35,10 @@ import {
   EyeOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
 
-export default function TradingPage() {
+// Create a wrapper component to handle search params
+function TradingPageContent() {
   const searchParams = useSearchParams();
 
   // Get symbol from URL or use default
@@ -356,5 +358,36 @@ export default function TradingPage() {
         </div>
       </div>
     </main>
+  );
+}
+
+// Loading fallback
+function TradingPageSkeleton() {
+  return (
+    <div className="container mx-auto py-4 px-4 max-w-7xl">
+      <div className="flex flex-col space-y-4">
+        <div className="bg-card p-4 rounded-lg shadow-sm">
+          <Skeleton className="h-8 w-48" />
+        </div>
+        <Skeleton className="h-12 w-full" />
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+          <div className="lg:col-span-3">
+            <Skeleton className="h-[600px] w-full" />
+          </div>
+          <div>
+            <Skeleton className="h-[600px] w-full" />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Export the Trading Page with Suspense boundary
+export default function TradingPage() {
+  return (
+    <Suspense fallback={<TradingPageSkeleton />}>
+      <TradingPageContent />
+    </Suspense>
   );
 }

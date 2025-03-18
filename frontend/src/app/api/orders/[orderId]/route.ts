@@ -5,10 +5,10 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { orderId: string } }
+  { params }: { params: Promise<{ orderId: string }> }
 ) {
   try {
-    const { orderId } = params;
+    const { orderId } = await params;
 
     if (!orderId) {
       return NextResponse.json(
@@ -20,6 +20,8 @@ export async function DELETE(
     // Get user from session (in a real app, you'd use NextAuth or similar)
     // For now, we'll use a mock user ID
     const userId = "user-123"; // Replace with actual user authentication
+    // Mock token - in real app this would come from authentication
+    const token = "mock-token-123";
 
     // Send to backend API
     const response = await fetch(`${API_BASE_URL}/api/orders/${orderId}`, {
@@ -28,6 +30,7 @@ export async function DELETE(
         "Content-Type": "application/json",
         // Add authentication headers if needed
         "X-User-ID": userId, // This is a simplified approach; use proper auth in production
+        Authorization: `Bearer ${token}`,
       },
     });
 
@@ -51,10 +54,10 @@ export async function DELETE(
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { orderId: string } }
+  { params }: { params: Promise<{ orderId: string }> }
 ) {
   try {
-    const { orderId } = params;
+    const { orderId } = await params;
 
     if (!orderId) {
       return NextResponse.json(
@@ -66,12 +69,15 @@ export async function GET(
     // Get user from session (in a real app, you'd use NextAuth or similar)
     // For now, we'll use a mock user ID
     const userId = "user-123"; // Replace with actual user authentication
+    // Mock token - in real app this would come from authentication
+    const token = "mock-token-123";
 
     // Fetch order from backend
     const response = await fetch(`${API_BASE_URL}/api/orders/${orderId}`, {
       headers: {
         // Add authentication headers if needed
         "X-User-ID": userId, // This is a simplified approach; use proper auth in production
+        Authorization: `Bearer ${token}`,
       },
     });
 

@@ -39,6 +39,8 @@ export async function POST(request: NextRequest) {
     // Get user from session (in a real app, you'd use NextAuth or similar)
     // For now, we'll use a mock user ID
     const userId = "user-123"; // Replace with actual user authentication
+    // Mock token - in real app this would come from authentication
+    const token = "mock-token-123";
 
     // Prepare data for backend
     const backendOrderData = {
@@ -61,7 +63,7 @@ export async function POST(request: NextRequest) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`,
+        Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(backendOrderData),
     });
@@ -91,6 +93,8 @@ export async function GET(request: NextRequest) {
     // Get user from session (in a real app, you'd use NextAuth or similar)
     // For now, we'll use a mock user ID
     const userId = "user-123"; // Replace with actual user authentication
+    // Mock token - in real app this would come from authentication
+    const token = "mock-token-123";
 
     // Get query parameters
     const { searchParams } = new URL(request.url);
@@ -106,6 +110,7 @@ export async function GET(request: NextRequest) {
     const response = await fetch(`${API_BASE_URL}/api/orders?${queryString}`, {
       headers: {
         // Add authentication headers if needed
+        Authorization: `Bearer ${token}`,
       },
     });
 

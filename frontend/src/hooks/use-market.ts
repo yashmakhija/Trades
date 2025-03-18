@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { marketApi } from "@/lib/api/market-api";
-import { Symbol, useMarketStore } from "@/store/use-market-store";
-import { useWebSocket } from "./use-websocket";
+import { useMarketStore } from "@/store/use-market-store";
+import type { Symbol as MarketSymbol } from "@/store/use-market-store";
+import { useWebSocketStore } from "@/services/websocket";
 
 export function useMarket() {
   const [isLoading, setIsLoading] = useState(false);
@@ -18,7 +19,7 @@ export function useMarket() {
     setSelectedSymbol,
   } = useMarketStore();
 
-  const { subscribeToSymbol, unsubscribeFromSymbol } = useWebSocket();
+  const { subscribeToSymbol, unsubscribeFromSymbol } = useWebSocketStore();
 
   // Fetch all available symbols
   const fetchSymbols = async () => {
@@ -58,7 +59,7 @@ export function useMarket() {
   };
 
   // Select a symbol and subscribe to its updates
-  const handleSelectSymbol = (symbol: Symbol) => {
+  const handleSelectSymbol = (symbol: MarketSymbol) => {
     // Unsubscribe from previously selected symbol if any
     if (selectedSymbol) {
       unsubscribeFromSymbol(selectedSymbol.id);

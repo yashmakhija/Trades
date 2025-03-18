@@ -9,7 +9,7 @@ interface WebSocketConfig {
   onError?: (error: Event) => void;
 }
 
-export function useWebSocket(config: WebSocketConfig) {
+export function useCustomWebSocket(config: WebSocketConfig) {
   const wsRef = useRef<WebSocket | null>(null);
   const { user } = useAuthStore();
 

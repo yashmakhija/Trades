@@ -118,7 +118,7 @@ export function TradingAnalytics() {
                 }}
                 onSelect={(range) => {
                   if (range?.from && range?.to) {
-                    handleDateRangeChange(range);
+                    handleDateRangeChange(range as { from: Date; to: Date });
                   }
                 }}
                 initialFocus
@@ -175,9 +175,7 @@ export function TradingAnalytics() {
                         ) : (
                           <ArrowDownIcon className="inline h-4 w-4" />
                         )}
-                        {userStats
-                          ? formatPercentage(userStats.pnlPercentage)
-                          : "0%"}
+                        {userStats ? formatPercentage(userStats.winRate) : "0%"}
                       </span>
                     </div>
                   </CardContent>
@@ -193,7 +191,7 @@ export function TradingAnalytics() {
                       {userStats ? formatPercentage(userStats.winRate) : "0%"}
                       <span className="ml-2 text-sm text-muted-foreground">
                         {userStats
-                          ? `${userStats.totalWins}/${userStats.totalTrades} trades`
+                          ? `${userStats.profitableTrades}/${userStats.totalTrades} trades`
                           : "0/0 trades"}
                       </span>
                     </div>
@@ -208,7 +206,7 @@ export function TradingAnalytics() {
                   <CardContent>
                     <div className="text-2xl font-bold">
                       {userStats
-                        ? formatCurrency(userStats.averageTrade)
+                        ? formatCurrency(userStats.averagePnL)
                         : "$0.00"}
                       <span className="ml-2 text-sm text-muted-foreground">
                         per trade
@@ -290,9 +288,8 @@ export function TradingAnalytics() {
                     />
                     <Bar
                       dataKey="pnl"
-                      fill={(data: any) =>
-                        data.pnl >= 0 ? "#4ade80" : "#f87171"
-                      }
+                      // @ts-expect-error - recharts typing issue with dynamic fill colors
+                      fill={(entry) => (entry.pnl >= 0 ? "#4ade80" : "#f87171")}
                     />
                   </BarChart>
                 </ResponsiveContainer>
@@ -334,31 +331,31 @@ export function TradingAnalytics() {
                       ) : (
                         symbolStats.map((symbol) => (
                           <TableRow
-                            key={symbol.symbolId}
+                            key={symbol.symbol}
                             className="cursor-pointer hover:bg-muted/50"
-                            onClick={() => setSelectedSymbolId(symbol.symbolId)}
+                            onClick={() => setSelectedSymbolId(symbol.symbol)}
                           >
                             <TableCell className="font-medium">
-                              {symbol.symbolName}
+                              {symbol.symbol}
                             </TableCell>
                             <TableCell>{symbol.totalTrades}</TableCell>
                             <TableCell>
                               {formatPercentage(symbol.winRate)}
                               <span className="text-xs text-muted-foreground ml-1">
-                                ({symbol.wins}/{symbol.totalTrades})
+                                ({symbol.profitableTrades}/{symbol.totalTrades})
                               </span>
                             </TableCell>
                             <TableCell
                               className={cn(
-                                symbol.pnl > 0
+                                symbol.totalPnL > 0
                                   ? "text-green-500"
                                   : "text-red-500"
                               )}
                             >
-                              {formatCurrency(symbol.pnl)}
+                              {formatCurrency(symbol.totalPnL)}
                             </TableCell>
                             <TableCell>
-                              {formatCurrency(symbol.averageTrade)}
+                              {formatCurrency(symbol.averagePnL)}
                             </TableCell>
                           </TableRow>
                         ))
@@ -409,7 +406,7 @@ export function TradingAnalytics() {
                             <TableRow key={trade.id}>
                               <TableCell>
                                 {format(
-                                  new Date(trade.timestamp),
+                                  new Date(trade.createdAt),
                                   "MMM dd, yyyy HH:mm:ss"
                                 )}
                               </TableCell>
@@ -417,12 +414,12 @@ export function TradingAnalytics() {
                               <TableCell>
                                 <Badge
                                   variant={
-                                    trade.side === "BUY"
+                                    trade.type === "BUY"
                                       ? "default"
                                       : "destructive"
                                   }
                                 >
-                                  {trade.side}
+                                  {trade.type}
                                 </Badge>
                               </TableCell>
                               <TableCell>
@@ -431,9 +428,9 @@ export function TradingAnalytics() {
                               <TableCell>{trade.quantity}</TableCell>
                               <TableCell
                                 className={cn(
-                                  trade.pnl > 0
+                                  trade.pnl !== null && trade.pnl > 0
                                     ? "text-green-500"
-                                    : trade.pnl < 0
+                                    : trade.pnl !== null && trade.pnl < 0
                                     ? "text-red-500"
                                     : ""
                                 )}
