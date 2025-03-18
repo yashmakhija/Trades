@@ -1,0 +1,44 @@
+version: "3.8"
+
+services:
+  # TimescaleDB with PostGIS extension
+  timescaledb:
+    image: timescale/timescaledb:latest-pg14
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: trading_app
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Trading app backend
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://postgres:postgres@timescaledb:5432/trading_app?schema=public
+      - JWT_SECRET=change_this_in_production
+      - JWT_EXPIRES_IN=7d
+      - BINANCE_WEBSOCKET_URL=wss://stream.binance.com:9443/ws
+      - TRADING_SYMBOLS=btcusdt,ethusdt,bnbusdt,solusdt,adausdt
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  timescale_data:
+    driver: local
