@@ -332,7 +332,9 @@ export class BalanceManager extends EventEmitter {
       console.log(
         `Order found: entry price=${order.price / 100}, exit price=${
           order.exitPrice ? order.exitPrice / 100 : "N/A"
-        }, reserved=${order.reservedAmount ? order.reservedAmount / 100 : "N/A"}`
+        }, reserved=${
+          order.reservedAmount ? order.reservedAmount / 100 : "N/A"
+        }`
       );
 
       // Calculate PnL based on entry and exit prices
