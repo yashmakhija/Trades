@@ -1,24 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useAnalyticsStore } from "@/store/use-analytics-store";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useOrdersStore } from "@/store/use-orders-store";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
-import { Calendar } from "@/components/ui/calendar";
+import { format } from "date-fns";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { Button } from "@/components/ui/button";
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  Clock,
+  BarChart3,
+  CircleDollarSign,
+  FileClock,
+  Coins,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
 import {
   Table,
   TableBody,
@@ -27,335 +25,319 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { format } from "date-fns";
-import {
-  CalendarIcon,
-  ArrowUpIcon,
-  ArrowDownIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
-} from "lucide-react";
-import { cn } from "@/lib/utils";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  LineChart,
-  Line,
-} from "recharts";
+import { Button } from "@/components/ui/button";
+import { Order } from "@/services/orders";
+import { Trade } from "@/services/analytics";
 
 export function TradingAnalytics() {
+  // Fetch trade history data from analytics store
   const {
-    userStats,
-    symbolStats,
-    dailyPnL,
     tradeHistory,
     pagination,
-    dateRange,
-    isLoading,
-    fetchAllData,
-    setDateRange,
+    isLoading: analyticsIsLoading,
+    fetchTradeHistory,
     setPage,
-    setSelectedSymbolId,
   } = useAnalyticsStore();
 
-  const [activeTab, setActiveTab] = useState("overview");
+  // Fetch open orders data from orders store
+  const {
+    openOrders,
+    isLoading: ordersIsLoading,
+    fetchOpenOrders,
+  } = useOrdersStore();
 
   useEffect(() => {
-    fetchAllData();
-  }, [fetchAllData]);
+    // Fetch initial data
+    fetchTradeHistory();
+    fetchOpenOrders();
 
+    // Set up polling interval for open orders (refresh every 15 seconds)
+    const intervalId = setInterval(() => {
+      fetchOpenOrders();
+    }, 15000);
+
+    // Clean up on unmount
+    return () => clearInterval(intervalId);
+  }, [fetchTradeHistory, fetchOpenOrders]);
+
+  // Formatter for displaying currency with appropriate decimal places
   const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(value);
+    // For large numbers (>=1000), show 2 decimal places
+    if (Math.abs(value) >= 1000) {
+      return new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: "USD",
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(value);
+    }
+    // For medium numbers (>=1), show up to 4 decimal places
+    else if (Math.abs(value) >= 1) {
+      return new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: "USD",
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 4,
+      }).format(value);
+    }
+    // For small numbers (<1), show up to 8 decimal places
+    else {
+      return new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: "USD",
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 8,
+      }).format(value);
+    }
   };
 
-  const formatPercentage = (value: number) => {
-    return `${(value * 100).toFixed(2)}%`;
-  };
+  // Formatter for quantities with appropriate decimal places
+  const formatQuantity = (value: number, symbol: string) => {
+    const symbolLower = symbol.toLowerCase();
 
-  const handleDateRangeChange = (range: { from: Date; to: Date }) => {
-    setDateRange({
-      startDate: range.from,
-      endDate: range.to,
-    });
+    // BTC and high value coins use fewer decimals
+    if (symbolLower.includes("btc")) {
+      return value.toFixed(6);
+    }
+    // Medium value coins
+    else if (symbolLower.includes("eth") || symbolLower.includes("bnb")) {
+      return value.toFixed(6);
+    }
+    // Low value coins - more decimals
+    else {
+      return value.toFixed(8);
+    }
   };
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold">Trading Analytics</h2>
-        <div className="flex items-center space-x-2">
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button variant="outline" className="flex items-center gap-2">
-                <CalendarIcon className="h-4 w-4" />
-                <span>
-                  {dateRange.startDate
-                    ? format(dateRange.startDate, "MMM dd, yyyy")
-                    : "Start date"}{" "}
-                  -
-                  {dateRange.endDate
-                    ? format(dateRange.endDate, "MMM dd, yyyy")
-                    : "End date"}
-                </span>
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-auto p-0" align="end">
-              <Calendar
-                mode="range"
-                selected={{
-                  from: dateRange.startDate || undefined,
-                  to: dateRange.endDate || undefined,
-                }}
-                onSelect={(range) => {
-                  if (range?.from && range?.to) {
-                    handleDateRangeChange(range as { from: Date; to: Date });
-                  }
-                }}
-                initialFocus
-              />
-            </PopoverContent>
-          </Popover>
-        </div>
+      <div className="bg-gradient-to-r from-indigo-600/5 to-blue-600/5 rounded-lg p-4 border border-indigo-600/10">
+        <h2 className="text-xl font-bold flex items-center">
+          <BarChart3 className="h-5 w-5 mr-2 text-indigo-500" />
+          Trading Activity
+        </h2>
       </div>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="pnl">P&L Analysis</TabsTrigger>
-          <TabsTrigger value="symbols">Symbol Performance</TabsTrigger>
-          <TabsTrigger value="history">Trade History</TabsTrigger>
-        </TabsList>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Open Orders Section */}
+        <Card className="border-0 shadow-xl bg-gradient-to-b from-[#131826] to-[#0F121A] rounded-xl overflow-hidden">
+          <CardHeader className="border-b border-slate-800/40 pb-3 flex flex-row justify-between items-center">
+            <CardTitle className="text-base font-medium flex items-center text-white">
+              <FileClock className="h-4 w-4 mr-2 text-indigo-400" />
+              Open Orders
+            </CardTitle>
+            <Badge className="bg-indigo-500/10 text-indigo-400 border-indigo-500/20">
+              {openOrders.length} Active
+            </Badge>
+          </CardHeader>
+          <CardContent className="p-0">
+            {ordersIsLoading ? (
+              <div className="p-6">
+                <Skeleton className="h-[300px] w-full" />
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader className="bg-slate-900/50">
+                    <TableRow className="hover:bg-transparent border-slate-800/60">
+                      <TableHead className="text-slate-400 font-medium">
+                        Symbol
+                      </TableHead>
+                      <TableHead className="text-slate-400 font-medium">
+                        Type
+                      </TableHead>
+                      <TableHead className="text-slate-400 font-medium">
+                        Price
+                      </TableHead>
+                      <TableHead className="text-slate-400 font-medium">
+                        Quantity
+                      </TableHead>
+                      <TableHead className="text-slate-400 font-medium">
+                        Total
+                      </TableHead>
+                      <TableHead className="text-slate-400 font-medium w-[100px]">
+                        Created
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {openOrders.length === 0 ? (
+                      <TableRow className="hover:bg-slate-800/10 border-slate-800/40">
+                        <TableCell
+                          colSpan={6}
+                          className="text-center py-10 text-slate-500"
+                        >
+                          <div className="flex flex-col items-center">
+                            <CircleDollarSign className="h-10 w-10 text-slate-700/50 mb-3" />
+                            <p className="font-medium text-slate-400 mb-1">
+                              No open orders
+                            </p>
+                            <p className="text-xs text-slate-500">
+                              Your active orders will appear here
+                            </p>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      openOrders.map((order: Order) => (
+                        <TableRow
+                          key={order.id}
+                          className="hover:bg-slate-800/10 border-slate-800/40"
+                        >
+                          <TableCell className="font-medium text-slate-300">
+                            {order.symbolId}
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              variant={
+                                order.type === "BUY" ? "default" : "destructive"
+                              }
+                              className={cn(
+                                "px-2 py-0.5 text-xs font-medium",
+                                order.type === "BUY"
+                                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                                  : "bg-rose-500/10 text-rose-400 border-rose-500/20"
+                              )}
+                            >
+                              {order.type}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="font-mono text-slate-300">
+                            {formatCurrency(order.price)}
+                          </TableCell>
+                          <TableCell className="font-mono text-slate-300">
+                            {formatQuantity(order.quantity, order.symbolId)}
+                          </TableCell>
+                          <TableCell className="font-mono text-slate-300">
+                            {formatCurrency(order.price * order.quantity)}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center text-xs text-slate-400">
+                              <Clock className="h-3 w-3 mr-1 opacity-70" />
+                              {format(new Date(order.createdAt), "HH:mm:ss")}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
-        <TabsContent value="overview" className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {isLoading.userStats ? (
-              Array(3)
-                .fill(0)
-                .map((_, i) => (
-                  <Card key={i}>
-                    <CardHeader className="pb-2">
-                      <Skeleton className="h-4 w-1/2" />
-                    </CardHeader>
-                    <CardContent>
-                      <Skeleton className="h-8 w-3/4" />
-                    </CardContent>
-                  </Card>
-                ))
+        {/* Trade History Section */}
+        <Card className="border-0 shadow-xl bg-gradient-to-b from-[#131826] to-[#0F121A] rounded-xl overflow-hidden">
+          <CardHeader className="border-b border-slate-800/40 pb-3 flex flex-row justify-between items-center">
+            <CardTitle className="text-base font-medium flex items-center text-white">
+              <Coins className="h-4 w-4 mr-2 text-indigo-400" />
+              Trade History
+            </CardTitle>
+            <Badge className="bg-indigo-500/10 text-indigo-400 border-indigo-500/20">
+              {pagination ? pagination.total : 0} Trades
+            </Badge>
+          </CardHeader>
+          <CardContent className="p-0">
+            {analyticsIsLoading.tradeHistory ? (
+              <div className="p-6">
+                <Skeleton className="h-[300px] w-full" />
+              </div>
             ) : (
               <>
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium">
-                      Total P&L
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold">
-                      {userStats ? formatCurrency(userStats.totalPnL) : "$0.00"}
-                      <span
-                        className={cn(
-                          "ml-2 text-sm",
-                          userStats && userStats.totalPnL > 0
-                            ? "text-green-500"
-                            : "text-red-500"
-                        )}
-                      >
-                        {userStats && userStats.totalPnL > 0 ? (
-                          <ArrowUpIcon className="inline h-4 w-4" />
-                        ) : (
-                          <ArrowDownIcon className="inline h-4 w-4" />
-                        )}
-                        {userStats ? formatPercentage(userStats.winRate) : "0%"}
-                      </span>
-                    </div>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium">
-                      Win Rate
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold">
-                      {userStats ? formatPercentage(userStats.winRate) : "0%"}
-                      <span className="ml-2 text-sm text-muted-foreground">
-                        {userStats
-                          ? `${userStats.profitableTrades}/${userStats.totalTrades} trades`
-                          : "0/0 trades"}
-                      </span>
-                    </div>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium">
-                      Avg. Trade
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold">
-                      {userStats
-                        ? formatCurrency(userStats.averagePnL)
-                        : "$0.00"}
-                      <span className="ml-2 text-sm text-muted-foreground">
-                        per trade
-                      </span>
-                    </div>
-                  </CardContent>
-                </Card>
-              </>
-            )}
-          </div>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Daily P&L</CardTitle>
-              <CardDescription>Your profit and loss over time</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {isLoading.dailyPnL ? (
-                <Skeleton className="h-[300px] w-full" />
-              ) : (
-                <ResponsiveContainer width="100%" height={300}>
-                  <LineChart
-                    data={dailyPnL.map((day) => ({
-                      date: format(new Date(day.date), "MMM dd"),
-                      pnl: day.pnl,
-                    }))}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="date" />
-                    <YAxis />
-                    <Tooltip
-                      formatter={(value) => [
-                        formatCurrency(Number(value)),
-                        "P&L",
-                      ]}
-                      labelFormatter={(label) => `Date: ${label}`}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="pnl"
-                      stroke="#8884d8"
-                      activeDot={{ r: 8 }}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="pnl" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Daily P&L Breakdown</CardTitle>
-              <CardDescription>
-                Your profit and loss for each day
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {isLoading.dailyPnL ? (
-                <Skeleton className="h-[400px] w-full" />
-              ) : (
-                <ResponsiveContainer width="100%" height={400}>
-                  <BarChart
-                    data={dailyPnL.map((day) => ({
-                      date: format(new Date(day.date), "MMM dd"),
-                      pnl: day.pnl,
-                    }))}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="date" />
-                    <YAxis />
-                    <Tooltip
-                      formatter={(value) => [
-                        formatCurrency(Number(value)),
-                        "P&L",
-                      ]}
-                      labelFormatter={(label) => `Date: ${label}`}
-                    />
-                    <Bar
-                      dataKey="pnl"
-                      // @ts-expect-error - recharts typing issue with dynamic fill colors
-                      fill={(entry) => (entry.pnl >= 0 ? "#4ade80" : "#f87171")}
-                    />
-                  </BarChart>
-                </ResponsiveContainer>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="symbols" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Symbol Performance</CardTitle>
-              <CardDescription>
-                Performance breakdown by trading symbol
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {isLoading.symbolStats ? (
-                <Skeleton className="h-[400px] w-full" />
-              ) : (
                 <div className="overflow-x-auto">
                   <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Symbol</TableHead>
-                        <TableHead>Trades</TableHead>
-                        <TableHead>Win Rate</TableHead>
-                        <TableHead>P&L</TableHead>
-                        <TableHead>Avg. Trade</TableHead>
+                    <TableHeader className="bg-slate-900/50">
+                      <TableRow className="hover:bg-transparent border-slate-800/60">
+                        <TableHead className="text-slate-400 font-medium">
+                          Symbol
+                        </TableHead>
+                        <TableHead className="text-slate-400 font-medium">
+                          Side
+                        </TableHead>
+                        <TableHead className="text-slate-400 font-medium">
+                          Price
+                        </TableHead>
+                        <TableHead className="text-slate-400 font-medium">
+                          Quantity
+                        </TableHead>
+                        <TableHead className="text-slate-400 font-medium">
+                          P&L
+                        </TableHead>
+                        <TableHead className="text-slate-400 font-medium w-[120px]">
+                          Date & Time
+                        </TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {symbolStats.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={5} className="text-center py-4">
-                            No symbol data available for the selected period
+                      {tradeHistory.length === 0 ? (
+                        <TableRow className="hover:bg-slate-800/10 border-slate-800/40">
+                          <TableCell
+                            colSpan={6}
+                            className="text-center py-10 text-slate-500"
+                          >
+                            <div className="flex flex-col items-center">
+                              <CircleDollarSign className="h-10 w-10 text-slate-700/50 mb-3" />
+                              <p className="font-medium text-slate-400 mb-1">
+                                No trade history
+                              </p>
+                              <p className="text-xs text-slate-500">
+                                Your completed trades will appear here
+                              </p>
+                            </div>
                           </TableCell>
                         </TableRow>
                       ) : (
-                        symbolStats.map((symbol) => (
+                        tradeHistory.map((trade: Trade) => (
                           <TableRow
-                            key={symbol.symbol}
-                            className="cursor-pointer hover:bg-muted/50"
-                            onClick={() => setSelectedSymbolId(symbol.symbol)}
+                            key={trade.id}
+                            className="hover:bg-slate-800/10 border-slate-800/40"
                           >
-                            <TableCell className="font-medium">
-                              {symbol.symbol}
+                            <TableCell className="font-medium text-slate-300">
+                              {trade.symbolName}
                             </TableCell>
-                            <TableCell>{symbol.totalTrades}</TableCell>
                             <TableCell>
-                              {formatPercentage(symbol.winRate)}
-                              <span className="text-xs text-muted-foreground ml-1">
-                                ({symbol.profitableTrades}/{symbol.totalTrades})
-                              </span>
+                              <Badge
+                                variant={
+                                  trade.type === "BUY"
+                                    ? "default"
+                                    : "destructive"
+                                }
+                                className={cn(
+                                  "px-2 py-0.5 text-xs font-medium",
+                                  trade.type === "BUY"
+                                    ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                                    : "bg-rose-500/10 text-rose-400 border-rose-500/20"
+                                )}
+                              >
+                                {trade.type}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="font-mono text-slate-300">
+                              {formatCurrency(trade.price)}
+                            </TableCell>
+                            <TableCell className="font-mono text-slate-300">
+                              {formatQuantity(trade.quantity, trade.symbolName)}
                             </TableCell>
                             <TableCell
                               className={cn(
-                                symbol.totalPnL > 0
-                                  ? "text-green-500"
-                                  : "text-red-500"
+                                "font-mono",
+                                trade.pnl !== null && trade.pnl > 0
+                                  ? "text-emerald-400"
+                                  : trade.pnl !== null && trade.pnl < 0
+                                  ? "text-rose-400"
+                                  : "text-slate-300"
                               )}
                             >
-                              {formatCurrency(symbol.totalPnL)}
+                              {trade.pnl !== null
+                                ? formatCurrency(trade.pnl)
+                                : "-"}
                             </TableCell>
-                            <TableCell>
-                              {formatCurrency(symbol.averagePnL)}
+                            <TableCell className="text-xs text-slate-400">
+                              {format(
+                                new Date(trade.createdAt),
+                                "MMM dd, HH:mm"
+                              )}
                             </TableCell>
                           </TableRow>
                         ))
@@ -363,94 +345,20 @@ export function TradingAnalytics() {
                     </TableBody>
                   </Table>
                 </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
 
-        <TabsContent value="history" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Trade History</CardTitle>
-              <CardDescription>
-                Your recent trades
-                {pagination && ` (${pagination.total} total)`}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {isLoading.tradeHistory ? (
-                <Skeleton className="h-[400px] w-full" />
-              ) : (
-                <>
-                  <div className="overflow-x-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Date & Time</TableHead>
-                          <TableHead>Symbol</TableHead>
-                          <TableHead>Side</TableHead>
-                          <TableHead>Price</TableHead>
-                          <TableHead>Quantity</TableHead>
-                          <TableHead>P&L</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {tradeHistory.length === 0 ? (
-                          <TableRow>
-                            <TableCell colSpan={6} className="text-center py-4">
-                              No trades available for the selected period
-                            </TableCell>
-                          </TableRow>
-                        ) : (
-                          tradeHistory.map((trade) => (
-                            <TableRow key={trade.id}>
-                              <TableCell>
-                                {format(
-                                  new Date(trade.createdAt),
-                                  "MMM dd, yyyy HH:mm:ss"
-                                )}
-                              </TableCell>
-                              <TableCell>{trade.symbolName}</TableCell>
-                              <TableCell>
-                                <Badge
-                                  variant={
-                                    trade.type === "BUY"
-                                      ? "default"
-                                      : "destructive"
-                                  }
-                                >
-                                  {trade.type}
-                                </Badge>
-                              </TableCell>
-                              <TableCell>
-                                {formatCurrency(trade.price)}
-                              </TableCell>
-                              <TableCell>{trade.quantity}</TableCell>
-                              <TableCell
-                                className={cn(
-                                  trade.pnl !== null && trade.pnl > 0
-                                    ? "text-green-500"
-                                    : trade.pnl !== null && trade.pnl < 0
-                                    ? "text-red-500"
-                                    : ""
-                                )}
-                              >
-                                {trade.pnl !== null
-                                  ? formatCurrency(trade.pnl)
-                                  : "-"}
-                              </TableCell>
-                            </TableRow>
-                          ))
-                        )}
-                      </TableBody>
-                    </Table>
-                  </div>
-
-                  {pagination && pagination.pages > 1 && (
-                    <div className="flex items-center justify-center space-x-2 mt-4">
+                {pagination && pagination.pages > 1 && (
+                  <div className="flex items-center justify-between p-4 border-t border-slate-800/40 bg-slate-900/20">
+                    <div className="text-xs text-slate-400">
+                      <span className="font-medium text-slate-300">
+                        {pagination.total}
+                      </span>{" "}
+                      total trades
+                    </div>
+                    <div className="flex items-center gap-1">
                       <Button
                         variant="outline"
                         size="sm"
+                        className="h-8 px-2 border-slate-700 bg-slate-800/30 hover:bg-slate-800 text-slate-300"
                         onClick={() =>
                           setPage(Math.max(1, pagination.currentPage - 1))
                         }
@@ -458,12 +366,13 @@ export function TradingAnalytics() {
                       >
                         <ChevronLeftIcon className="h-4 w-4" />
                       </Button>
-                      <span className="text-sm">
+                      <div className="text-xs text-slate-300 bg-slate-800/50 px-2 py-1 rounded border border-slate-700 min-w-[80px] text-center">
                         Page {pagination.currentPage} of {pagination.pages}
-                      </span>
+                      </div>
                       <Button
                         variant="outline"
                         size="sm"
+                        className="h-8 px-2 border-slate-700 bg-slate-800/30 hover:bg-slate-800 text-slate-300"
                         onClick={() =>
                           setPage(
                             Math.min(
@@ -477,13 +386,13 @@ export function TradingAnalytics() {
                         <ChevronRightIcon className="h-4 w-4" />
                       </Button>
                     </div>
-                  )}
-                </>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+                  </div>
+                )}
+              </>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

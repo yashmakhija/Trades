@@ -15,7 +15,7 @@ import {
 import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -149,10 +149,14 @@ export function Navbar() {
         <div className="hidden md:flex items-center gap-3">
           {user ? (
             <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  className="relative h-9 w-9 rounded-full p-0 overflow-hidden"
+              {/* Fixed trigger to ensure consistent rendering between server and client */}
+              <DropdownMenuTrigger>
+                <button
+                  type="button"
+                  className={cn(
+                    buttonVariants({ variant: "ghost" }),
+                    "relative h-9 w-9 rounded-full p-0 overflow-hidden"
+                  )}
                 >
                   <Avatar className="h-9 w-9 transition-all hover:scale-105 border-2 border-transparent hover:border-primary/50">
                     <AvatarImage
@@ -165,7 +169,7 @@ export function Navbar() {
                       {getUserInitials(user.username)}
                     </AvatarFallback>
                   </Avatar>
-                </Button>
+                </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent
                 align="end"
@@ -230,21 +234,27 @@ export function Navbar() {
             </DropdownMenu>
           ) : (
             <>
-              <Link href="/login">
-                <Button
-                  variant="ghost"
-                  className="hover:bg-primary/10 transition-all duration-300"
-                >
-                  Log In
-                </Button>
+              {/* Fix for hydration error - use Link with button styles instead of Button with asChild */}
+              <Link
+                href="/login"
+                className={cn(
+                  buttonVariants({ variant: "ghost" }),
+                  "hover:bg-primary/10 transition-all duration-300"
+                )}
+              >
+                Log In
               </Link>
-              <Link href="/register">
-                <Button className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 hover:shadow-md hover:shadow-primary/20 transition-all duration-300 group">
-                  <span className="flex items-center">
-                    Get Started
-                    <ArrowRight className="ml-2 h-4 w-4 transition-transform group-hover:translate-x-1" />
-                  </span>
-                </Button>
+              <Link
+                href="/register"
+                className={cn(
+                  buttonVariants({}),
+                  "bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 hover:shadow-md hover:shadow-primary/20 transition-all duration-300 group"
+                )}
+              >
+                <span className="flex items-center">
+                  Get Started
+                  <ArrowRight className="ml-2 h-4 w-4 transition-transform group-hover:translate-x-1" />
+                </span>
               </Link>
             </>
           )}
@@ -335,30 +345,28 @@ export function Navbar() {
                     <Link
                       href="/profile"
                       onClick={() => setMobileMenuOpen(false)}
+                      className={cn(
+                        buttonVariants({ variant: "outline" }),
+                        "w-full justify-start py-5 border-primary/20 hover:bg-primary/5 hover:border-primary/30"
+                      )}
                     >
-                      <Button
-                        variant="outline"
-                        className="w-full justify-start py-5 border-primary/20 hover:bg-primary/5 hover:border-primary/30"
-                      >
-                        <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center mr-3">
-                          <User className="h-4 w-4 text-primary" />
-                        </div>
-                        <span className="font-medium">My Profile</span>
-                      </Button>
+                      <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center mr-3">
+                        <User className="h-4 w-4 text-primary" />
+                      </div>
+                      <span className="font-medium">My Profile</span>
                     </Link>
                     <Link
                       href="/trading"
                       onClick={() => setMobileMenuOpen(false)}
+                      className={cn(
+                        buttonVariants({ variant: "outline" }),
+                        "w-full justify-start py-5 border-primary/20 hover:bg-primary/5 hover:border-primary/30"
+                      )}
                     >
-                      <Button
-                        variant="outline"
-                        className="w-full justify-start py-5 border-primary/20 hover:bg-primary/5 hover:border-primary/30"
-                      >
-                        <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center mr-3">
-                          <BarChart2 className="h-4 w-4 text-primary" />
-                        </div>
-                        <span className="font-medium">Trading Dashboard</span>
-                      </Button>
+                      <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center mr-3">
+                        <BarChart2 className="h-4 w-4 text-primary" />
+                      </div>
+                      <span className="font-medium">Trading Dashboard</span>
                     </Link>
                     <Button
                       variant="outline"
@@ -377,21 +385,26 @@ export function Navbar() {
                 </>
               ) : (
                 <div className="flex flex-col gap-3 pt-2">
-                  <Link href="/login" onClick={() => setMobileMenuOpen(false)}>
-                    <Button
-                      variant="outline"
-                      className="w-full py-6 text-base border-primary/20 hover:bg-primary/5 hover:border-primary/30"
-                    >
-                      Log In
-                    </Button>
+                  {/* Fix for hydration error in mobile menu */}
+                  <Link
+                    href="/login"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className={cn(
+                      buttonVariants({ variant: "outline" }),
+                      "w-full py-6 text-base border-primary/20 hover:bg-primary/5 hover:border-primary/30"
+                    )}
+                  >
+                    Log In
                   </Link>
                   <Link
                     href="/register"
                     onClick={() => setMobileMenuOpen(false)}
+                    className={cn(
+                      buttonVariants({}),
+                      "w-full py-6 text-base bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
+                    )}
                   >
-                    <Button className="w-full py-6 text-base bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700">
-                      Create Account
-                    </Button>
+                    Create Account
                   </Link>
                 </div>
               )}

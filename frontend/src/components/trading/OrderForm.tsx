@@ -15,6 +15,9 @@ import {
 import { DEFAULT_ORDER_QUANTITY } from "@/config";
 import { useSymbolStore, TradingSymbol } from "@/store/use-symbol-store";
 import { fetchSymbols } from "@/services/symbols";
+import { useAuthStore } from "@/store/use-auth-store";
+import Link from "next/link";
+import { LockKeyhole, ArrowRight, ShieldAlert } from "lucide-react";
 
 interface OrderFormProps {
   symbol: string;
@@ -24,6 +27,7 @@ interface OrderFormProps {
 export function OrderForm({ symbol, className = "" }: OrderFormProps) {
   const { tickerData } = useWebSocketStore();
   const { symbols, setSymbols } = useSymbolStore();
+  const { user } = useAuthStore();
 
   // Get symbol ID from the symbols list
   const symbolData = symbols.find(
@@ -84,6 +88,13 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
   // Handle order submission
   const handleSubmitOrder = async () => {
     try {
+      if (!user) {
+        toast.error("Authentication required", {
+          description: "Please log in to place orders",
+        });
+        return;
+      }
+
       if (!symbolData) {
         toast.error("Symbol not found", {
           description: "Unable to find symbol information",
@@ -163,6 +174,96 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
       setIsSubmitting(false);
     }
   };
+
+  // If user is not logged in, show login prompt with improved design
+  if (!user) {
+    return (
+      <Card className={`overflow-hidden shadow-md border-0 ${className}`}>
+        {/* Card header with improved styling */}
+        <CardHeader className="p-4 pb-2 border-b border-slate-800/40 bg-gradient-to-r from-blue-950/30 to-indigo-950/30">
+          <CardTitle className="text-lg font-medium flex items-center gap-2">
+            <ShieldAlert className="h-4 w-4 text-amber-500" />
+            Authentication Required
+          </CardTitle>
+        </CardHeader>
+
+        {/* Content with price display to show user what they're missing */}
+        <CardContent className="p-0">
+          {/* Current price display */}
+          <div className="bg-gradient-to-r from-blue-900/20 to-indigo-900/10 border-b border-slate-800/30 p-4">
+            <div className="flex justify-between items-center">
+              <div>
+                <div className="text-xs text-slate-400">Current Price</div>
+                <div className="text-xl font-bold font-mono text-white">
+                  {currentPrice > 0 ? formattedPrice : "-.--"} USD
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-xs text-slate-400">Trading</div>
+                <div className="text-lg font-semibold text-indigo-400">
+                  {symbol.toUpperCase()}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Login container */}
+          <div className="bg-gradient-to-b from-slate-900/50 to-slate-950/50 p-6 flex flex-col items-center text-center">
+            <div className="w-16 h-16 rounded-full bg-indigo-500/10 flex items-center justify-center mb-3 border border-indigo-500/20">
+              <LockKeyhole className="h-8 w-8 text-indigo-400" />
+            </div>
+
+            <h3 className="text-lg font-medium text-white mb-2">
+              Login to Start Trading
+            </h3>
+
+            <p className="text-slate-400 text-sm mb-6 max-w-sm">
+              Create an account or sign in to access full trading features,
+              including placing orders and tracking your positions.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full">
+              <Link
+                href="/login"
+                className="bg-slate-800 hover:bg-slate-700 text-white shadow-lg hover:shadow-indigo-900/20 inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-all h-10 px-4 py-2 w-full border border-slate-700"
+              >
+                Sign In
+              </Link>
+              <Link
+                href="/register"
+                className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-lg hover:shadow-indigo-900/30 inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-all h-10 px-4 py-2 w-full"
+              >
+                <span className="flex items-center">
+                  Create Account
+                  <ArrowRight className="ml-2 h-4 w-4" />
+                </span>
+              </Link>
+            </div>
+
+            {/* Demo trading features */}
+            <div className="w-full mt-6 grid grid-cols-2 gap-2 text-xs text-slate-400">
+              <div className="flex items-center gap-2 bg-slate-800/30 p-2 rounded-md">
+                <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                <span>Real-time Market Data</span>
+              </div>
+              <div className="flex items-center gap-2 bg-slate-800/30 p-2 rounded-md">
+                <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                <span>Trade Multiple Assets</span>
+              </div>
+              <div className="flex items-center gap-2 bg-slate-800/30 p-2 rounded-md">
+                <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                <span>Advanced Order Types</span>
+              </div>
+              <div className="flex items-center gap-2 bg-slate-800/30 p-2 rounded-md">
+                <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                <span>Portfolio Analytics</span>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card className={`overflow-hidden ${className}`}>

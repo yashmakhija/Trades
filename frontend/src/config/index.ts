@@ -4,9 +4,25 @@
  * This file contains centralized configuration settings for the application.
  */
 
-// API base URL - defaults to localhost in development
-export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+// API base URL - Use environment variable or determine based on hostname
+export const API_BASE_URL = (() => {
+  // If NEXT_PUBLIC_API_URL is set, use it
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL;
+  }
+
+  // In browser environment, determine API URL based on current hostname
+  if (typeof window !== "undefined") {
+    if (window.location.hostname === "localhost") {
+      return "http://localhost:3001";
+    } else if (window.location.hostname === "trade.classicoder.com") {
+      return "https://trade.classicoder.com";
+    }
+  }
+
+  // Default fallback
+  return "http://localhost:3001";
+})();
 
 // WebSocket URL - derived from API base URL
 export const WS_BASE_URL = (() => {

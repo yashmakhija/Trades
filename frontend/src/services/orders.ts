@@ -112,6 +112,64 @@ export async function fetchOrders(): Promise<Order[]> {
 }
 
 /**
+ * Fetch only open orders for the current user
+ */
+export async function fetchOpenOrders(): Promise<Order[]> {
+  try {
+    const response = await apiClient.get<{
+      openOrders: unknown[];
+      closedOrders: unknown[];
+      balance: unknown;
+    }>("/orders");
+
+    // Check if response has the expected structure
+    if (
+      typeof response !== "object" ||
+      response === null ||
+      !("openOrders" in response)
+    ) {
+      console.error("Expected object with openOrders but got:", response);
+      return [];
+    }
+
+    // Get just the open orders
+    const openOrders = response.openOrders;
+
+    // Validate each order in the array
+    const validOrders = openOrders.filter((order): order is Order => {
+      const isValid =
+        typeof order === "object" &&
+        order !== null &&
+        "id" in order &&
+        "symbolId" in order &&
+        "type" in order &&
+        "status" in order;
+
+      if (!isValid) {
+        console.warn("Received invalid order object:", order);
+      }
+
+      return isValid;
+    });
+
+    // Convert price values from integers to floating-point
+    const convertedOrders = validOrders.map((order) => {
+      return {
+        ...order,
+        price: order.price / 100,
+        stopLoss: order.stopLoss ? order.stopLoss / 100 : undefined,
+        takeProfit: order.takeProfit ? order.takeProfit / 100 : undefined,
+      };
+    });
+
+    return convertedOrders;
+  } catch (error) {
+    console.error("Error fetching open orders:", error);
+    return [];
+  }
+}
+
+/**
  * Create a new order
  */
 export async function createOrder(

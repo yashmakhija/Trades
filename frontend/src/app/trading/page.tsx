@@ -274,7 +274,7 @@ function TradingPageContent() {
           </div>
 
           {/* Sidebar */}
-          <div className="space-y-4">
+          <div className="space-y-2 w-full md:w-96 lg:w-[400px]">
             <Card className="shadow-md border-none">
               <CardHeader className="pb-2">
                 <div className="flex justify-between items-center">

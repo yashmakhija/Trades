@@ -46,6 +46,8 @@ async function fetchApi<T>(
   const response = await fetch(url.toString(), {
     ...fetchOptions,
     headers,
+    credentials: "include", // Include credentials for cross-origin requests
+    mode: "cors", // Explicitly set mode to cors
   });
 
   // Handle non-2xx responses
