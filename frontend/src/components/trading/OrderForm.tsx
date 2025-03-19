@@ -50,8 +50,6 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
   const [stopLoss, setStopLoss] = useState<string>("");
   const [takeProfit, setTakeProfit] = useState<string>("");
   const [isLoadingSymbols, setIsLoadingSymbols] = useState<boolean>(true);
-  const [showAdvancedOptions, setShowAdvancedOptions] =
-    useState<boolean>(false);
 
   // Load symbols when component mounts
   useEffect(() => {

@@ -3,7 +3,7 @@ import { devtools } from "zustand/middleware";
 import { useWebSocket } from "@/services/websocket";
 import { useEffect } from "react";
 import { API_BASE_URL } from "@/config";
-
+import { useAuthStore } from "./use-auth-store";
 export interface Position {
   symbol: string;
   quantity: number;
@@ -77,8 +77,13 @@ export const useBalanceStore = create<BalanceState & BalanceActions>()(
 
     fetchBalance: async () => {
       try {
+        const { token } = useAuthStore.getState();
         set({ isLoading: true, error: null });
-        const response = await fetch(`${API_BASE_URL}/api/balance`);
+        const response = await fetch(`${API_BASE_URL}/api/balance`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
         if (!response.ok) {
           throw new Error("Failed to fetch balance");
         }
