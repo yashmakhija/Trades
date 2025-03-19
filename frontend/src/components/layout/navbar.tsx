@@ -150,7 +150,7 @@ export function Navbar() {
           {user ? (
             <DropdownMenu>
               {/* Fixed trigger to ensure consistent rendering between server and client */}
-              <DropdownMenuTrigger>
+              <DropdownMenuTrigger asChild>
                 <button
                   type="button"
                   className={cn(
