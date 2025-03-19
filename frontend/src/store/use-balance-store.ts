@@ -77,19 +77,49 @@ export const useBalanceStore = create<BalanceState & BalanceActions>()(
 
     fetchBalance: async () => {
       try {
-        const { token } = useAuthStore.getState();
+        const { token, isAuthenticated } = useAuthStore.getState();
+
+        if (!token || !isAuthenticated) {
+          set({
+            error: "Authentication required to fetch balance",
+            isLoading: false,
+          });
+          return;
+        }
+
         set({ isLoading: true, error: null });
+
+        console.log(
+          "Fetching balance with token:",
+          token ? "Token exists" : "No token"
+        );
+
         const response = await fetch(`${API_BASE_URL}/api/balance`, {
+          method: "GET",
           headers: {
+            "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
           },
+          credentials: "include",
         });
+
         if (!response.ok) {
-          throw new Error("Failed to fetch balance");
+          console.error(
+            "Balance fetch failed:",
+            response.status,
+            response.statusText
+          );
+          if (response.status === 401) {
+            throw new Error("Authentication failed. Please log in again.");
+          }
+          throw new Error(`Failed to fetch balance: ${response.statusText}`);
         }
+
         const data = await response.json();
+        console.log("Balance data fetched:", data);
         set({ ...data, isLoading: false });
       } catch (error) {
+        console.error("Error fetching balance:", error);
         set({
           error:
             error instanceof Error ? error.message : "Failed to fetch balance",

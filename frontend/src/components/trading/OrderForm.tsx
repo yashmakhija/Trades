@@ -17,7 +17,7 @@ import { DEFAULT_ORDER_QUANTITY } from "@/config";
 import { useSymbolStore, TradingSymbol } from "@/store/use-symbol-store";
 import { fetchSymbols } from "@/services/symbols";
 import { useAuthStore } from "@/store/use-auth-store";
-import { useBalanceStore } from "@/store/use-balance-store";
+import { useBalanceStore, useBalanceSync } from "@/store/use-balance-store";
 import Link from "next/link";
 import { LockKeyhole, ArrowRight, ShieldAlert, Info } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
@@ -32,7 +32,10 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
   const { tickerData } = useWebSocketStore();
   const { symbols, setSymbols } = useSymbolStore();
   const { user, isAuthenticated } = useAuthStore();
-  const { available } = useBalanceStore();
+  const { available, fetchBalance } = useBalanceStore();
+
+  // Enable balance synchronization
+  useBalanceSync();
 
   // Get symbol ID from the symbols list
   const symbolData = symbols.find(
@@ -50,6 +53,13 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
   const [stopLoss, setStopLoss] = useState<string>("");
   const [takeProfit, setTakeProfit] = useState<string>("");
   const [isLoadingSymbols, setIsLoadingSymbols] = useState<boolean>(true);
+
+  // Fetch balance when authenticated
+  useEffect(() => {
+    if (isAuthenticated) {
+      fetchBalance();
+    }
+  }, [isAuthenticated, fetchBalance]);
 
   // Load symbols when component mounts
   useEffect(() => {

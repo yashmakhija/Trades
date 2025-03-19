@@ -92,35 +92,69 @@ export async function registerDemoAccount(
   password: string
 ): Promise<AuthResponse> {
   try {
+    console.log("Auth Service: Registering new demo account...");
     const data = await apiClient.post<AuthResponse>("/auth/register", {
       name,
       email,
       password,
     });
 
+    console.log(
+      "Auth Service: Registration successful, received token:",
+      data.token ? "Token received" : "No token received"
+    );
+    console.log("Auth Service: User data:", {
+      id: data.user.id,
+      email: data.user.email,
+      name: data.user.name,
+    });
+
+    // Store token in localStorage for debugging
+    if (typeof window !== "undefined" && data.token) {
+      console.log("Auth Service: Storing token in localStorage");
+      localStorage.setItem("auth_token", data.token);
+    }
+
     return data;
   } catch (error) {
-    console.error("Error registering demo account:", error);
+    console.error("Auth Service: Registration failed:", error);
     throw error;
   }
 }
 
 /**
- * Login to a demo account
+ * Login to an existing demo account
  */
 export async function loginDemoAccount(
   email: string,
   password: string
 ): Promise<AuthResponse> {
   try {
+    console.log("Auth Service: Logging in user...");
     const data = await apiClient.post<AuthResponse>("/auth/login", {
       email,
       password,
     });
 
+    console.log(
+      "Auth Service: Login successful, received token:",
+      data.token ? "Token received" : "No token received"
+    );
+    console.log("Auth Service: User data:", {
+      id: data.user.id,
+      email: data.user.email,
+      name: data.user.name,
+    });
+
+    // Store token in localStorage for debugging
+    if (typeof window !== "undefined" && data.token) {
+      console.log("Auth Service: Storing token in localStorage");
+      localStorage.setItem("auth_token", data.token);
+    }
+
     return data;
   } catch (error) {
-    console.error("Error logging in to demo account:", error);
+    console.error("Auth Service: Login failed:", error);
     throw error;
   }
 }
@@ -130,11 +164,28 @@ export async function loginDemoAccount(
  */
 export async function createQuickDemoAccount(): Promise<AuthResponse> {
   try {
-    const data = await apiClient.post<AuthResponse>("/auth/demo/quick");
+    console.log("Auth Service: Creating quick demo account...");
+    const data = await apiClient.post<AuthResponse>("/auth/quick-demo", {});
+
+    console.log(
+      "Auth Service: Quick demo creation successful, received token:",
+      data.token ? "Token received" : "No token received"
+    );
+    console.log("Auth Service: User data:", {
+      id: data.user.id,
+      email: data.user.email,
+      name: data.user.name,
+    });
+
+    // Store token in localStorage for debugging
+    if (typeof window !== "undefined" && data.token) {
+      console.log("Auth Service: Storing token in localStorage");
+      localStorage.setItem("auth_token", data.token);
+    }
 
     return data;
   } catch (error) {
-    console.error("Error creating quick demo account:", error);
+    console.error("Auth Service: Quick demo creation failed:", error);
     throw error;
   }
 }

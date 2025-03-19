@@ -124,7 +124,12 @@ function TradingPageContent() {
   // Fetch balance when authenticated
   useEffect(() => {
     if (isAuthenticated) {
+      console.log("Trading page: User is authenticated, fetching balance...");
       fetchBalance();
+    } else {
+      console.log(
+        "Trading page: User is not authenticated, skipping balance fetch"
+      );
     }
   }, [isAuthenticated, fetchBalance]);
 

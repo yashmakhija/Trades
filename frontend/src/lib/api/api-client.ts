@@ -24,13 +24,20 @@ async function fetchApi<T>(
   // Get auth token from store or localStorage
   let token = useAuthStore.getState().token;
 
+  console.log(
+    `API Request to ${endpoint} - Initial token from store:`,
+    token ? "Present" : "Not present"
+  );
+
   // If token is not in store, try to get it from localStorage
   if (!token && typeof window !== "undefined") {
     token = localStorage.getItem("auth_token");
+    console.log(`Token from localStorage:`, token ? "Found" : "Not found");
 
     // If token is found in localStorage but not in store, update the store
     if (token) {
       useAuthStore.getState().setToken(token);
+      console.log(`Updated auth store with token from localStorage`);
     }
   }
 
@@ -41,61 +48,89 @@ async function fetchApi<T>(
   // Add auth token if available
   if (token) {
     headers.set("Authorization", `Bearer ${token}`);
+    console.log(`Added Authorization header with Bearer token`);
+  } else {
+    console.warn(
+      `No authentication token available for request to ${endpoint}`
+    );
   }
 
-  const response = await fetch(url.toString(), {
-    ...fetchOptions,
-    headers,
-    credentials: "include", // Include credentials for cross-origin requests
-    mode: "cors", // Explicitly set mode to cors
-  });
+  const apiUrl = url.toString();
+  console.log(`Sending ${options.method || "GET"} request to ${apiUrl}`);
+  console.log("Request headers:", Object.fromEntries(headers.entries()));
 
-  // Handle non-2xx responses
-  if (!response.ok) {
-    // Handle 401 Unauthorized - token expired or invalid
-    if (response.status === 401) {
-      // Clear auth state
-      useAuthStore.getState().logout();
+  try {
+    const response = await fetch(apiUrl, {
+      ...fetchOptions,
+      headers,
+      credentials: "include", // Include credentials for cross-origin requests
+      mode: "cors", // Explicitly set mode to cors
+    });
 
-      // Remove token from localStorage
-      if (typeof window !== "undefined") {
-        localStorage.removeItem("auth_token");
+    console.log(
+      `Response status for ${endpoint}: ${response.status} ${response.statusText}`
+    );
+
+    // Handle non-2xx responses
+    if (!response.ok) {
+      // Handle 401 Unauthorized - token expired or invalid
+      if (response.status === 401) {
+        console.warn(`Authentication failed (401) for ${endpoint}`);
+        // Clear auth state
+        useAuthStore.getState().logout();
+
+        // Remove token from localStorage
+        if (typeof window !== "undefined") {
+          localStorage.removeItem("auth_token");
+        }
+
+        throw new Error("Your session has expired. Please log in again.");
       }
 
-      throw new Error("Your session has expired. Please log in again.");
+      try {
+        const errorData = await response.json();
+        console.error(`API Error response body:`, errorData);
+
+        const errorMessage =
+          errorData.error ||
+          errorData.message ||
+          errorData.detail ||
+          `Request failed with status ${response.status}`;
+
+        console.error("API Error:", {
+          status: response.status,
+          endpoint,
+          errorData,
+        });
+
+        throw new Error(errorMessage);
+      } catch (jsonError) {
+        // If JSON parsing fails, use status text
+        console.error("API Error (non-JSON):", {
+          status: response.status,
+          statusText: response.statusText,
+          endpoint,
+        });
+
+        throw new Error(
+          `Request failed: ${response.statusText || response.status}`
+        );
+      }
     }
 
+    // Parse JSON response
     try {
-      const errorData = await response.json();
-      const errorMessage =
-        errorData.error ||
-        errorData.message ||
-        errorData.detail ||
-        `Request failed with status ${response.status}`;
-
-      console.error("API Error:", {
-        status: response.status,
-        endpoint,
-        errorData,
-      });
-
-      throw new Error(errorMessage);
+      const data = await response.json();
+      console.log(`Successfully received response from ${endpoint}`);
+      return data;
     } catch (jsonError) {
-      // If JSON parsing fails, use status text
-      console.error("API Error (non-JSON):", {
-        status: response.status,
-        statusText: response.statusText,
-        endpoint,
-      });
-
-      throw new Error(
-        `Request failed: ${response.statusText || response.status}`
-      );
+      console.error(`Error parsing JSON response from ${endpoint}:`, jsonError);
+      throw new Error("Invalid JSON response");
     }
+  } catch (fetchError) {
+    console.error(`Network error for ${endpoint}:`, fetchError);
+    throw fetchError;
   }
-
-  // Parse JSON response
-  return response.json();
 }
 
 export const apiClient = {
