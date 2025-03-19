@@ -33,9 +33,13 @@ import {
   ChevronUp,
   Eye,
   EyeOff,
+  Wallet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
+import { formatCurrency } from "@/lib/utils";
+import { useBalanceStore, useBalanceSync } from "@/store/use-balance-store";
+import { useAuthStore } from "@/store/use-auth-store";
 
 // Create a wrapper component to handle search params
 function TradingPageContent() {
@@ -53,6 +57,18 @@ function TradingPageContent() {
   const [isAnalyticsExpanded, setIsAnalyticsExpanded] = useState(false);
   const [sidebarView, setSidebarView] = useState<"orders" | "form">("form");
   const [showDebugPanel, setShowDebugPanel] = useState(false);
+
+  // User balance state
+  const {
+    total,
+    available,
+    isLoading: balanceLoading,
+    fetchBalance,
+  } = useBalanceStore();
+  const { isAuthenticated } = useAuthStore();
+
+  // Set up balance synchronization with WebSocket
+  useBalanceSync();
 
   // Use the WebSocket hook
   const {
@@ -104,6 +120,13 @@ function TradingPageContent() {
     console.log("TradingPage: Initializing WebSocket connection");
     connect();
   }, [connect]);
+
+  // Fetch balance when authenticated
+  useEffect(() => {
+    if (isAuthenticated) {
+      fetchBalance();
+    }
+  }, [isAuthenticated, fetchBalance]);
 
   // Handle symbol changes and ensure proper subscription
   useEffect(() => {
@@ -165,7 +188,24 @@ function TradingPageContent() {
             <ConnectionStatus />
           </div>
 
-          <div className="flex items-center gap-2 w-full md:w-auto">
+          <div className="flex flex-col md:flex-row items-center gap-3 w-full md:w-auto">
+            {/* User Balance Display */}
+            {isAuthenticated ? (
+              <div className="flex items-center gap-2 text-sm bg-muted/40 px-3 py-1.5 rounded-md">
+                <Wallet className="h-4 w-4" />
+                {balanceLoading ? (
+                  <Skeleton className="h-4 w-24" />
+                ) : (
+                  <div className="flex flex-col">
+                    <span className="font-medium">{formatCurrency(total)}</span>
+                    <span className="text-xs text-muted-foreground">
+                      Available: {formatCurrency(available)}
+                    </span>
+                  </div>
+                )}
+              </div>
+            ) : null}
+
             <div className="w-full md:w-64">
               <SymbolSelector />
             </div>

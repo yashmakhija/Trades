@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
 import {
   createOrder,
@@ -16,8 +17,11 @@ import { DEFAULT_ORDER_QUANTITY } from "@/config";
 import { useSymbolStore, TradingSymbol } from "@/store/use-symbol-store";
 import { fetchSymbols } from "@/services/symbols";
 import { useAuthStore } from "@/store/use-auth-store";
+import { useBalanceStore } from "@/store/use-balance-store";
 import Link from "next/link";
-import { LockKeyhole, ArrowRight, ShieldAlert } from "lucide-react";
+import { LockKeyhole, ArrowRight, ShieldAlert, Info } from "lucide-react";
+import { formatCurrency } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
 
 interface OrderFormProps {
   symbol: string;
@@ -27,7 +31,8 @@ interface OrderFormProps {
 export function OrderForm({ symbol, className = "" }: OrderFormProps) {
   const { tickerData } = useWebSocketStore();
   const { symbols, setSymbols } = useSymbolStore();
-  const { user } = useAuthStore();
+  const { user, isAuthenticated } = useAuthStore();
+  const { available } = useBalanceStore();
 
   // Get symbol ID from the symbols list
   const symbolData = symbols.find(
@@ -45,6 +50,8 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
   const [stopLoss, setStopLoss] = useState<string>("");
   const [takeProfit, setTakeProfit] = useState<string>("");
   const [isLoadingSymbols, setIsLoadingSymbols] = useState<boolean>(true);
+  const [showAdvancedOptions, setShowAdvancedOptions] =
+    useState<boolean>(false);
 
   // Load symbols when component mounts
   useEffect(() => {
@@ -85,10 +92,14 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
     return priceValue * quantityValue;
   };
 
+  // Check if user has enough balance
+  const orderCost = calculateTotal();
+  const hasEnoughBalance = available >= orderCost;
+
   // Handle order submission
   const handleSubmitOrder = async () => {
     try {
-      if (!user) {
+      if (!isAuthenticated) {
         toast.error("Authentication required", {
           description: "Please log in to place orders",
         });
@@ -102,74 +113,135 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
         return;
       }
 
-      setIsSubmitting(true);
-
-      // Validate inputs
-      if (!quantity || parseFloat(quantity) <= 0) {
-        toast.error("Invalid quantity", {
-          description: "Please enter a valid quantity greater than 0",
+      if (!price || isNaN(parseFloat(price)) || parseFloat(price) <= 0) {
+        toast.error("Invalid price", {
+          description: "Please enter a valid price",
         });
         return;
       }
 
-      if (orderType === "limit" && (!price || parseFloat(price) <= 0)) {
-        toast.error("Invalid price", {
-          description: "Please enter a valid price greater than 0",
+      if (
+        !quantity ||
+        isNaN(parseFloat(quantity)) ||
+        parseFloat(quantity) <= 0
+      ) {
+        toast.error("Invalid quantity", {
+          description: "Please enter a valid quantity",
         });
         return;
+      }
+
+      // Check balance
+      if (!hasEnoughBalance) {
+        toast.error("Insufficient balance", {
+          description: `You need ${formatCurrency(
+            orderCost
+          )} to place this order`,
+        });
+        return;
+      }
+
+      setIsSubmitting(true);
+
+      // Process stop loss and take profit
+      let stopLossValue: number | undefined = undefined;
+      let takeProfitValue: number | undefined = undefined;
+
+      if (
+        stopLoss &&
+        !isNaN(parseFloat(stopLoss)) &&
+        parseFloat(stopLoss) > 0
+      ) {
+        stopLossValue = parseFloat(stopLoss);
+      }
+
+      if (
+        takeProfit &&
+        !isNaN(parseFloat(takeProfit)) &&
+        parseFloat(takeProfit) > 0
+      ) {
+        takeProfitValue = parseFloat(takeProfit);
+      }
+
+      // Validate stop loss and take profit based on order side
+      if (orderSide === "BUY") {
+        if (stopLossValue && stopLossValue >= parseFloat(price)) {
+          toast.error(
+            "Stop loss must be lower than the entry price for buy orders"
+          );
+          setIsSubmitting(false);
+          return;
+        }
+
+        if (takeProfitValue && takeProfitValue <= parseFloat(price)) {
+          toast.error(
+            "Take profit must be higher than the entry price for buy orders"
+          );
+          setIsSubmitting(false);
+          return;
+        }
+      } else {
+        // SELL order
+        if (stopLossValue && stopLossValue <= parseFloat(price)) {
+          toast.error(
+            "Stop loss must be higher than the entry price for sell orders"
+          );
+          setIsSubmitting(false);
+          return;
+        }
+
+        if (takeProfitValue && takeProfitValue >= parseFloat(price)) {
+          toast.error(
+            "Take profit must be lower than the entry price for sell orders"
+          );
+          setIsSubmitting(false);
+          return;
+        }
       }
 
       // Parse values as floating point
       const priceValue = parseFloat(price);
       const quantityValue = parseFloat(quantity);
-      const stopLossValue = stopLoss ? parseFloat(stopLoss) : undefined;
-      const takeProfitValue = takeProfit ? parseFloat(takeProfit) : undefined;
 
       console.log("Order values before conversion:", {
-        price: priceValue,
-        stopLoss: stopLossValue,
-        takeProfit: takeProfitValue,
-      });
-
-      // Prepare order data
-      const orderData = {
         symbolId: symbolData.id,
         type: orderSide,
         price: priceValue,
         quantity: quantityValue,
-        isShort: false,
+        isShort: orderSide === "SELL",
         stopLoss: stopLossValue,
         takeProfit: takeProfitValue,
-      };
-
-      // Send order to API using the service
-      // The createOrder function will handle conversion to integers for the backend
-      const createdOrder = await createOrder(orderData);
-
-      console.log("Order created successfully:", createdOrder);
-
-      // Reset form
-      setQuantity(DEFAULT_ORDER_QUANTITY.toString());
-      if (orderType === "limit") {
-        setPrice("");
-      }
-      setStopLoss("");
-      setTakeProfit("");
-
-      // Show success message
-      toast.success("Order placed successfully", {
-        description: `${orderSide} ${quantity} ${symbol
-          .slice(0, -4)
-          .toUpperCase()} at ${
-          orderType === "market" ? "market price" : `$${price}`
-        }`,
       });
+
+      const response = await createOrder({
+        symbolId: symbolData.id,
+        type: orderSide,
+        price: priceValue,
+        quantity: quantityValue,
+        isShort: orderSide === "SELL",
+        stopLoss: stopLossValue,
+        takeProfit: takeProfitValue,
+      });
+
+      if (response) {
+        console.log("Order created successfully:", response);
+        toast.success("Order placed successfully", {
+          description: `${orderSide} ${quantity} ${symbol
+            .slice(0, -4)
+            .toUpperCase()} at ${formatCurrency(priceValue)}`,
+        });
+
+        // Reset form for stop loss and take profit
+        setStopLoss("");
+        setTakeProfit("");
+      }
     } catch (error) {
       console.error("Error placing order:", error);
-      toast.error("Failed to place order", {
-        description:
-          error instanceof Error ? error.message : "Unknown error occurred",
-      });
+      toast.error(
+        `Error placing order: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -371,6 +443,48 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
             <span className="font-medium">
               {calculateTotal().toFixed(2)} {symbol.slice(-4).toUpperCase()}
             </span>
+          </div>
+
+          {/* Order Preview Section */}
+          <div className="mt-4 p-3 bg-muted/40 rounded-md">
+            <div className="text-sm font-medium mb-2">Order Preview</div>
+            <Separator className="mb-3" />
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Order Value:</span>
+                <span className="font-medium">{formatCurrency(orderCost)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">
+                  Available Balance:
+                </span>
+                <span className="font-medium">{formatCurrency(available)}</span>
+              </div>
+
+              {!hasEnoughBalance && (
+                <div className="flex items-center gap-2 mt-2 text-destructive text-xs">
+                  <ShieldAlert className="h-4 w-4" />
+                  <span>Insufficient balance for this order</span>
+                </div>
+              )}
+
+              {stopLoss && takeProfit && (
+                <div className="flex items-center gap-2 mt-2 text-muted-foreground text-xs">
+                  <Info className="h-4 w-4" />
+                  <span>Stop Loss and Take Profit will be set</span>
+                </div>
+              )}
+
+              {orderSide === "BUY" ? (
+                <Badge className="mt-2 bg-green-600">
+                  BUY {quantity} {symbol.toUpperCase()}
+                </Badge>
+              ) : (
+                <Badge variant="destructive" className="mt-2">
+                  SELL {quantity} {symbol.toUpperCase()}
+                </Badge>
+              )}
+            </div>
           </div>
 
           {/* Submit button */}
