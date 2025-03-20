@@ -16,7 +16,6 @@ import {
   CardTitle,
   CardDescription,
 } from "@/components/ui/card";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Typography } from "@/components/ui/typography";
 import { useWebSocket } from "@/services/websocket";
 import { Toaster } from "sonner";
@@ -25,9 +24,6 @@ import { fetchSymbols } from "@/services/marketData";
 import { TradingAnalytics } from "@/components/trading/TradingAnalytics";
 import { Button } from "@/components/ui/button";
 import {
-  LineChart,
-  BookOpen,
-  ListOrdered,
   BarChart4,
   ChevronDown,
   ChevronUp,
@@ -52,7 +48,6 @@ function TradingPageContent() {
   );
 
   // State for active tab and UI controls
-  const [activeTab, setActiveTab] = useState("chart");
   const [showDebug, setShowDebug] = useState(false);
   const [isAnalyticsExpanded, setIsAnalyticsExpanded] = useState(false);
   const [sidebarView, setSidebarView] = useState<"orders" | "form">("form");
@@ -249,72 +244,21 @@ function TradingPageContent() {
 
             {/* Chart and data tabs */}
             <Card className="overflow-hidden border-none shadow-md">
-              <Tabs
-                value={activeTab}
-                onValueChange={setActiveTab}
-                className="w-full"
-              >
-                <CardHeader className="pb-0">
-                  <div className="flex justify-between items-center">
-                    <CardTitle className="text-xl">
-                      {selectedSymbol.toUpperCase()} Market Data
-                    </CardTitle>
-                    <TabsList>
-                      <TabsTrigger
-                        value="chart"
-                        className="flex items-center gap-1"
-                      >
-                        <LineChart className="h-4 w-4" />
-                        <span className="hidden sm:inline">Chart</span>
-                      </TabsTrigger>
-                      <TabsTrigger
-                        value="orderbook"
-                        className="flex items-center gap-1"
-                      >
-                        <BookOpen className="h-4 w-4" />
-                        <span className="hidden sm:inline">Order Book</span>
-                      </TabsTrigger>
-                      <TabsTrigger
-                        value="trades"
-                        className="flex items-center gap-1"
-                      >
-                        <ListOrdered className="h-4 w-4" />
-                        <span className="hidden sm:inline">Trades</span>
-                      </TabsTrigger>
-                    </TabsList>
-                  </div>
-                </CardHeader>
+              <CardHeader className="pb-0">
+                <div className="flex justify-between items-center">
+                  <CardTitle className="text-xl">
+                    {selectedSymbol.toUpperCase()} Chart
+                  </CardTitle>
+                </div>
+              </CardHeader>
 
-                <CardContent className="pt-4">
-                  <TabsContent value="chart" className="mt-0">
-                    <PriceChart
-                      symbol={selectedSymbol}
-                      height={500}
-                      useMockData={false} // Use real data from backend
-                    />
-                  </TabsContent>
-
-                  <TabsContent value="orderbook" className="mt-0">
-                    <div className="flex items-center justify-center h-[500px] text-muted-foreground">
-                      <div className="text-center">
-                        <BookOpen className="h-12 w-12 mx-auto mb-2 text-muted-foreground/50" />
-                        <p>Order book will be implemented in a future update</p>
-                      </div>
-                    </div>
-                  </TabsContent>
-
-                  <TabsContent value="trades" className="mt-0">
-                    <div className="flex items-center justify-center h-[500px] text-muted-foreground">
-                      <div className="text-center">
-                        <ListOrdered className="h-12 w-12 mx-auto mb-2 text-muted-foreground/50" />
-                        <p>
-                          Recent trades will be implemented in a future update
-                        </p>
-                      </div>
-                    </div>
-                  </TabsContent>
-                </CardContent>
-              </Tabs>
+              <CardContent className="pt-4">
+                <PriceChart
+                  symbol={selectedSymbol}
+                  height={500}
+                  useMockData={false} // Use real data from backend
+                />
+              </CardContent>
             </Card>
           </div>
 

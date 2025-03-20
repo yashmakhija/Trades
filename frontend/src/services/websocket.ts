@@ -694,116 +694,155 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
             message.data &&
             typeof message.data === "object"
           ) {
-            // Ensure time is in seconds for lightweight-charts
-            let normalizedTime: number;
-            const rawTime = message.data.time;
+            console.log(
+              `Received OHLCV_UPDATE for ${message.symbol}/${message.timeframe}:`,
+              message.data
+            );
 
-            // Convert time to a proper timestamp number in seconds
-            if (typeof rawTime === "number") {
-              // Convert milliseconds to seconds if needed
-              normalizedTime =
-                rawTime > 10000000000 ? Math.floor(rawTime / 1000) : rawTime;
-            } else if (typeof rawTime === "string") {
-              // Convert string date to seconds
-              normalizedTime = Math.floor(new Date(rawTime).getTime() / 1000);
-            } else {
-              console.warn("Invalid candle time format:", rawTime);
-              break; // Skip this update if time format is invalid
-            }
+            try {
+              // Ensure time is in seconds for lightweight-charts
+              let normalizedTime: number;
 
-            const candle: CandleData = {
-              time: normalizedTime,
-              open: message.data.open,
-              high: message.data.high,
-              low: message.data.low,
-              close: message.data.close,
-              volume: message.data.volume,
-            };
+              // Check for timestamp in different formats
+              const rawTime = message.data.time || message.data.timestamp;
 
-            set((state) => {
-              const symbol = message.symbol!.toLowerCase();
-              const timeframe = message.timeframe!;
-
-              // First, update the 1m candle data
-              const symbolCandles = state.candleData[symbol] || {};
-              const timeframeCandles = symbolCandles[timeframe] || [];
-
-              // Check if this candle already exists (same timestamp)
-              const existingIndex = timeframeCandles.findIndex((c) => {
-                let existingTime: number;
-                if (typeof c.time === "number") {
-                  existingTime =
-                    c.time > 10000000000 ? Math.floor(c.time / 1000) : c.time;
-                } else if (typeof c.time === "string") {
-                  existingTime = Math.floor(new Date(c.time).getTime() / 1000);
-                } else {
-                  existingTime = 0;
-                }
-                return existingTime === normalizedTime;
-              });
-
-              let updatedCandles;
-              if (existingIndex >= 0) {
-                // Update existing candle
-                updatedCandles = [...timeframeCandles];
-                updatedCandles[existingIndex] = candle;
+              // Convert time to a proper timestamp number in seconds
+              if (typeof rawTime === "number") {
+                // Convert milliseconds to seconds if needed (timestamps over 10000000000 are in milliseconds)
+                normalizedTime =
+                  rawTime > 10000000000 ? Math.floor(rawTime / 1000) : rawTime;
+              } else if (typeof rawTime === "string") {
+                // Convert string date to seconds
+                normalizedTime = Math.floor(new Date(rawTime).getTime() / 1000);
+              } else if (rawTime instanceof Date) {
+                // Handle Date object
+                normalizedTime = Math.floor(rawTime.getTime() / 1000);
               } else {
-                // Add new candle
-                updatedCandles = [...timeframeCandles, candle].sort((a, b) => {
-                  let timeA: number;
-                  if (typeof a.time === "number") {
-                    timeA = a.time;
-                  } else if (typeof a.time === "string") {
-                    timeA = Math.floor(new Date(a.time).getTime() / 1000);
-                  } else {
-                    timeA = 0;
-                  }
-
-                  let timeB: number;
-                  if (typeof b.time === "number") {
-                    timeB = b.time;
-                  } else if (typeof b.time === "string") {
-                    timeB = Math.floor(new Date(b.time).getTime() / 1000);
-                  } else {
-                    timeB = 0;
-                  }
-
-                  return timeA - timeB;
-                });
+                console.warn("Invalid candle time format:", rawTime);
+                break; // Skip this update if time format is invalid
               }
 
-              // Create a new state object with updated 1m candles
-              const newCandleData = {
-                ...state.candleData,
-                [symbol]: {
-                  ...symbolCandles,
-                  [timeframe]: updatedCandles,
-                },
+              // Verify we have a valid number
+              if (isNaN(normalizedTime) || normalizedTime <= 0) {
+                console.warn(
+                  `Invalid normalized time: ${normalizedTime} from raw time: ${rawTime}`
+                );
+                break;
+              }
+
+              console.log(
+                `Normalized time: ${normalizedTime}, raw time was:`,
+                rawTime
+              );
+
+              // Normalize numerical values for the candle
+              const normalizeValue = (value: unknown): number => {
+                if (typeof value === "number") {
+                  return value;
+                }
+                if (typeof value === "string") {
+                  return parseFloat(value);
+                }
+                return 0;
               };
 
-              // Now update all other timeframes that are subscribed for this symbol
-              const subscribedTimeframes = state.subscribedCandles.get(symbol);
-              if (subscribedTimeframes && timeframe === "1m") {
-                // Only aggregate from 1m candles
-                subscribedTimeframes.forEach((tf) => {
-                  if (tf !== "1m") {
-                    const existingTfCandles =
-                      (newCandleData[symbol] && newCandleData[symbol][tf]) ||
-                      [];
-                    const { updatedCandles: aggregatedCandles } =
-                      aggregateCandle(candle, tf, existingTfCandles);
+              const candle: CandleData = {
+                time: normalizedTime,
+                open: normalizeValue(message.data.open),
+                high: normalizeValue(message.data.high),
+                low: normalizeValue(message.data.low),
+                close: normalizeValue(message.data.close),
+                volume: normalizeValue(message.data.volume),
+              };
 
-                    // Update the timeframe data
-                    if (!newCandleData[symbol]) {
-                      newCandleData[symbol] = {};
-                    }
-                    newCandleData[symbol][tf] = aggregatedCandles;
+              console.log(
+                "Processed candle data with time",
+                candle.time,
+                "and close",
+                candle.close
+              );
+
+              set((state) => {
+                // Convert timeframe from backend format to frontend format
+                const symbol = message.symbol!.toLowerCase();
+                let timeframe: string;
+
+                // Map backend timeframe enum to frontend timeframe string
+                switch (message.timeframe) {
+                  case "ONE_MINUTE":
+                    timeframe = "1m";
+                    break;
+                  case "FIVE_MINUTES":
+                    timeframe = "5m";
+                    break;
+                  case "FIFTEEN_MINUTES":
+                    timeframe = "15m";
+                    break;
+                  case "THIRTY_MINUTES":
+                    timeframe = "30m";
+                    break;
+                  case "ONE_HOUR":
+                    timeframe = "1h";
+                    break;
+                  case "FOUR_HOURS":
+                    timeframe = "4h";
+                    break;
+                  case "ONE_DAY":
+                    timeframe = "1d";
+                    break;
+                  default:
+                    timeframe = message.timeframe!.toLowerCase();
+                }
+
+                // Get current candles for this symbol+timeframe
+                const symbolCandles = state.candleData[symbol] || {};
+                const timeframeCandles = symbolCandles[timeframe] || [];
+
+                // Check if this candle already exists (same timestamp)
+                const existingIndex = timeframeCandles.findIndex(
+                  (c: CandleData) => {
+                    const cTime = typeof c.time === "number" ? c.time : 0;
+                    return cTime === normalizedTime;
                   }
-                });
-              }
+                );
 
-              return { candleData: newCandleData };
-            });
+                let updatedCandles;
+                if (existingIndex >= 0) {
+                  // Update existing candle
+                  updatedCandles = [...timeframeCandles];
+                  updatedCandles[existingIndex] = candle;
+                } else {
+                  // Add new candle
+                  updatedCandles = [...timeframeCandles, candle];
+
+                  // Sort by time
+                  updatedCandles.sort((a, b) => {
+                    const timeA = typeof a.time === "number" ? a.time : 0;
+                    const timeB = typeof b.time === "number" ? b.time : 0;
+                    return timeA - timeB;
+                  });
+
+                  // Limit to maximum 300 candles to prevent memory issues
+                  if (updatedCandles.length > 300) {
+                    updatedCandles = updatedCandles.slice(
+                      updatedCandles.length - 300
+                    );
+                  }
+                }
+
+                return {
+                  candleData: {
+                    ...state.candleData,
+                    [symbol]: {
+                      ...symbolCandles,
+                      [timeframe]: updatedCandles,
+                    },
+                  },
+                };
+              });
+            } catch (error) {
+              console.error("Error processing OHLCV_UPDATE:", error);
+            }
           }
           break;
 
@@ -1276,93 +1315,4 @@ export function useWebSocket() {
     activeTimeframe,
     lastHeartbeat,
   };
-}
-
-// Add a helper function to aggregate candles
-function aggregateCandle(
-  candle: CandleData,
-  timeframe: string,
-  existingCandles: CandleData[]
-): { updatedCandles: CandleData[]; isNewCandle: boolean } {
-  // Skip if candle time is invalid
-  if (typeof candle.time !== "number") {
-    console.warn("Invalid candle time format for aggregation:", candle.time);
-    return { updatedCandles: existingCandles, isNewCandle: false };
-  }
-
-  // Determine interval in minutes
-  let intervalMinutes = 1;
-  switch (timeframe) {
-    case "5m":
-      intervalMinutes = 5;
-      break;
-    case "15m":
-      intervalMinutes = 15;
-      break;
-    case "30m":
-      intervalMinutes = 30;
-      break;
-    case "1h":
-      intervalMinutes = 60;
-      break;
-    case "4h":
-      intervalMinutes = 240;
-      break;
-    case "1d":
-      intervalMinutes = 1440;
-      break;
-    case "1w":
-      intervalMinutes = 10080;
-      break;
-    default:
-      return { updatedCandles: existingCandles, isNewCandle: false }; // Skip aggregation for 1m
-  }
-
-  // Calculate the interval start time
-  const candleTimeMs = candle.time * 1000; // Convert seconds to milliseconds
-  const intervalMs = intervalMinutes * 60 * 1000;
-  const intervalStart = Math.floor(candleTimeMs / intervalMs) * intervalMs;
-  const intervalStartSec = Math.floor(intervalStart / 1000);
-
-  // Find if we already have a candle for this interval
-  const existingIndex = existingCandles.findIndex(
-    (c) => typeof c.time === "number" && Math.floor(c.time) === intervalStartSec
-  );
-
-  // Clone the candles array to avoid mutating the original
-  const updatedCandles = [...existingCandles];
-  let isNewCandle = false;
-
-  if (existingIndex >= 0) {
-    // Update existing candle
-    const existingCandle = updatedCandles[existingIndex];
-    updatedCandles[existingIndex] = {
-      time: intervalStartSec,
-      open: existingCandle.open, // Keep original open
-      high: Math.max(existingCandle.high, candle.high),
-      low: Math.min(existingCandle.low, candle.low),
-      close: candle.close, // Update close to latest
-      volume: existingCandle.volume + candle.volume, // Accumulate volume
-    };
-  } else {
-    // Create new candle for this interval
-    updatedCandles.push({
-      time: intervalStartSec,
-      open: candle.open,
-      high: candle.high,
-      low: candle.low,
-      close: candle.close,
-      volume: candle.volume,
-    });
-    isNewCandle = true;
-
-    // Sort candles by time
-    updatedCandles.sort((a, b) => {
-      const timeA = typeof a.time === "number" ? a.time : 0;
-      const timeB = typeof b.time === "number" ? b.time : 0;
-      return timeA - timeB;
-    });
-  }
-
-  return { updatedCandles, isNewCandle };
 }

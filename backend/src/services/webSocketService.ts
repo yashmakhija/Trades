@@ -659,11 +659,39 @@ class WebSocketService {
   ): void {
     if (!this.wss) return;
 
+    // Format data for frontend consumption
+    // Make sure we're sending properly formatted data that the chart can understand
+    const formattedData = {
+      ...data,
+      // Ensure price fields are sent as numbers, not strings
+      open: typeof data.open === "number" ? data.open : parseFloat(data.open),
+      high: typeof data.high === "number" ? data.high : parseFloat(data.high),
+      low: typeof data.low === "number" ? data.low : parseFloat(data.low),
+      close:
+        typeof data.close === "number" ? data.close : parseFloat(data.close),
+      volume:
+        typeof data.volume === "number" ? data.volume : parseFloat(data.volume),
+      // Make sure time is in the expected format for the frontend
+      time:
+        typeof data.time === "number"
+          ? data.time
+          : new Date(data.time).getTime(),
+    };
+
+    // Log sample data periodically for debugging
+    if (Math.random() < 0.01) {
+      // Log roughly 1% of updates to avoid log spam
+      console.log(
+        `Sample OHLCV update for ${symbol}/${timeframe}:`,
+        formattedData
+      );
+    }
+
     const message = JSON.stringify({
       type: "OHLCV_UPDATE",
       symbol,
       timeframe,
-      data,
+      data: formattedData,
     });
 
     this.clients.forEach((client) => {
@@ -676,7 +704,7 @@ class WebSocketService {
 
         // Update balance manager with new price if client has positions
         if (client.userId && client.isAuthenticated) {
-          balanceManager.updateSymbolPrice(symbol, data.close);
+          balanceManager.updateSymbolPrice(symbol, formattedData.close);
         }
       }
     });
