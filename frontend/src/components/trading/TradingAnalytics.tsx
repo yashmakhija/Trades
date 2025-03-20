@@ -30,7 +30,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { Order, cancelOrder, exitOrder } from "@/services/orders";
+import { Order } from "@/services/orders";
 import { Trade } from "@/services/analytics";
 import Link from "next/link";
 import { toast } from "sonner";
@@ -61,14 +61,16 @@ export function TradingAnalytics() {
   const {
     openOrders,
     isLoading: ordersIsLoading,
+    isExiting,
     fetchOpenOrders,
+    cancelOrder: cancelOrderAction,
+    exitOrder: exitOrderAction,
   } = useOrdersStore();
 
   // State for exit order dialog
   const [exitDialogOpen, setExitDialogOpen] = useState(false);
   const [orderToExit, setOrderToExit] = useState<Order | null>(null);
   const [exitPrice, setExitPrice] = useState("");
-  const [isExiting, setIsExiting] = useState(false);
 
   useEffect(() => {
     // Only fetch data if user is authenticated
@@ -139,14 +141,13 @@ export function TradingAnalytics() {
   // Handle order cancellation
   const handleCancelOrder = async (orderId: string) => {
     try {
-      await cancelOrder(orderId);
+      const success = await cancelOrderAction(orderId);
 
-      // Refresh open orders list
-      fetchOpenOrders();
-
-      toast.success("Order cancelled successfully", {
-        description: "Your order has been cancelled",
-      });
+      if (success) {
+        toast.success("Order cancelled successfully", {
+          description: "Your order has been cancelled",
+        });
+      }
     } catch (error) {
       console.error("Error cancelling order:", error);
       toast.error("Failed to cancel order", {
@@ -169,30 +170,29 @@ export function TradingAnalytics() {
     if (!orderToExit || !exitPrice) return;
 
     try {
-      setIsExiting(true);
+      const success = await exitOrderAction(
+        orderToExit.id,
+        parseFloat(exitPrice)
+      );
 
-      // Use the dedicated exitOrder service
-      await exitOrder(orderToExit.id, parseFloat(exitPrice));
+      if (success) {
+        // Close dialog
+        setExitDialogOpen(false);
+        setOrderToExit(null);
+        setExitPrice("");
 
-      // Refresh orders after exit
-      fetchOpenOrders();
-      fetchTradeHistory();
+        // Refresh trade history as well to show new closed position
+        fetchTradeHistory();
 
-      // Close dialog
-      setExitDialogOpen(false);
-      setOrderToExit(null);
-      setExitPrice("");
-
-      toast.success("Order exited successfully", {
-        description: "Your position has been closed",
-      });
+        toast.success("Order exited successfully", {
+          description: "Your position has been closed",
+        });
+      }
     } catch (error) {
       console.error("Error exiting order:", error);
       toast.error("Failed to exit order", {
         description: error instanceof Error ? error.message : "Unknown error",
       });
-    } finally {
-      setIsExiting(false);
     }
   };
 
