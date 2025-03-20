@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useAnalyticsStore } from "@/store/use-analytics-store";
 import { useOrdersStore } from "@/store/use-orders-store";
 import { useAuthStore } from "@/store/use-auth-store";
@@ -17,6 +17,8 @@ import {
   FileClock,
   Coins,
   LockKeyhole,
+  X,
+  DollarSign,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -28,9 +30,19 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { Order } from "@/services/orders";
+import { Order, cancelOrder, exitOrder } from "@/services/orders";
 import { Trade } from "@/services/analytics";
 import Link from "next/link";
+import { toast } from "sonner";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 
 export function TradingAnalytics() {
   // Get authentication state
@@ -51,6 +63,12 @@ export function TradingAnalytics() {
     isLoading: ordersIsLoading,
     fetchOpenOrders,
   } = useOrdersStore();
+
+  // State for exit order dialog
+  const [exitDialogOpen, setExitDialogOpen] = useState(false);
+  const [orderToExit, setOrderToExit] = useState<Order | null>(null);
+  const [exitPrice, setExitPrice] = useState("");
+  const [isExiting, setIsExiting] = useState(false);
 
   useEffect(() => {
     // Only fetch data if user is authenticated
@@ -115,6 +133,66 @@ export function TradingAnalytics() {
     // Low value coins - more decimals
     else {
       return value.toFixed(8);
+    }
+  };
+
+  // Handle order cancellation
+  const handleCancelOrder = async (orderId: string) => {
+    try {
+      await cancelOrder(orderId);
+
+      // Refresh open orders list
+      fetchOpenOrders();
+
+      toast.success("Order cancelled successfully", {
+        description: "Your order has been cancelled",
+      });
+    } catch (error) {
+      console.error("Error cancelling order:", error);
+      toast.error("Failed to cancel order", {
+        description: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  };
+
+  // Handle opening the exit order dialog
+  const handleExitOrderClick = (order: Order) => {
+    setOrderToExit(order);
+    // Initialize exit price with current market price if available
+    // or with the order's price as fallback
+    setExitPrice(order.price.toString());
+    setExitDialogOpen(true);
+  };
+
+  // Handle exit order submission
+  const handleExitOrderSubmit = async () => {
+    if (!orderToExit || !exitPrice) return;
+
+    try {
+      setIsExiting(true);
+
+      // Use the dedicated exitOrder service
+      await exitOrder(orderToExit.id, parseFloat(exitPrice));
+
+      // Refresh orders after exit
+      fetchOpenOrders();
+      fetchTradeHistory();
+
+      // Close dialog
+      setExitDialogOpen(false);
+      setOrderToExit(null);
+      setExitPrice("");
+
+      toast.success("Order exited successfully", {
+        description: "Your position has been closed",
+      });
+    } catch (error) {
+      console.error("Error exiting order:", error);
+      toast.error("Failed to exit order", {
+        description: error instanceof Error ? error.message : "Unknown error",
+      });
+    } finally {
+      setIsExiting(false);
     }
   };
 
@@ -200,13 +278,16 @@ export function TradingAnalytics() {
                           <TableHead className="text-slate-400 font-medium w-[100px]">
                             Created
                           </TableHead>
+                          <TableHead className="text-slate-400 font-medium w-[70px] text-right">
+                            Action
+                          </TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {openOrders.length === 0 ? (
                           <TableRow className="hover:bg-slate-800/10 border-slate-800/40">
                             <TableCell
-                              colSpan={6}
+                              colSpan={7}
                               className="text-center py-10 text-slate-500"
                             >
                               <div className="flex flex-col items-center">
@@ -264,6 +345,26 @@ export function TradingAnalytics() {
                                   )}
                                 </div>
                               </TableCell>
+                              <TableCell className="text-right space-x-1">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleExitOrderClick(order)}
+                                  className="h-7 w-7 text-slate-400 hover:text-emerald-400"
+                                  title="Close position"
+                                >
+                                  <DollarSign className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleCancelOrder(order.id)}
+                                  className="h-7 w-7 text-slate-400 hover:text-rose-400"
+                                  title="Cancel order"
+                                >
+                                  <X className="h-4 w-4" />
+                                </Button>
+                              </TableCell>
                             </TableRow>
                           ))
                         )}
@@ -273,6 +374,137 @@ export function TradingAnalytics() {
                 )}
               </CardContent>
             </Card>
+
+            {/* Exit Order Dialog */}
+            <Dialog open={exitDialogOpen} onOpenChange={setExitDialogOpen}>
+              <DialogContent className="sm:max-w-[425px] bg-slate-900 border-slate-800 text-white">
+                <DialogHeader>
+                  <DialogTitle>Close Position</DialogTitle>
+                  <DialogDescription className="text-slate-400">
+                    Enter the exit price to close this position and calculate
+                    profit/loss.
+                  </DialogDescription>
+                </DialogHeader>
+
+                {orderToExit && (
+                  <div className="space-y-4 py-4">
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-slate-400">Symbol:</span>
+                        <span className="font-medium">
+                          {orderToExit.symbolId}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-slate-400">Side:</span>
+                        <Badge
+                          variant={
+                            orderToExit.type === "BUY"
+                              ? "default"
+                              : "destructive"
+                          }
+                          className={cn(
+                            "px-2 py-0.5 text-xs font-medium",
+                            orderToExit.type === "BUY"
+                              ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                              : "bg-rose-500/10 text-rose-400 border-rose-500/20"
+                          )}
+                        >
+                          {orderToExit.type}
+                        </Badge>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-slate-400">Entry Price:</span>
+                        <span className="font-mono font-medium">
+                          {formatCurrency(orderToExit.price)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-slate-400">Quantity:</span>
+                        <span className="font-mono font-medium">
+                          {formatQuantity(
+                            orderToExit.quantity,
+                            orderToExit.symbolId
+                          )}
+                        </span>
+                      </div>
+
+                      <div className="pt-3 border-t border-slate-800">
+                        <label className="text-sm text-white mb-2 block font-medium">
+                          Exit Price
+                        </label>
+                        <Input
+                          id="exit-price"
+                          type="number"
+                          step="0.01"
+                          value={exitPrice}
+                          onChange={(e) => setExitPrice(e.target.value)}
+                          className="bg-slate-800 border-slate-700 text-white"
+                        />
+                      </div>
+
+                      {/* Estimated PnL calculation */}
+                      {exitPrice && (
+                        <div className="mt-4 p-3 bg-slate-800/50 rounded-md">
+                          <h4 className="text-xs text-slate-400 mb-2">
+                            Estimated Profit/Loss
+                          </h4>
+                          <div className="text-lg font-mono font-medium">
+                            {(() => {
+                              const entryPrice = orderToExit.price;
+                              const exitPriceNum = parseFloat(exitPrice);
+                              if (isNaN(exitPriceNum)) return "-";
+
+                              let pnl = 0;
+                              if (orderToExit.type === "BUY") {
+                                // Long position
+                                pnl =
+                                  (exitPriceNum - entryPrice) *
+                                  orderToExit.quantity;
+                              } else {
+                                // Short position
+                                pnl =
+                                  (entryPrice - exitPriceNum) *
+                                  orderToExit.quantity;
+                              }
+
+                              return (
+                                <span
+                                  className={
+                                    pnl >= 0
+                                      ? "text-emerald-400"
+                                      : "text-rose-400"
+                                  }
+                                >
+                                  {formatCurrency(pnl)}
+                                </span>
+                              );
+                            })()}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <DialogFooter>
+                  <Button
+                    variant="ghost"
+                    onClick={() => setExitDialogOpen(false)}
+                    className="text-slate-300 hover:text-white"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={handleExitOrderSubmit}
+                    disabled={isExiting || !exitPrice}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                  >
+                    {isExiting ? "Closing..." : "Close Position"}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
 
             {/* Trade History Section */}
             <Card className="border-0 shadow-xl bg-gradient-to-b from-[#131826] to-[#0F121A] rounded-xl overflow-hidden">

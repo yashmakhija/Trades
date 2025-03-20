@@ -193,6 +193,27 @@ export async function cancelOrder(orderId: string): Promise<boolean> {
 }
 
 /**
+ * Manually exit an order at a specified price
+ */
+export async function exitOrder(
+  orderId: string,
+  exitPrice: number
+): Promise<boolean> {
+  try {
+    console.log(`Exiting order ${orderId} at price ${exitPrice}`);
+
+    await apiClient.post<void>(`/orders/${orderId}/exit`, {
+      exitPrice,
+    });
+
+    return true;
+  } catch (error) {
+    console.error(`Error exiting order ${orderId}:`, error);
+    throw error;
+  }
+}
+
+/**
  * Setup polling for orders
  * @param callback Function to call when orders are updated
  * @returns Cleanup function to stop polling

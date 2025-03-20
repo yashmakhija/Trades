@@ -579,6 +579,40 @@ class OrderManager extends EventEmitter {
   }
 
   /**
+   * Get an order by its ID
+   *
+   * @param orderId ID of the order to retrieve
+   * @returns The order or undefined if not found
+   */
+  getOrderById(orderId: string): Order | undefined {
+    return this.openOrders.get(orderId);
+  }
+
+  /**
+   * Remove an order from all in-memory maps
+   *
+   * @param orderId ID of the order to remove
+   * @param userId ID of the user who owns the order
+   */
+  removeOrder(orderId: string, userId: string): void {
+    const order = this.openOrders.get(orderId);
+    if (!order) return;
+
+    // Remove from in-memory maps
+    this.openOrders.delete(orderId);
+    this.userOrders.get(userId)?.delete(orderId);
+
+    // Remove from stop loss and take profit maps
+    if (order.stopLoss && this.stopLossOrders.has(order.symbolName)) {
+      this.stopLossOrders.get(order.symbolName)?.delete(orderId);
+    }
+
+    if (order.takeProfit && this.takeProfitOrders.has(order.symbolName)) {
+      this.takeProfitOrders.get(order.symbolName)?.delete(orderId);
+    }
+  }
+
+  /**
    * Load existing open orders from database on startup
    * This ensures that orders persist across server restarts
    */

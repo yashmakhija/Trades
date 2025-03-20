@@ -378,3 +378,132 @@ async function calculateUserPositions(userId: string) {
       unrealizedPnl: position.unrealizedPnl / 100,
     }));
 }
+
+export async function exitOrder(req: Request, res: Response): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: "Authentication required" });
+      return;
+    }
+
+    const userId = req.user.id;
+    const { orderId } = req.params;
+    const { exitPrice } = req.body;
+
+    if (!orderId) {
+      res.status(400).json({ error: "Order ID is required" });
+      return;
+    }
+
+    if (exitPrice === undefined || exitPrice <= 0) {
+      res.status(400).json({ error: "Valid exit price is required" });
+      return;
+    }
+
+    // Convert from frontend price representation to internal cents
+    const normalizedExitPrice = Math.round(exitPrice * 100);
+
+    console.log(
+      `Manual exit request for order ${orderId} at price ${
+        normalizedExitPrice / 100
+      }`
+    );
+
+    // Get the order from the manager
+    const order = orderManager.getOrderById(orderId);
+
+    if (!order || order.userId !== userId) {
+      res.status(404).json({ error: "Order not found or unauthorized" });
+      return;
+    }
+
+    try {
+      // First find the order in the database to confirm it's valid
+      const dbOrder = await prisma.order.findUnique({
+        where: { id: orderId },
+      });
+
+      if (!dbOrder || dbOrder.userId !== userId) {
+        res.status(404).json({ error: "Order not found or unauthorized" });
+        return;
+      }
+
+      if (dbOrder.status !== OrderStatus.OPEN) {
+        res
+          .status(400)
+          .json({ error: "Order is not open and cannot be exited" });
+        return;
+      }
+
+      // Update order in database
+      const updatedOrder = await prisma.order.update({
+        where: { id: orderId },
+        data: {
+          status: OrderStatus.CLOSED,
+          exitPrice: normalizedExitPrice,
+          closedAt: new Date(),
+        },
+      });
+
+      // Update balance manager
+      await balanceManager.updateBalanceAfterExecution(
+        userId,
+        orderId,
+        order.symbolName,
+        order.quantity,
+        normalizedExitPrice,
+        order.type
+      );
+
+      // Calculate PnL based on order type
+      let pnl = 0;
+      if (order.type === OrderType.BUY && !order.isShort) {
+        // Long position: profit = (exit price - entry price) * quantity
+        pnl = (normalizedExitPrice - order.price) * order.quantity;
+      } else if (order.type === OrderType.SELL && order.isShort) {
+        // Short position: profit = (entry price - exit price) * quantity
+        pnl = (order.price - normalizedExitPrice) * order.quantity;
+      }
+
+      // Update the PnL in the database
+      await prisma.order.update({
+        where: { id: orderId },
+        data: { pnl },
+      });
+
+      // Remove from in-memory maps
+      orderManager.removeOrder(orderId, userId);
+
+      // Broadcast updates
+      broadcastOrderUpdate(userId, {
+        id: orderId,
+        status: OrderStatus.CLOSED,
+        exitPrice: normalizedExitPrice,
+        pnl,
+      });
+
+      const updatedBalance = await balanceManager.getUserBalance(userId);
+      if (updatedBalance) {
+        broadcastBalanceUpdate(userId, updatedBalance);
+      }
+
+      res.status(200).json({
+        message: "Order exited successfully",
+        order: {
+          ...updatedOrder,
+          price: updatedOrder.price / 100,
+          exitPrice: updatedOrder.exitPrice
+            ? updatedOrder.exitPrice / 100
+            : null,
+          pnl: pnl / 100,
+        },
+      });
+    } catch (error) {
+      console.error(`Error executing exit for order ${orderId}:`, error);
+      res.status(500).json({ error: "Failed to exit order" });
+    }
+  } catch (error) {
+    console.error("Error handling exit order:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+}
