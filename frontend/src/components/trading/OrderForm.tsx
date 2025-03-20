@@ -13,7 +13,7 @@ import {
   OrderSide,
   OrderType as OrderTypeValue,
 } from "@/services/orders";
-import { DEFAULT_ORDER_QUANTITY } from "@/config";
+import { DEFAULT_ORDER_QUANTITY, SPREAD_FEE_PERCENTAGE } from "@/config";
 import { useSymbolStore, TradingSymbol } from "@/store/use-symbol-store";
 import { useAuthStore } from "@/store/use-auth-store";
 import { useBalanceStore, useBalanceSync } from "@/store/use-balance-store";
@@ -93,14 +93,36 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
 
   // Get current price from WebSocket
   const currentPrice = tickerData[symbol.toLowerCase()]?.price || 0;
-  const formattedPrice = currentPrice.toFixed(2);
 
-  // Update price field when current price changes
+  // Apply spread fee to price based on order side
+  const applySpreadFee = (basePrice: number, side: OrderSide): number => {
+    if (basePrice <= 0) return 0;
+
+    // For BUY orders: increase price by spread fee percentage
+    // For SELL orders: decrease price by spread fee percentage
+    const spreadAmount = basePrice * SPREAD_FEE_PERCENTAGE;
+    const adjustedPrice =
+      side === "BUY"
+        ? basePrice + spreadAmount // Higher price for buyers
+        : basePrice - spreadAmount; // Lower price for sellers
+
+    return adjustedPrice;
+  };
+
+  // Get price with spread fee applied
+  const priceWithSpread = applySpreadFee(currentPrice, orderSide);
+  const formattedPrice = priceWithSpread.toFixed(2);
+
+  // Spread fee amount for display
+  const spreadFeeAmount = (currentPrice * SPREAD_FEE_PERCENTAGE).toFixed(2);
+  const spreadFeePercent = (SPREAD_FEE_PERCENTAGE * 100).toFixed(2);
+
+  // Update price field when current price changes or order side changes
   useEffect(() => {
     if (currentPrice && orderType === "market") {
       setPrice(formattedPrice);
     }
-  }, [currentPrice, formattedPrice, orderType]);
+  }, [currentPrice, formattedPrice, orderType, orderSide]);
 
   // Calculate total order value
   const calculateTotal = (): number => {
@@ -488,6 +510,22 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
                   Available Balance:
                 </span>
                 <span className="font-medium">{formatCurrency(available)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Base Price:</span>
+                <span className="font-medium">
+                  {currentPrice.toFixed(2)} USD
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">
+                  Spread Fee ({spreadFeePercent}%):
+                </span>
+                <span className="font-medium">{spreadFeeAmount} USD</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Final Price:</span>
+                <span className="font-medium">{formattedPrice} USD</span>
               </div>
 
               {!hasEnoughBalance && (

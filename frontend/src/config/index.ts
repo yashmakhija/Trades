@@ -76,5 +76,10 @@ export const DEFAULT_TIMEFRAME = "1h";
 // Order settings
 export const DEFAULT_ORDER_QUANTITY = "0.01";
 
+// Spread fee percentage for buy/sell orders (0.02 = 2%)
+export const SPREAD_FEE_PERCENTAGE = parseFloat(
+  process.env.NEXT_PUBLIC_SPREAD_FEE_PERCENTAGE || "0.02"
+);
+
 // Polling intervals
 export const ORDER_POLLING_INTERVAL_MS = 10000; // 10 seconds
