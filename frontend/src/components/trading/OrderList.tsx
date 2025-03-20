@@ -83,7 +83,9 @@ export function OrderList({ symbol, className = "" }: OrderListProps) {
 
   // Format price
   const formatPrice = (price: number): string => {
-    return (price / 100).toFixed(2); // Convert from cents back to dollars
+    // The backend returns price divided by 10000, so we need to multiply it back
+    // for display. For example, 8.59 → 85900
+    return (price * 10000).toFixed(2);
   };
 
   // Load orders on mount and when symbol changes

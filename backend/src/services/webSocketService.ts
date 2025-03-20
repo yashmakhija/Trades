@@ -181,7 +181,7 @@ class WebSocketService {
                 })
               );
 
-              // Send connection success for authenticated users
+              // Send connection success message for authenticated users
               ws.send(
                 JSON.stringify({
                   type: "CONNECTION_SUCCESS",
@@ -374,6 +374,104 @@ class WebSocketService {
       const symbol = (data.symbol || "").toLowerCase();
 
       switch (data.type) {
+        case "AUTHENTICATE":
+          if (data.token) {
+            const userId = await this.verifyToken(data.token);
+            if (userId) {
+              client.userId = userId;
+              client.isAuthenticated = true;
+              console.log(`Client authenticated with userId: ${userId}`);
+
+              // Send user-specific data
+              try {
+                console.log(`Fetching balance for user ${userId}`);
+                const balance = await balanceManager.getUserBalance(userId);
+
+                if (balance) {
+                  console.log(
+                    `Balance found for user ${userId}:`,
+                    balance.total
+                  );
+                  ws.send(
+                    JSON.stringify({ type: "BALANCE_UPDATE", data: balance })
+                  );
+                } else {
+                  console.log(
+                    `No balance data found for user ${userId}, initializing...`
+                  );
+                  // Try to initialize the user balance
+                  await this.initializeUserBalance(userId);
+
+                  // Try to get the balance again
+                  const retryBalance = await balanceManager.getUserBalance(
+                    userId
+                  );
+                  if (retryBalance) {
+                    console.log(`Balance initialized for user ${userId}`);
+                    ws.send(
+                      JSON.stringify({
+                        type: "BALANCE_UPDATE",
+                        data: retryBalance,
+                      })
+                    );
+                  } else {
+                    console.log(
+                      `Failed to initialize balance for user ${userId}`
+                    );
+                  }
+                }
+
+                // Send open orders
+                const openOrders = await orderManager.getUserOpenOrders(userId);
+                if (openOrders.length > 0) {
+                  ws.send(
+                    JSON.stringify({ type: "OPEN_ORDERS", data: openOrders })
+                  );
+                }
+
+                // Send authentication success message
+                ws.send(
+                  JSON.stringify({
+                    type: "AUTHENTICATION_SUCCESS",
+                    userId: userId,
+                  })
+                );
+
+                // Send connection success message for authenticated users
+                ws.send(
+                  JSON.stringify({
+                    type: "CONNECTION_SUCCESS",
+                    message: "Authenticated connection established",
+                    authenticated: true,
+                  })
+                );
+              } catch (error) {
+                console.error(`Error sending user data for ${userId}:`, error);
+                ws.send(
+                  JSON.stringify({
+                    type: "AUTH_ERROR",
+                    error: "Error retrieving user data",
+                  })
+                );
+              }
+            } else {
+              ws.send(
+                JSON.stringify({
+                  type: "AUTH_ERROR",
+                  error: "Invalid token provided",
+                })
+              );
+            }
+          } else {
+            ws.send(
+              JSON.stringify({
+                type: "AUTH_ERROR",
+                error: "No token provided",
+              })
+            );
+          }
+          break;
+
         case "SUBSCRIBE":
           if (symbol) {
             client.subscribedSymbols.add(symbol);

@@ -15,7 +15,6 @@ import {
 } from "@/services/orders";
 import { DEFAULT_ORDER_QUANTITY } from "@/config";
 import { useSymbolStore, TradingSymbol } from "@/store/use-symbol-store";
-import { fetchSymbols } from "@/services/symbols";
 import { useAuthStore } from "@/store/use-auth-store";
 import { useBalanceStore, useBalanceSync } from "@/store/use-balance-store";
 import Link from "next/link";
@@ -30,7 +29,7 @@ interface OrderFormProps {
 
 export function OrderForm({ symbol, className = "" }: OrderFormProps) {
   const { tickerData } = useWebSocketStore();
-  const { symbols, setSymbols } = useSymbolStore();
+  const { symbols, fetchSymbols, isLoading: symbolsLoading } = useSymbolStore();
   const { user, isAuthenticated } = useAuthStore();
   const { available, fetchBalance } = useBalanceStore();
 
@@ -42,6 +41,15 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
     (s: TradingSymbol) => s.name.toLowerCase() === symbol.toLowerCase()
   );
 
+  // Debug logging to help diagnose symbol selection issues
+  useEffect(() => {
+    if (symbols.length > 0) {
+      console.log("Available symbols:", symbols);
+      console.log("Current symbol name:", symbol);
+      console.log("Selected symbol data:", symbolData);
+    }
+  }, [symbols.length, symbol, symbolData]);
+
   // Order form state
   const [orderSide, setOrderSide] = useState<OrderSide>("BUY");
   const [quantity, setQuantity] = useState<string>(
@@ -52,7 +60,8 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [stopLoss, setStopLoss] = useState<string>("");
   const [takeProfit, setTakeProfit] = useState<string>("");
-  const [isLoadingSymbols, setIsLoadingSymbols] = useState<boolean>(true);
+  const [isLoadingSymbols, setIsLoadingSymbols] =
+    useState<boolean>(symbolsLoading);
 
   // Fetch balance when authenticated
   useEffect(() => {
@@ -61,12 +70,12 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
     }
   }, [isAuthenticated, fetchBalance]);
 
-  // Load symbols when component mounts
+  // Load symbols when component mounts (only once)
   useEffect(() => {
     const loadSymbols = async () => {
       try {
-        const fetchedSymbols = await fetchSymbols();
-        setSymbols(fetchedSymbols);
+        setIsLoadingSymbols(true);
+        await fetchSymbols();
       } catch (error) {
         console.error("Error loading symbols:", error);
         toast.error("Failed to load trading symbols");
@@ -80,7 +89,7 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
     } else {
       setIsLoadingSymbols(false);
     }
-  }, [setSymbols, symbols.length]);
+  }, [fetchSymbols, symbols.length]);
 
   // Get current price from WebSocket
   const currentPrice = tickerData[symbol.toLowerCase()]?.price || 0;
@@ -114,12 +123,21 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
         return;
       }
 
+      // Use the currently available symbols data
       if (!symbolData) {
+        console.error("Symbol not found in available symbols:", {
+          symbolToFind: symbol,
+          availableSymbols: symbols.map((s) => s.name),
+        });
+
         toast.error("Symbol not found", {
-          description: "Unable to find symbol information",
+          description: "Unable to find symbol information. Please try again.",
         });
         return;
       }
+
+      // Use the symbol data for the rest of the function
+      const symbolId = symbolData.id;
 
       if (!price || isNaN(parseFloat(price)) || parseFloat(price) <= 0) {
         toast.error("Invalid price", {
@@ -152,28 +170,24 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
       setIsSubmitting(true);
 
       // Process stop loss and take profit
-      let stopLossValue: number | undefined = undefined;
-      let takeProfitValue: number | undefined = undefined;
+      // These variables are used for validation only
+      let tempStopLossValue: number | undefined = undefined;
+      let tempTakeProfitValue: number | undefined = undefined;
 
-      if (
-        stopLoss &&
-        !isNaN(parseFloat(stopLoss)) &&
-        parseFloat(stopLoss) > 0
-      ) {
-        stopLossValue = parseFloat(stopLoss);
+      if (stopLoss && !isNaN(Number(stopLoss)) && Number(stopLoss) > 0) {
+        tempStopLossValue = Number(stopLoss);
       }
 
-      if (
-        takeProfit &&
-        !isNaN(parseFloat(takeProfit)) &&
-        parseFloat(takeProfit) > 0
-      ) {
-        takeProfitValue = parseFloat(takeProfit);
+      if (takeProfit && !isNaN(Number(takeProfit)) && Number(takeProfit) > 0) {
+        tempTakeProfitValue = Number(takeProfit);
       }
+
+      // Convert price to number for consistent comparison
+      const priceValue = Number(price);
 
       // Validate stop loss and take profit based on order side
       if (orderSide === "BUY") {
-        if (stopLossValue && stopLossValue >= parseFloat(price)) {
+        if (tempStopLossValue && tempStopLossValue >= priceValue) {
           toast.error(
             "Stop loss must be lower than the entry price for buy orders"
           );
@@ -181,7 +195,7 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
           return;
         }
 
-        if (takeProfitValue && takeProfitValue <= parseFloat(price)) {
+        if (tempTakeProfitValue && tempTakeProfitValue <= priceValue) {
           toast.error(
             "Take profit must be higher than the entry price for buy orders"
           );
@@ -190,7 +204,7 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
         }
       } else {
         // SELL order
-        if (stopLossValue && stopLossValue <= parseFloat(price)) {
+        if (tempStopLossValue && tempStopLossValue <= priceValue) {
           toast.error(
             "Stop loss must be higher than the entry price for sell orders"
           );
@@ -198,7 +212,7 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
           return;
         }
 
-        if (takeProfitValue && takeProfitValue >= parseFloat(price)) {
+        if (tempTakeProfitValue && tempTakeProfitValue >= priceValue) {
           toast.error(
             "Take profit must be lower than the entry price for sell orders"
           );
@@ -207,22 +221,29 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
         }
       }
 
-      // Parse values as floating point
-      const priceValue = parseFloat(price);
-      const quantityValue = parseFloat(quantity);
+      // Parse values once for reuse and ensure they are valid numbers
+      const quantityValue = Number(quantity);
 
-      console.log("Order values before conversion:", {
-        symbolId: symbolData.id,
-        type: orderSide,
-        price: priceValue,
+      // Pass through the values directly - no conversion needed
+      // The backend will divide by 10000 on its own (eg 85865 → 8.59)
+      const stopLossValue =
+        stopLoss && stopLoss.trim() !== "" ? Number(stopLoss) : undefined;
+
+      const takeProfitValue =
+        takeProfit && takeProfit.trim() !== "" ? Number(takeProfit) : undefined;
+
+      console.log("Order submission values:", {
+        symbolId: symbolId,
+        price: priceValue, // Full BTC price (e.g., 85919.00)
         quantity: quantityValue,
+        type: orderSide,
         isShort: orderSide === "SELL",
-        stopLoss: stopLossValue,
-        takeProfit: takeProfitValue,
+        stopLoss: stopLossValue, // Full BTC stop loss price
+        takeProfit: takeProfitValue, // Full BTC take profit price
       });
 
       const response = await createOrder({
-        symbolId: symbolData.id,
+        symbolId: symbolId,
         type: orderSide,
         price: priceValue,
         quantity: quantityValue,

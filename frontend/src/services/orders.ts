@@ -83,28 +83,11 @@ export async function fetchOrders(): Promise<Order[]> {
       return isValid;
     });
 
-    console.log(
-      "Received orders from backend (before conversion):",
-      validOrders
-    );
+    console.log("Received orders from backend:", validOrders);
 
-    // Convert price values from integers to floating-point (divide by 100)
-    const convertedOrders = validOrders.map((order) => {
-      const convertedOrder = {
-        ...order,
-        price: order.price / 100,
-        stopLoss: order.stopLoss ? order.stopLoss / 100 : undefined,
-        takeProfit: order.takeProfit ? order.takeProfit / 100 : undefined,
-      };
-
-      console.log(
-        `Converted order ${order.id}: price ${order.price} → ${convertedOrder.price}`
-      );
-      return convertedOrder;
-    });
-
-    console.log("Orders after conversion to floating-point:", convertedOrders);
-    return convertedOrders;
+    // We're already receiving full prices for exitPrice
+    // No need to modify prices for our UI
+    return validOrders;
   } catch (error) {
     console.error("Error fetching orders:", error);
     return [];
@@ -152,17 +135,8 @@ export async function fetchOpenOrders(): Promise<Order[]> {
       return isValid;
     });
 
-    // Convert price values from integers to floating-point
-    const convertedOrders = validOrders.map((order) => {
-      return {
-        ...order,
-        price: order.price / 100,
-        stopLoss: order.stopLoss ? order.stopLoss / 100 : undefined,
-        takeProfit: order.takeProfit ? order.takeProfit / 100 : undefined,
-      };
-    });
-
-    return convertedOrders;
+    // Return orders as is - no conversion needed
+    return validOrders;
   } catch (error) {
     console.error("Error fetching open orders:", error);
     return [];
@@ -178,42 +152,27 @@ export async function createOrder(
   try {
     console.log("Creating order with params (before conversion):", params);
 
-    // Convert price values from floating-point to integers by removing decimal point
-    // The backend expects integers with decimal point removed (e.g., 8318089 for $83,180.89)
+    // The backend divides full BTC prices by 10000 (85865 → 8.59)
+    // Send the raw prices without any conversion
     const convertedParams = {
       ...params,
-      // Remove decimal point by multiplying by 10000 and rounding to handle up to 4 decimal places
-      price: Math.round(params.price * 10000),
-      stopLoss: params.stopLoss
-        ? Math.round(params.stopLoss * 10000)
-        : undefined,
-      takeProfit: params.takeProfit
-        ? Math.round(params.takeProfit * 10000)
-        : undefined,
+      // Don't modify the price values at all - send as is
+      price: Number(params.price),
+      stopLoss:
+        params.stopLoss !== undefined ? Number(params.stopLoss) : undefined,
+      takeProfit:
+        params.takeProfit !== undefined ? Number(params.takeProfit) : undefined,
     };
 
-    console.log(
-      "Converted params for backend (after removing decimal):",
-      convertedParams
-    );
+    console.log("Params for backend (unmodified prices):", convertedParams);
 
     const response = await apiClient.post<Order>("/orders", convertedParams);
 
-    console.log("Response from backend (before conversion):", response);
+    console.log("Response from backend (original):", response);
 
-    // Convert the response back to floating-point for the frontend
-    const convertedResponse = {
-      ...response,
-      price: response.price / 100,
-      stopLoss: response.stopLoss ? response.stopLoss / 100 : undefined,
-      takeProfit: response.takeProfit ? response.takeProfit / 100 : undefined,
-    };
-
-    console.log(
-      "Converted response for frontend (after /100):",
-      convertedResponse
-    );
-    return convertedResponse;
+    // The backend returns prices divided by 10000
+    // We don't need to modify the response since our UI expects full BTC prices
+    return response;
   } catch (error) {
     console.error("Error creating order:", error);
     throw error;

@@ -22,15 +22,17 @@ export interface Trade {
   id: string;
   symbolId: string;
   symbolName: string;
-  type: "BUY" | "SELL";
+  side?: "BUY" | "SELL";
+  type?: "BUY" | "SELL";
   price: number;
   quantity: number;
   exitPrice: number | null;
   pnl: number | null;
-  status: "OPEN" | "FILLED" | "CLOSED" | "CANCELLED" | "REJECTED";
-  isShort: boolean;
-  createdAt: string;
-  closedAt: string | null;
+  status?: "OPEN" | "FILLED" | "CLOSED" | "CANCELLED" | "REJECTED";
+  isShort?: boolean;
+  createdAt?: string;
+  closedAt?: string | null;
+  timestamp?: string;
 }
 
 export interface TradeHistoryResponse {

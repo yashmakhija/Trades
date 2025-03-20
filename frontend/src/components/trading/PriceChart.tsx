@@ -199,10 +199,14 @@ export function PriceChart({
 
     // Clean up previous chart instance
     if (chartRef.current) {
-      chartRef.current.remove();
-      chartRef.current = null;
-      candleSeries.current = null;
-      volumeSeries.current = null;
+      try {
+        chartRef.current.remove();
+        chartRef.current = null;
+        candleSeries.current = null;
+        volumeSeries.current = null;
+      } catch (error) {
+        console.log("Chart was already disposed or invalid, creating new instance");
+      }
     }
 
     const options: DeepPartial<ChartOptions> = {

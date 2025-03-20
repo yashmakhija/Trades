@@ -30,12 +30,14 @@ import {
   Eye,
   EyeOff,
   Wallet,
+  LockKeyhole,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatCurrency } from "@/lib/utils";
 import { useBalanceStore, useBalanceSync } from "@/store/use-balance-store";
 import { useAuthStore } from "@/store/use-auth-store";
+import Link from "next/link";
 
 // Create a wrapper component to handle search params
 function TradingPageContent() {
@@ -64,6 +66,13 @@ function TradingPageContent() {
 
   // Set up balance synchronization with WebSocket
   useBalanceSync();
+
+  // Reset to form view if user logs out
+  useEffect(() => {
+    if (!isAuthenticated && sidebarView === "orders") {
+      setSidebarView("form");
+    }
+  }, [isAuthenticated, sidebarView]);
 
   // Use the WebSocket hook
   const {
@@ -277,27 +286,59 @@ function TradingPageContent() {
                     >
                       Order
                     </Button>
-                    <Button
-                      variant={sidebarView === "orders" ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => setSidebarView("orders")}
-                      className="h-8"
-                    >
-                      Positions
-                    </Button>
+                    {isAuthenticated && (
+                      <Button
+                        variant={
+                          sidebarView === "orders" ? "default" : "outline"
+                        }
+                        size="sm"
+                        onClick={() => setSidebarView("orders")}
+                        className="h-8"
+                      >
+                        Positions
+                      </Button>
+                    )}
                   </div>
                 </div>
                 <CardDescription>
                   {sidebarView === "form"
                     ? "Place a new market or limit order"
-                    : "Manage your open positions"}
+                    : isAuthenticated
+                    ? "Manage your open positions"
+                    : ""}
                 </CardDescription>
               </CardHeader>
               <CardContent className="pt-0">
                 {sidebarView === "form" ? (
                   <OrderForm symbol={selectedSymbol} />
-                ) : (
+                ) : isAuthenticated ? (
                   <OrderList symbol={selectedSymbol} />
+                ) : (
+                  <div className="flex flex-col items-center justify-center p-8 text-center">
+                    <LockKeyhole className="h-12 w-12 text-indigo-400/40 mb-4" />
+                    <h3 className="text-lg font-medium mb-2">
+                      Authentication Required
+                    </h3>
+                    <p className="text-muted-foreground text-sm mb-4">
+                      You need to be logged in to view and manage your
+                      positions.
+                    </p>
+                    <div className="flex gap-3">
+                      <Button
+                        asChild
+                        className="bg-indigo-600 hover:bg-indigo-700"
+                      >
+                        <Link href="/login">Login</Link>
+                      </Button>
+                      <Button
+                        asChild
+                        variant="outline"
+                        className="border-slate-700 hover:bg-slate-800"
+                      >
+                        <Link href="/register">Register</Link>
+                      </Button>
+                    </div>
+                  </div>
                 )}
               </CardContent>
             </Card>
