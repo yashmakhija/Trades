@@ -9,13 +9,7 @@ import { OrderForm } from "@/components/trading/OrderForm";
 import { OrderList } from "@/components/trading/OrderList";
 import { ConnectionStatus } from "@/components/trading/ConnectionStatus";
 import { WebSocketDebugPanel } from "@/components/trading/WebSocketDebugPanel";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Typography } from "@/components/ui/typography";
 import { useWebSocket } from "@/services/websocket";
 import { Toaster } from "sonner";
@@ -286,27 +280,8 @@ function TradingPageContent() {
                     >
                       Order
                     </Button>
-                    {isAuthenticated && (
-                      <Button
-                        variant={
-                          sidebarView === "orders" ? "default" : "outline"
-                        }
-                        size="sm"
-                        onClick={() => setSidebarView("orders")}
-                        className="h-8"
-                      >
-                        Positions
-                      </Button>
-                    )}
                   </div>
                 </div>
-                <CardDescription>
-                  {sidebarView === "form"
-                    ? "Place a new market or limit order"
-                    : isAuthenticated
-                    ? "Manage your open positions"
-                    : ""}
-                </CardDescription>
               </CardHeader>
               <CardContent className="pt-0">
                 {sidebarView === "form" ? (
