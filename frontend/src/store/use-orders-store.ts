@@ -20,7 +20,7 @@ interface OrdersState {
 
 interface OrdersActions {
   // Data fetching
-  fetchOpenOrders: () => Promise<void>;
+  fetchOpenOrders: (options?: { silent: boolean }) => Promise<void>;
 
   // Order management
   cancelOrder: (orderId: string) => Promise<boolean>;
@@ -42,20 +42,23 @@ export const useOrdersStore = create<OrdersState & OrdersActions>()(
   devtools((set) => ({
     ...initialState,
 
-    fetchOpenOrders: async () => {
+    fetchOpenOrders: async (options = { silent: false }) => {
       try {
-        set((state) => ({
-          ...state,
-          isLoading: true,
-          error: null,
-        }));
+        // Only set loading state if not silent
+        if (!options.silent) {
+          set((state) => ({
+            ...state,
+            isLoading: true,
+            error: null,
+          }));
+        }
 
         const orders = await fetchOpenOrders();
 
         set((state) => ({
           ...state,
           openOrders: orders,
-          isLoading: false,
+          isLoading: !options.silent ? false : state.isLoading,
         }));
       } catch (error) {
         set((state) => ({
@@ -64,7 +67,7 @@ export const useOrdersStore = create<OrdersState & OrdersActions>()(
             error instanceof Error
               ? error.message
               : "Failed to fetch open orders",
-          isLoading: false,
+          isLoading: !options.silent ? false : state.isLoading,
         }));
       }
     },

@@ -50,7 +50,10 @@ interface AnalyticsActions {
   fetchUserStats: () => Promise<void>;
   fetchSymbolStats: () => Promise<void>;
   fetchDailyPnL: () => Promise<void>;
-  fetchTradeHistory: (page?: number, limit?: number) => Promise<void>;
+  fetchTradeHistory: (
+    page?: number | { silent: boolean },
+    limit?: number
+  ) => Promise<void>;
   fetchAllData: () => Promise<void>;
 
   // Filter actions
@@ -189,15 +192,28 @@ export const useAnalyticsStore = create<AnalyticsState & AnalyticsActions>()(
       }
     },
 
-    fetchTradeHistory: async (page = 1, limit = 10) => {
+    fetchTradeHistory: async (pageOrOptions = 1, limit = 10) => {
       const { dateRange, selectedSymbolId } = get();
+      let page = 1;
+      let silent = false;
+
+      // Check if first argument is options object
+      if (typeof pageOrOptions === "object") {
+        silent = pageOrOptions.silent || false;
+        // Keep default page
+      } else {
+        page = pageOrOptions;
+      }
 
       try {
-        set((state) => ({
-          ...state,
-          isLoading: { ...state.isLoading, tradeHistory: true },
-          error: null,
-        }));
+        // Only set loading state if not silent
+        if (!silent) {
+          set((state) => ({
+            ...state,
+            isLoading: { ...state.isLoading, tradeHistory: true },
+            error: null,
+          }));
+        }
 
         const response = await fetchTradeHistory(
           page,
@@ -211,7 +227,10 @@ export const useAnalyticsStore = create<AnalyticsState & AnalyticsActions>()(
           ...state,
           tradeHistory: response.trades,
           pagination: response.pagination,
-          isLoading: { ...state.isLoading, tradeHistory: false },
+          isLoading: {
+            ...state.isLoading,
+            tradeHistory: silent ? state.isLoading.tradeHistory : false,
+          },
         }));
       } catch (error) {
         set((state) => ({
@@ -220,7 +239,10 @@ export const useAnalyticsStore = create<AnalyticsState & AnalyticsActions>()(
             error instanceof Error
               ? error.message
               : "Failed to fetch trade history",
-          isLoading: { ...state.isLoading, tradeHistory: false },
+          isLoading: {
+            ...state.isLoading,
+            tradeHistory: silent ? state.isLoading.tradeHistory : false,
+          },
         }));
       }
     },

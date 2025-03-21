@@ -81,7 +81,9 @@ export function TradingAnalytics() {
 
       // Set up polling interval for open orders (refresh every 15 seconds)
       const intervalId = setInterval(() => {
-        fetchOpenOrders();
+        // Use silent refresh during polling to avoid showing loading state
+        fetchOpenOrders({ silent: true });
+        fetchTradeHistory({ silent: true });
       }, 15000);
 
       // Clean up on unmount
