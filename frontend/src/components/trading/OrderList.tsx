@@ -169,7 +169,7 @@ export function OrderList({ symbol, className = "" }: OrderListProps) {
             <Button
               variant="ghost"
               size="sm"
-              onClick={fetchOpenOrders}
+              onClick={() => fetchOpenOrders({ silent: true })}
               disabled={isLoading}
             >
               {isLoading ? (
