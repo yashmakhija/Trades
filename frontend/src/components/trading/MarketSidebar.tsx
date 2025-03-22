@@ -135,14 +135,16 @@ export function MarketSidebar({ className }: MarketSidebarProps) {
   };
 
   const formatPrice = (price: number) => {
+    if (!price) return "0.00";
+
     if (price >= 1000) {
       return price.toFixed(2);
     } else if (price >= 100) {
-      return price.toFixed(3);
+      return price.toFixed(2);
     } else if (price >= 1) {
       return price.toFixed(4);
     } else {
-      return price.toFixed(6);
+      return price.toFixed(5);
     }
   };
 
@@ -257,17 +259,6 @@ export function MarketSidebar({ className }: MarketSidebarProps) {
         </Tabs>
       </div>
 
-      <div className="text-xs font-medium border-b border-border/60 bg-muted/40">
-        <div className="grid grid-cols-12 px-4 py-2.5">
-          <div className="col-span-4">Symbol</div>
-          <div className="col-span-8 grid grid-cols-3 gap-1">
-            <div className="text-right">Bid</div>
-            <div className="text-right">Ask</div>
-            <div className="text-right">24h</div>
-          </div>
-        </div>
-      </div>
-
       <div className="overflow-y-auto h-[calc(100%-160px)] scrollbar-thin">
         {connectionState !== "connected" ? (
           <div className="flex items-center justify-center p-8 text-center text-muted-foreground">
@@ -289,77 +280,107 @@ export function MarketSidebar({ className }: MarketSidebarProps) {
           </div>
         ) : (
           <div>
+            <div className="sticky top-0 bg-muted/70 backdrop-blur-sm z-10 text-xs font-medium border-b border-border/60">
+              <div className="grid grid-cols-12 px-4 py-2">
+                <div className="col-span-5">Symbol</div>
+                <div className="col-span-7">
+                  <div className="grid grid-cols-3 w-full">
+                    <div className="text-center">Bid</div>
+                    <div className="text-center">Ask</div>
+                    <div className="text-center">24h</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {sortedSymbols.map((symbol) => (
               <div
                 key={symbol.name}
                 onClick={() => handleSelectSymbol(symbol.name)}
                 className={cn(
-                  "grid grid-cols-12 px-4 py-3 border-b border-border/40 hover:bg-muted/30 cursor-pointer transition-colors",
+                  "hover:bg-muted/30 cursor-pointer transition-colors border-b border-border/40",
                   symbol.name === currentSymbol && "bg-muted/60 font-medium"
                 )}
               >
-                <div className="col-span-4 flex items-center gap-1.5 truncate pr-1">
-                  <button
-                    onClick={(e) => toggleFavorite(e, symbol.name)}
-                    className="text-muted-foreground hover:text-foreground focus:outline-none transition-colors"
-                  >
-                    {favoriteSymbols.includes(symbol.name) ? (
-                      <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
-                    ) : (
-                      <StarOff className="h-3.5 w-3.5" />
-                    )}
-                  </button>
-                  <div className="flex items-center gap-1.5">
-                    {getSymbolIcon(symbol.name)}
-                    <span className="truncate uppercase font-medium text-xs">
-                      {symbol.name}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="col-span-8 grid grid-cols-3 gap-1 items-center">
-                  <div
-                    className={cn(
-                      "text-right font-mono text-xs font-medium rounded px-1.5 py-0.5 transition-colors",
-                      getPriceChangeClass(
-                        symbol.name,
-                        "bid",
-                        symbol.bidPrice || 0
-                      )
-                    )}
-                  >
-                    {formatPrice(symbol.bidPrice || 0)}
+                <div className="px-3 py-2.5">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <button
+                      onClick={(e) => toggleFavorite(e, symbol.name)}
+                      className="text-muted-foreground hover:text-foreground focus:outline-none transition-colors"
+                    >
+                      {favoriteSymbols.includes(symbol.name) ? (
+                        <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
+                      ) : (
+                        <StarOff className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                    <div className="flex items-center gap-1.5 flex-1">
+                      {getSymbolIcon(symbol.name)}
+                      <span className="uppercase font-medium text-sm">
+                        {symbol.name}
+                      </span>
+                    </div>
                   </div>
 
-                  <div
-                    className={cn(
-                      "text-right font-mono text-xs font-medium rounded px-1.5 py-0.5 transition-colors",
-                      getPriceChangeClass(
-                        symbol.name,
-                        "ask",
-                        symbol.askPrice || 0
-                      )
-                    )}
-                  >
-                    {formatPrice(symbol.askPrice || 0)}
-                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="flex flex-col items-center">
+                      <div
+                        className={cn(
+                          "w-full text-center font-mono text-xs font-medium rounded px-1 py-0.5 transition-colors",
+                          getPriceChangeClass(
+                            symbol.name,
+                            "bid",
+                            symbol.bidPrice || 0
+                          )
+                        )}
+                      >
+                        {formatPrice(symbol.bidPrice || 0)}
+                      </div>
+                      <span className="text-[10px] text-muted-foreground mt-0.5">
+                        BID
+                      </span>
+                    </div>
 
-                  <div
-                    className={cn(
-                      "text-right text-xs font-medium rounded flex items-center gap-0.5 justify-end",
-                      symbol.priceChangePercent >= 0
-                        ? "text-green-500"
-                        : "text-red-500"
-                    )}
-                  >
-                    {symbol.priceChangePercent >= 0 ? (
-                      <TrendingUp className="h-3 w-3 flex-shrink-0" />
-                    ) : (
-                      <TrendingDown className="h-3 w-3 flex-shrink-0" />
-                    )}
-                    <span className="tabular-nums">
-                      {formatPercentChange(symbol.priceChangePercent)}
-                    </span>
+                    <div className="flex flex-col items-center">
+                      <div
+                        className={cn(
+                          "w-full text-center font-mono text-xs font-medium rounded px-1 py-0.5 transition-colors",
+                          getPriceChangeClass(
+                            symbol.name,
+                            "ask",
+                            symbol.askPrice || 0
+                          )
+                        )}
+                      >
+                        {formatPrice(symbol.askPrice || 0)}
+                      </div>
+                      <span className="text-[10px] text-muted-foreground mt-0.5">
+                        ASK
+                      </span>
+                    </div>
+
+                    <div className="flex flex-col items-center">
+                      <div
+                        className={cn(
+                          "w-full flex items-center justify-center gap-0.5 rounded px-1 py-0.5",
+                          symbol.priceChangePercent >= 0
+                            ? "bg-green-500/10 text-green-500"
+                            : "bg-red-500/10 text-red-500"
+                        )}
+                      >
+                        {symbol.priceChangePercent >= 0 ? (
+                          <TrendingUp className="h-3 w-3 flex-shrink-0" />
+                        ) : (
+                          <TrendingDown className="h-3 w-3 flex-shrink-0" />
+                        )}
+                        <span className="tabular-nums text-xs font-medium">
+                          {formatPercentChange(symbol.priceChangePercent)}
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-muted-foreground mt-0.5">
+                        24H
+                      </span>
+                    </div>
                   </div>
                 </div>
               </div>
