@@ -222,14 +222,10 @@ function TradingPageContent() {
             <MarketSidebar />
           </aside>
 
-          <div className="flex-1 space-y-4">
-            <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
-              <div className="w-full sm:w-64 shrink-0"></div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-0">
-              <div className="lg:col-span-2">
-                <Card className="overflow-hidden border-0 shadow-md h-full">
+          <div className="flex-1 space-y-4 w-full">
+            <div className="grid grid-cols-1 gap-0 w-full">
+              <div className="lg:col-span-2 w-full">
+                <Card className="overflow-hidden border-0 shadow-md h-full w-full">
                   <CardContent className="p-0 h-[650px] w-full">
                     <PriceChart
                       symbol={selectedSymbol}
@@ -239,17 +235,6 @@ function TradingPageContent() {
                   </CardContent>
                 </Card>
               </div>
-
-              {/* <div>
-                <Card className="overflow-hidden border-0 shadow-md h-full">
-                  <CardHeader className="py-3 px-4 border-b border-border/60">
-                    <CardTitle className="text-lg">Order Form</CardTitle>
-                  </CardHeader>
-                  <CardContent className="p-0">
-                    <OrderForm symbol={selectedSymbol} />
-                  </CardContent>
-                </Card>
-              </div> */}
             </div>
 
             <div>
