@@ -227,13 +227,13 @@ function TradingPageContent() {
               <div className="w-full sm:w-64 shrink-0"></div>
             </div>
 
-            <div className="grid grid-cols-1  gap-4">
+            <div className="grid grid-cols-1 gap-0">
               <div className="lg:col-span-2">
-                <Card className="overflow-hidden border-0 shadow-md ">
-                  <CardContent className="p-0 h-[800px]">
+                <Card className="overflow-hidden border-0 shadow-md h-full">
+                  <CardContent className="p-0 h-[650px] w-full">
                     <PriceChart
                       symbol={selectedSymbol}
-                      height={800}
+                      height={650}
                       useMockData={false}
                     />
                   </CardContent>
