@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { devtools } from "zustand/middleware";
+import { devtools, persist } from "zustand/middleware";
 import { SPREAD_FEE_PERCENTAGE } from "@/config";
 
 export interface MarketSymbol {
@@ -16,10 +16,8 @@ export interface MarketSymbol {
 }
 
 interface MarketDataState {
-
   symbols: MarketSymbol[];
   favoriteSymbols: string[];
-
 
   isLoading: boolean;
   error: string | null;
@@ -28,6 +26,7 @@ interface MarketDataState {
   updateSymbols: (symbols: Partial<MarketSymbol> & { name: string }[]) => void;
   addToFavorites: (symbolName: string) => void;
   removeFromFavorites: (symbolName: string) => void;
+  reorderFavorites: (newOrder: string[]) => void;
   reset: () => void;
 }
 
@@ -40,88 +39,98 @@ const initialState: MarketDataState = {
   updateSymbols: () => {},
   addToFavorites: () => {},
   removeFromFavorites: () => {},
+  reorderFavorites: () => {},
   reset: () => {},
-
 };
 
 export const useMarketDataStore = create<MarketDataState>()(
-  devtools((set, get) => ({
-    ...initialState,
+  devtools(
+    persist(
+      (set, get) => ({
+        ...initialState,
 
-    // Update a single symbol's data
-    updateSymbol: (symbolData) => {
-      set((state) => {
-        const symbols = [...state.symbols];
-        const index = symbols.findIndex((s) => s.name === symbolData.name);
+        // Update a single symbol's data
+        updateSymbol: (symbolData) => {
+          set((state) => {
+            const symbols = [...state.symbols];
+            const index = symbols.findIndex((s) => s.name === symbolData.name);
 
-        // Calculate bid and ask prices based on current price and spread
-        const price = symbolData.price ?? symbols[index]?.price ?? 0;
-        const spreadAmount = price * SPREAD_FEE_PERCENTAGE;
-        const bidPrice = price - spreadAmount;
-        const askPrice = price + spreadAmount;
+            // Calculate bid and ask prices based on current price and spread
+            const price = symbolData.price ?? symbols[index]?.price ?? 0;
+            const spreadAmount = price * SPREAD_FEE_PERCENTAGE;
+            const bidPrice = price - spreadAmount;
+            const askPrice = price + spreadAmount;
 
-        const updatedSymbolData = {
-          ...symbolData,
-          bidPrice,
-          askPrice,
-          timestamp: Date.now(),
-        };
+            const updatedSymbolData = {
+              ...symbolData,
+              bidPrice,
+              askPrice,
+              timestamp: Date.now(),
+            };
 
-        if (index >= 0) {
-          // Update existing symbol
-          symbols[index] = {
-            ...symbols[index],
-            ...updatedSymbolData,
-          };
-        } else {
-          // Add new symbol
-          symbols.push({
-            id: symbolData.id || symbolData.name,
-            name: symbolData.name,
-            price: price || 0,
-            bidPrice,
-            askPrice,
-            priceChangePercent: symbolData.priceChangePercent || 0,
-            volume: symbolData.volume || 0,
-            high: symbolData.high || null,
-            low: symbolData.low || null,
-            timestamp: Date.now(),
+            if (index >= 0) {
+              // Update existing symbol
+              symbols[index] = {
+                ...symbols[index],
+                ...updatedSymbolData,
+              };
+            } else {
+              // Add new symbol
+              symbols.push({
+                id: symbolData.id || symbolData.name,
+                name: symbolData.name,
+                price: price || 0,
+                bidPrice,
+                askPrice,
+                priceChangePercent: symbolData.priceChangePercent || 0,
+                volume: symbolData.volume || 0,
+                high: symbolData.high || null,
+                low: symbolData.low || null,
+                timestamp: Date.now(),
+              });
+            }
+
+            return { symbols };
           });
-        }
+        },
 
-        return { symbols };
-      });
-    },
+        updateSymbols: (symbolsData) => {
+          symbolsData.forEach((symbolData) => {
+            get().updateSymbol(symbolData);
+          });
+        },
 
-    // Update multiple symbols at once
-    updateSymbols: (symbolsData) => {
-      symbolsData.forEach((symbolData) => {
-        get().updateSymbol(symbolData);
-      });
-    },
+        addToFavorites: (symbolName) => {
+          set((state) => {
+            if (state.favoriteSymbols.includes(symbolName)) {
+              return state;
+            }
+            return {
+              favoriteSymbols: [...state.favoriteSymbols, symbolName],
+            };
+          });
+        },
 
-    // Add a symbol to favorites
-    addToFavorites: (symbolName) => {
-      set((state) => {
-        if (state.favoriteSymbols.includes(symbolName)) {
-          return state;
-        }
-        return {
-          favoriteSymbols: [...state.favoriteSymbols, symbolName],
-        };
-      });
-    },
+        removeFromFavorites: (symbolName) => {
+          set((state) => ({
+            favoriteSymbols: state.favoriteSymbols.filter(
+              (s) => s !== symbolName
+            ),
+          }));
+        },
 
-    // Remove a symbol from favorites
-    removeFromFavorites: (symbolName) => {
-      set((state) => ({
-        favoriteSymbols: state.favoriteSymbols.filter((s) => s !== symbolName),
-      }));
-    },
+        reorderFavorites: (newOrder) => {
+          set({ favoriteSymbols: newOrder });
+        },
 
-    // Reset store to initial state
-    reset: () => set(initialState),
-  }))
+        reset: () => set(initialState),
+      }),
+      {
+        name: "market-data-storage",
+        partialize: (state) => ({ favoriteSymbols: state.favoriteSymbols }),
+      }
+    )
+  )
 );
 
 // Helper hook to calculate bid/ask with spread

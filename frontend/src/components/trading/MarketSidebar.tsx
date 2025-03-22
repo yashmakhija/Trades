@@ -16,11 +16,31 @@ import {
   Bitcoin,
   Euro,
   CandlestickChart,
+  GripVertical,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useWebSocketStore } from "@/services/websocket";
 import { useMarketDataStore } from "@/store/use-market-data-store";
+import { MarketSymbol } from "@/store/use-market-data-store";
 import { DEFAULT_SYMBOLS } from "@/config";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+  DragStartEvent,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 interface MarketSidebarProps {
   className?: string;
@@ -62,6 +82,171 @@ function getSymbolIcon(symbol: string) {
   return <CandlestickChart className="h-4 w-4 text-gray-400" />;
 }
 
+interface SortableMarketItemProps {
+  symbol: MarketSymbol;
+  currentSymbol: string;
+  onClick: () => void;
+  getPriceChangeClass: (
+    symbol: string,
+    type: "bid" | "ask",
+    currentPrice: number
+  ) => string;
+}
+
+function SortableMarketItem({
+  symbol,
+  currentSymbol,
+  ...props
+}: SortableMarketItemProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: symbol.name });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+
+  const { favoriteSymbols, addToFavorites, removeFromFavorites } =
+    useMarketDataStore();
+
+  const toggleFavorite = (e: React.MouseEvent, symbolName: string) => {
+    e.stopPropagation();
+
+    if (favoriteSymbols.includes(symbolName)) {
+      removeFromFavorites(symbolName);
+    } else {
+      addToFavorites(symbolName);
+    }
+  };
+
+  const formatPercentChange = (change: number) => {
+    return `${change >= 0 ? "+" : ""}${change.toFixed(2)}%`;
+  };
+
+  const formatPrice = (price: number) => {
+    if (!price) return "0.00";
+
+    if (price >= 1000) {
+      return price.toFixed(2);
+    } else if (price >= 100) {
+      return price.toFixed(2);
+    } else if (price >= 1) {
+      return price.toFixed(4);
+    } else {
+      return price.toFixed(5);
+    }
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...props}
+      className={cn(
+        "hover:bg-muted/30 cursor-pointer transition-colors border-b border-border/40 favorite-item-highlight",
+        symbol.name === currentSymbol && "bg-muted/60 font-medium",
+        isDragging ? "sortable-item-dragging" : "sortable-item-transition",
+        favoriteSymbols.includes(symbol.name) && "favorite-item-highlight"
+      )}
+    >
+      <div className="px-3 py-2.5">
+        <div className="flex items-center gap-1.5 mb-1">
+          <button
+            onClick={(e) => toggleFavorite(e, symbol.name)}
+            className="text-muted-foreground hover:text-foreground focus:outline-none transition-colors"
+          >
+            {favoriteSymbols.includes(symbol.name) ? (
+              <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
+            ) : (
+              <StarOff className="h-3.5 w-3.5" />
+            )}
+          </button>
+          <div className="flex items-center gap-1.5 flex-1">
+            {getSymbolIcon(symbol.name)}
+            <span className="uppercase font-medium text-sm">{symbol.name}</span>
+          </div>
+          {favoriteSymbols.includes(symbol.name) && (
+            <div
+              className="cursor-grab active:cursor-grabbing text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+              {...attributes}
+              {...listeners}
+            >
+              <GripVertical className="h-4 w-4" />
+            </div>
+          )}
+        </div>
+
+        <div className="grid grid-cols-3 gap-2">
+          <div className="flex flex-col items-center">
+            <div
+              className={cn(
+                "w-full text-center font-mono text-xs font-medium rounded px-1 py-0.5 transition-colors",
+                props.getPriceChangeClass(
+                  symbol.name,
+                  "bid",
+                  symbol.bidPrice || 0
+                )
+              )}
+            >
+              {formatPrice(symbol.bidPrice || 0)}
+            </div>
+            <span className="text-[10px] text-muted-foreground mt-0.5">
+              BID
+            </span>
+          </div>
+
+          <div className="flex flex-col items-center">
+            <div
+              className={cn(
+                "w-full text-center font-mono text-xs font-medium rounded px-1 py-0.5 transition-colors",
+                props.getPriceChangeClass(
+                  symbol.name,
+                  "ask",
+                  symbol.askPrice || 0
+                )
+              )}
+            >
+              {formatPrice(symbol.askPrice || 0)}
+            </div>
+            <span className="text-[10px] text-muted-foreground mt-0.5">
+              ASK
+            </span>
+          </div>
+
+          <div className="flex flex-col items-center">
+            <div
+              className={cn(
+                "w-full flex items-center justify-center gap-0.5 rounded px-1 py-0.5",
+                symbol.priceChangePercent >= 0
+                  ? "bg-green-500/10 text-green-500"
+                  : "bg-red-500/10 text-red-500"
+              )}
+            >
+              {symbol.priceChangePercent >= 0 ? (
+                <TrendingUp className="h-3 w-3 flex-shrink-0" />
+              ) : (
+                <TrendingDown className="h-3 w-3 flex-shrink-0" />
+              )}
+              <span className="tabular-nums text-xs font-medium">
+                {formatPercentChange(symbol.priceChangePercent)}
+              </span>
+            </div>
+            <span className="text-[10px] text-muted-foreground mt-0.5">
+              24H
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function MarketSidebar({ className }: MarketSidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -72,15 +257,31 @@ export function MarketSidebar({ className }: MarketSidebarProps) {
 
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState<"all" | "favorites">("all");
+  const [, setActiveId] = useState<string | null>(null);
+  const [favoriteOrder, setFavoriteOrder] = useState<string[]>([]);
 
   const { tickerData, connectionState } = useWebSocketStore();
   const {
     symbols: marketSymbols,
     favoriteSymbols,
-    addToFavorites,
-    removeFromFavorites,
     updateSymbol,
+    reorderFavorites,
   } = useMarketDataStore();
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  useEffect(() => {
+    setFavoriteOrder(favoriteSymbols);
+  }, [favoriteSymbols]);
 
   useEffect(() => {
     Object.entries(tickerData).forEach(([symbol, data]) => {
@@ -114,6 +315,15 @@ export function MarketSidebar({ className }: MarketSidebarProps) {
     if (aIsFavorite && !bIsFavorite) return -1;
     if (!aIsFavorite && bIsFavorite) return 1;
 
+    if (aIsFavorite && bIsFavorite) {
+      const aIndex = favoriteOrder.indexOf(a.name);
+      const bIndex = favoriteOrder.indexOf(b.name);
+
+      if (aIndex !== -1 && bIndex !== -1) {
+        return aIndex - bIndex;
+      }
+    }
+
     return a.name.localeCompare(b.name);
   });
 
@@ -124,28 +334,25 @@ export function MarketSidebar({ className }: MarketSidebarProps) {
     router.push(`${pathname}?${params.toString()}`);
   };
 
-  const toggleFavorite = (e: React.MouseEvent, symbolName: string) => {
-    e.stopPropagation();
-
-    if (favoriteSymbols.includes(symbolName)) {
-      removeFromFavorites(symbolName);
-    } else {
-      addToFavorites(symbolName);
-    }
+  const handleDragStart = (event: DragStartEvent) => {
+    setActiveId(event.active.id as string);
   };
 
-  const formatPrice = (price: number) => {
-    if (!price) return "0.00";
-    
-    if (price >= 1000) {
-      return price.toFixed(2);
-    } else if (price >= 100) {
-      return price.toFixed(2);
-    } else if (price >= 1) {
-      return price.toFixed(4);
-    } else {
-      return price.toFixed(5);
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (over && active.id !== over.id) {
+      const activeIndex = favoriteOrder.indexOf(active.id as string);
+      const overIndex = favoriteOrder.indexOf(over.id as string);
+
+      if (activeIndex !== -1 && overIndex !== -1) {
+        const newOrder = arrayMove(favoriteOrder, activeIndex, overIndex);
+        setFavoriteOrder(newOrder);
+        reorderFavorites(newOrder);
+      }
     }
+
+    setActiveId(null);
   };
 
   const formatPercentChange = (change: number) => {
@@ -293,95 +500,162 @@ export function MarketSidebar({ className }: MarketSidebarProps) {
               </div>
             </div>
 
-            {sortedSymbols.map((symbol) => (
-              <div
-                key={symbol.name}
-                onClick={() => handleSelectSymbol(symbol.name)}
-                className={cn(
-                  "hover:bg-muted/30 cursor-pointer transition-colors border-b border-border/40",
-                  symbol.name === currentSymbol && "bg-muted/60 font-medium"
-                )}
-              >
-                <div className="px-3 py-2.5">
-                  <div className="flex items-center gap-1.5 mb-1">
-                    <button
-                      onClick={(e) => toggleFavorite(e, symbol.name)}
-                      className="text-muted-foreground hover:text-foreground focus:outline-none transition-colors"
-                    >
-                      {favoriteSymbols.includes(symbol.name) ? (
-                        <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
-                      ) : (
-                        <StarOff className="h-3.5 w-3.5" />
-                      )}
-                    </button>
-                    <div className="flex items-center gap-1.5 flex-1">
-                      {getSymbolIcon(symbol.name)}
-                      <span className="uppercase font-medium text-sm">
-                        {symbol.name}
-                      </span>
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragStart={handleDragStart}
+              onDragEnd={handleDragEnd}
+              modifiers={[]}
+            >
+              {activeTab === "favorites" && favoriteSymbols.length > 0 ? (
+                <SortableContext
+                  items={sortedSymbols.map((s) => s.name)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  {sortedSymbols.map((symbol) => (
+                    <SortableMarketItem
+                      key={symbol.name}
+                      symbol={symbol}
+                      currentSymbol={currentSymbol}
+                      onClick={() => handleSelectSymbol(symbol.name)}
+                      getPriceChangeClass={getPriceChangeClass}
+                    />
+                  ))}
+                </SortableContext>
+              ) : (
+                sortedSymbols.map((symbol) => (
+                  <div
+                    key={symbol.name}
+                    onClick={() => handleSelectSymbol(symbol.name)}
+                    className={cn(
+                      "hover:bg-muted/30 cursor-pointer transition-colors border-b border-border/40",
+                      symbol.name === currentSymbol &&
+                        "bg-muted/60 font-medium",
+                      favoriteSymbols.includes(symbol.name) &&
+                        "favorite-item-highlight"
+                    )}
+                  >
+                    <div className="px-3 py-2.5">
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <button
+                          onClick={(e) => toggleFavorite(e, symbol.name)}
+                          className="text-muted-foreground hover:text-foreground focus:outline-none transition-colors"
+                        >
+                          {favoriteSymbols.includes(symbol.name) ? (
+                            <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
+                          ) : (
+                            <StarOff className="h-3.5 w-3.5" />
+                          )}
+                        </button>
+                        <div className="flex items-center gap-1.5 flex-1">
+                          {getSymbolIcon(symbol.name)}
+                          <span className="uppercase font-medium text-sm">
+                            {symbol.name}
+                          </span>
+                        </div>
+                        {favoriteSymbols.includes(symbol.name) && (
+                          <div className="text-muted-foreground/30">
+                            <GripVertical className="h-4 w-4 opacity-30" />
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-2">
+                        <div className="flex flex-col items-center">
+                          <div
+                            className={cn(
+                              "w-full text-center font-mono text-xs font-medium rounded px-1 py-0.5 transition-colors",
+                              getPriceChangeClass(
+                                symbol.name,
+                                "bid",
+                                symbol.bidPrice || 0
+                              )
+                            )}
+                          >
+                            {formatPrice(symbol.bidPrice || 0)}
+                          </div>
+                          <span className="text-[10px] text-muted-foreground mt-0.5">
+                            BID
+                          </span>
+                        </div>
+
+                        <div className="flex flex-col items-center">
+                          <div
+                            className={cn(
+                              "w-full text-center font-mono text-xs font-medium rounded px-1 py-0.5 transition-colors",
+                              getPriceChangeClass(
+                                symbol.name,
+                                "ask",
+                                symbol.askPrice || 0
+                              )
+                            )}
+                          >
+                            {formatPrice(symbol.askPrice || 0)}
+                          </div>
+                          <span className="text-[10px] text-muted-foreground mt-0.5">
+                            ASK
+                          </span>
+                        </div>
+
+                        <div className="flex flex-col items-center">
+                          <div
+                            className={cn(
+                              "w-full flex items-center justify-center gap-0.5 rounded px-1 py-0.5",
+                              symbol.priceChangePercent >= 0
+                                ? "bg-green-500/10 text-green-500"
+                                : "bg-red-500/10 text-red-500"
+                            )}
+                          >
+                            {symbol.priceChangePercent >= 0 ? (
+                              <TrendingUp className="h-3 w-3 flex-shrink-0" />
+                            ) : (
+                              <TrendingDown className="h-3 w-3 flex-shrink-0" />
+                            )}
+                            <span className="tabular-nums text-xs font-medium">
+                              {formatPercentChange(symbol.priceChangePercent)}
+                            </span>
+                          </div>
+                          <span className="text-[10px] text-muted-foreground mt-0.5">
+                            24H
+                          </span>
+                        </div>
+                      </div>
                     </div>
                   </div>
-
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="flex flex-col items-center">
-                      <div
-                        className={cn(
-                          "w-full text-center font-mono text-xs font-medium rounded px-1 py-0.5 transition-colors",
-                          getPriceChangeClass(
-                            symbol.name,
-                            "bid",
-                            symbol.bidPrice || 0
-                          )
-                        )}
-                      >
-                        {formatPrice(symbol.bidPrice || 0)}
-                      </div>
-                      <span className="text-[10px] text-muted-foreground mt-0.5">BID</span>
-                    </div>
-
-                    <div className="flex flex-col items-center">
-                      <div
-                        className={cn(
-                          "w-full text-center font-mono text-xs font-medium rounded px-1 py-0.5 transition-colors",
-                          getPriceChangeClass(
-                            symbol.name,
-                            "ask",
-                            symbol.askPrice || 0
-                          )
-                        )}
-                      >
-                        {formatPrice(symbol.askPrice || 0)}
-                      </div>
-                      <span className="text-[10px] text-muted-foreground mt-0.5">ASK</span>
-                    </div>
-
-                    <div className="flex flex-col items-center">
-                      <div
-                        className={cn(
-                          "w-full flex items-center justify-center gap-0.5 rounded px-1 py-0.5",
-                          symbol.priceChangePercent >= 0
-                            ? "bg-green-500/10 text-green-500"
-                            : "bg-red-500/10 text-red-500"
-                        )}
-                      >
-                        {symbol.priceChangePercent >= 0 ? (
-                          <TrendingUp className="h-3 w-3 flex-shrink-0" />
-                        ) : (
-                          <TrendingDown className="h-3 w-3 flex-shrink-0" />
-                        )}
-                        <span className="tabular-nums text-xs font-medium">
-                          {formatPercentChange(symbol.priceChangePercent)}
-                        </span>
-                      </div>
-                      <span className="text-[10px] text-muted-foreground mt-0.5">24H</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
+                ))
+              )}
+            </DndContext>
           </div>
         )}
       </div>
     </Card>
   );
+}
+
+// Helper function to toggle favorites
+function toggleFavorite(e: React.MouseEvent, symbolName: string) {
+  const { favoriteSymbols, addToFavorites, removeFromFavorites } =
+    useMarketDataStore.getState();
+  e.stopPropagation();
+
+  if (favoriteSymbols.includes(symbolName)) {
+    removeFromFavorites(symbolName);
+  } else {
+    addToFavorites(symbolName);
+  }
+}
+
+// Helper function to format price
+function formatPrice(price: number): string {
+  if (!price) return "0.00";
+
+  if (price >= 1000) {
+    return price.toFixed(2);
+  } else if (price >= 100) {
+    return price.toFixed(2);
+  } else if (price >= 1) {
+    return price.toFixed(4);
+  } else {
+    return price.toFixed(5);
+  }
 }
