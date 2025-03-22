@@ -136,7 +136,7 @@ export function MarketSidebar({ className }: MarketSidebarProps) {
 
   const formatPrice = (price: number) => {
     if (!price) return "0.00";
-
+    
     if (price >= 1000) {
       return price.toFixed(2);
     } else if (price >= 100) {
@@ -336,9 +336,7 @@ export function MarketSidebar({ className }: MarketSidebarProps) {
                       >
                         {formatPrice(symbol.bidPrice || 0)}
                       </div>
-                      <span className="text-[10px] text-muted-foreground mt-0.5">
-                        BID
-                      </span>
+                      <span className="text-[10px] text-muted-foreground mt-0.5">BID</span>
                     </div>
 
                     <div className="flex flex-col items-center">
@@ -354,9 +352,7 @@ export function MarketSidebar({ className }: MarketSidebarProps) {
                       >
                         {formatPrice(symbol.askPrice || 0)}
                       </div>
-                      <span className="text-[10px] text-muted-foreground mt-0.5">
-                        ASK
-                      </span>
+                      <span className="text-[10px] text-muted-foreground mt-0.5">ASK</span>
                     </div>
 
                     <div className="flex flex-col items-center">
@@ -377,9 +373,7 @@ export function MarketSidebar({ className }: MarketSidebarProps) {
                           {formatPercentChange(symbol.priceChangePercent)}
                         </span>
                       </div>
-                      <span className="text-[10px] text-muted-foreground mt-0.5">
-                        24H
-                      </span>
+                      <span className="text-[10px] text-muted-foreground mt-0.5">24H</span>
                     </div>
                   </div>
                 </div>
