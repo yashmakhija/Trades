@@ -9,6 +9,7 @@ SSH_PORT=22
 DEPLOY_DIR="/yash-code/Trades"
 IMAGE_NAME="trading-app-backend"
 CONTAINER_NAME="trading-backend-2"
+CONTAINER_PORT=3001
 TAG="latest"
 
 # Check if at least host argument is provided
@@ -125,7 +126,7 @@ echo "🚀 Starting new container..."
 docker run -d \\
   --name $CONTAINER_NAME \\
   --restart unless-stopped \\
-  -p 3001:3001 \\
+  -p $CONTAINER_PORT:$CONTAINER_PORT \\
   --network trading-network \\
   --env-file .env \\
   $REMOTE_IMAGE_NAME
