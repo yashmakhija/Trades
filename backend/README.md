@@ -256,3 +256,42 @@ The project includes comprehensive documentation:
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Data Persistence
+
+The application uses Docker volumes for data persistence. Data is stored in an external volume named `trading_db_data`.
+
+### Ensuring Data Persistence
+
+To ensure your data persists across container rebuilds:
+
+1. Never use `docker-compose down -v` as this will remove the volumes and data
+2. Use these commands for rebuilding while preserving data:
+
+```bash
+# Stop containers (keeping volumes)
+docker-compose down
+
+# Rebuild services
+docker-compose build
+
+# Start services with persistent data
+docker-compose up -d
+```
+
+### Database Backup and Restore
+
+Backup and restore scripts are provided:
+
+```bash
+# Create a backup
+./scripts/backup-db.sh
+
+# Restore from a backup
+./scripts/restore-db.sh ./backups/your-backup-file.dump
+```
+
+For detailed information about data persistence, see:
+
+- [docs/docker/DATA-PERSISTENCE.md](./docs/docker/DATA-PERSISTENCE.md)
+- [docs/docker/DATA-PERSISTENCE-FIX.md](./docs/docker/DATA-PERSISTENCE-FIX.md)

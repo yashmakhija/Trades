@@ -11,7 +11,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: trading_app
     volumes:
-      - timescale_data:/var/lib/postgresql/data
+      - trading_db_data:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
@@ -20,6 +20,9 @@ services:
       retries: 5
     networks:
       - trading-network
+    command: >
+      postgres -c shared_preload_libraries=timescaledb
+              -c timescaledb.telemetry_level=off
 
   # Trading app backend
   backend:
@@ -38,15 +41,24 @@ services:
       - JWT_EXPIRES_IN=7d
       - BINANCE_WEBSOCKET_URL=wss://stream.binance.com:9443/ws
       - TRADING_SYMBOLS=btcusdt,ethusdt,bnbusdt,solusdt,adausdt
+      - PRISMA_CLIENT_ENGINE_TYPE=binary
+      - SEED_DATABASE=true
     depends_on:
       timescaledb:
         condition: service_healthy
     networks:
       - trading-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
 volumes:
-  timescale_data:
-    driver: local
+  trading_db_data:
+    name: trading_db_data
+    external: true
 
 networks:
   trading-network:

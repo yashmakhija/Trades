@@ -6,6 +6,8 @@
 
 generator client {
   provider = "prisma-client-js"
+  // Use this setting for better compatibility with TimescaleDB
+  previewFeatures = ["nativeTypes"]
 }
 
 datasource db {

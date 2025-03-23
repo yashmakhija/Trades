@@ -15,6 +15,8 @@ app.use(
       const allowedOrigins = [
         "http://localhost:3000",
         "https://trade.classicoder.com",
+        "https://www.codesquarelabs.com",
+        "https://codesquarelabs.com"
       ];
 
       // Allow requests with no origin (like mobile apps or curl requests)
