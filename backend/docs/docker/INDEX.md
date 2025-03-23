@@ -6,6 +6,8 @@ Welcome to the Docker documentation for the Trading App. This directory contains
 
 - [README.md](./README.md) - General Docker setup and commands
 - [SETUP-WORKFLOW.md](./SETUP-WORKFLOW.md) - Detailed steps to set up and fix the Docker environment
+- [CICD-SETUP.md](./CICD-SETUP.md) - CI/CD configuration for automated Docker deployment
+- [MANUAL-DEPLOY.md](./MANUAL-DEPLOY.md) - Guide for manually deploying to a VPS
 
 ## Quick Links
 
@@ -26,6 +28,20 @@ Welcome to the Docker documentation for the Trading App. This directory contains
 - [Production Deployment](./README.md#production-deployment)
 - [Database Schema Migration](./README.md#database-schema-migration)
 
+### CI/CD
+
+- [Workflow Overview](./CICD-SETUP.md#workflow-overview)
+- [Required GitHub Secrets](./CICD-SETUP.md#required-github-secrets)
+- [VPS Preparation](./CICD-SETUP.md#vps-preparation)
+- [Troubleshooting](./CICD-SETUP.md#troubleshooting)
+
+### Manual Deployment
+
+- [Deployment Script Usage](./MANUAL-DEPLOY.md#usage)
+- [VPS Preparation](./MANUAL-DEPLOY.md#vps-preparation)
+- [Verification Steps](./MANUAL-DEPLOY.md#verifying-deployment)
+- [Troubleshooting](./MANUAL-DEPLOY.md#troubleshooting)
+
 ### Help
 
 - [Common Issues](./README.md#common-issues)
@@ -38,7 +54,9 @@ Welcome to the Docker documentation for the Trading App. This directory contains
 docs/docker/
 ├── INDEX.md                # This file - Overview and navigation
 ├── README.md               # General Docker setup and commands
-└── SETUP-WORKFLOW.md       # Detailed setup process
+├── SETUP-WORKFLOW.md       # Detailed setup process
+├── CICD-SETUP.md           # CI/CD configuration for automated deployment
+└── MANUAL-DEPLOY.md        # Manual deployment guide
 ```
 
 ## Getting Started
@@ -47,7 +65,9 @@ If you're new to this project's Docker setup, we recommend reading the documenta
 
 1. Start with [SETUP-WORKFLOW.md](./SETUP-WORKFLOW.md) to understand the environment
 2. Review [README.md](./README.md) for general usage and commands
-3. Refer to specific sections as needed during development
+3. If you're setting up CI/CD, refer to [CICD-SETUP.md](./CICD-SETUP.md)
+4. For manual deployment, see [MANUAL-DEPLOY.md](./MANUAL-DEPLOY.md)
+5. Refer to specific sections as needed during development
 
 ## Contributing to Documentation
 
