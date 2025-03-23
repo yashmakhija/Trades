@@ -18,27 +18,36 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - trading-network
 
   # Trading app backend
   backend:
     build:
       context: .
       dockerfile: Dockerfile
+    container_name: trading-backend
+    restart: unless-stopped
     ports:
       - "3001:3001"
     environment:
-      - PORT=3001
       - NODE_ENV=production
       - DATABASE_URL=postgresql://postgres:postgres@timescaledb:5432/trading_app?schema=public
-      - JWT_SECRET=change_this_in_production
+      - PORT=3001
+      - JWT_SECRET=super-secure-jwt-secret-for-development
       - JWT_EXPIRES_IN=7d
       - BINANCE_WEBSOCKET_URL=wss://stream.binance.com:9443/ws
       - TRADING_SYMBOLS=btcusdt,ethusdt,bnbusdt,solusdt,adausdt
     depends_on:
       timescaledb:
         condition: service_healthy
-    restart: unless-stopped
+    networks:
+      - trading-network
 
 volumes:
   timescale_data:
     driver: local
+
+networks:
+  trading-network:
+    driver: bridge
