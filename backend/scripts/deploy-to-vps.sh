@@ -6,171 +6,147 @@ set -e
 
 # Default values
 SSH_PORT=22
-DEPLOY_DIR="/opt/trading-app"
+DEPLOY_DIR="/yash-code/Trades"
+IMAGE_NAME="trading-app-backend"
+CONTAINER_NAME="trading-backend-2"
+TAG="latest"
 
-# Process arguments
-if [ -z "$1" ]; then
-    echo "Error: SSH host is required."
-    echo "Usage: ./deploy-to-vps.sh user@host [port] [directory]"
+# Check if at least host argument is provided
+if [ $# -lt 1 ]; then
+    echo "Usage: $0 [user@host] [port] [directory]"
+    echo "Example: $0 user@example.com 22 /yash-code/Trades"
     exit 1
 fi
 
-SSH_HOST="$1"
+# Parse arguments
+SSH_HOST=$1
+[ $# -ge 2 ] && SSH_PORT=$2
+[ $# -ge 3 ] && DEPLOY_DIR=$3
 
-if [ ! -z "$2" ]; then
-    SSH_PORT="$2"
-fi
-
-if [ ! -z "$3" ]; then
-    DEPLOY_DIR="$3"
-fi
-
-# Colors for output
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m' # No Color
-
-echo -e "${YELLOW}=== Trading App Backend Manual Deployment ===${NC}"
-echo -e "${YELLOW}Host:${NC} $SSH_HOST"
-echo -e "${YELLOW}Port:${NC} $SSH_PORT"
-echo -e "${YELLOW}Directory:${NC} $DEPLOY_DIR"
+# Display deployment info
+echo "Deploying to:"
+echo "  Host: $SSH_HOST"
+echo "  Port: $SSH_PORT"
+echo "  Directory: $DEPLOY_DIR"
 echo
 
-# Check if .env exists
-if [ ! -f ../.env ]; then
-    echo -e "${RED}Error: .env file not found in the parent directory.${NC}"
-    echo "Please create a .env file with your production environment variables."
+# Function to check if command exists
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+# Check if Docker is installed
+if ! command_exists docker; then
+    echo "❌ Docker is not installed. Please install Docker first."
     exit 1
 fi
 
-# Build Docker image
-echo -e "${YELLOW}Building Docker image...${NC}"
-cd ..
-docker build -t trading-app-backend:deploy .
+# Change to backend directory
+cd "$(dirname "$0")/.." || exit 1
 
-# Tag the image
-echo -e "${YELLOW}Tagging image...${NC}"
-DOCKER_USERNAME=$(grep DOCKER_HUB_USERNAME .env | cut -d '=' -f2)
-if [ -z "$DOCKER_USERNAME" ]; then
-    echo -e "${YELLOW}DOCKER_HUB_USERNAME not found in .env, using 'local' as the username.${NC}"
-    DOCKER_USERNAME="local"
-fi
-docker tag trading-app-backend:deploy $DOCKER_USERNAME/trading-app-backend:latest
+# Build the Docker image
+echo "🔨 Building Docker image..."
+docker build -t $IMAGE_NAME:$TAG .
 
-# Ask if the user wants to push to Docker Hub
-echo -e "${YELLOW}Do you want to push the image to Docker Hub? (y/n)${NC}"
-read -r PUSH_TO_DOCKERHUB
-
-if [[ "$PUSH_TO_DOCKERHUB" =~ ^[Yy]$ ]]; then
-    echo -e "${YELLOW}Pushing to Docker Hub...${NC}"
-    docker push $DOCKER_USERNAME/trading-app-backend:latest
+# Prompt for Docker Hub upload
+read -p "Do you want to push the image to Docker Hub? (y/n): " PUSH_TO_DOCKER_HUB
+if [[ $PUSH_TO_DOCKER_HUB =~ ^[Yy]$ ]]; then
+    # Ask for Docker Hub username
+    read -p "Enter your Docker Hub username: " DOCKER_USERNAME
     
-    # Create deployment script with Docker Hub image
-    DEPLOY_SCRIPT=$(cat <<EOF
-#!/bin/bash
-set -e
-
-# Create directory if it doesn't exist
-mkdir -p $DEPLOY_DIR
-cd $DEPLOY_DIR
-
-# Pull the latest image
-docker pull $DOCKER_USERNAME/trading-app-backend:latest
-
-# Stop and remove existing container
-docker stop trading-backend || true
-docker rm trading-backend || true
-
-# Run the new container
-docker run -d \\
-  --name trading-backend \\
-  --restart unless-stopped \\
-  -p 3001:3001 \\
-  --env-file .env \\
-  --network trading-network \\
-  $DOCKER_USERNAME/trading-app-backend:latest
-
-echo "Deployment completed successfully!"
-EOF
-    )
+    # Tag the image for Docker Hub
+    DOCKER_HUB_IMAGE="$DOCKER_USERNAME/$IMAGE_NAME:$TAG"
+    docker tag $IMAGE_NAME:$TAG $DOCKER_HUB_IMAGE
+    
+    # Push to Docker Hub
+    echo "🚀 Pushing image to Docker Hub as $DOCKER_HUB_IMAGE..."
+    docker push $DOCKER_HUB_IMAGE
+    
+    # Use this image for deployment
+    REMOTE_IMAGE_NAME=$DOCKER_HUB_IMAGE
+    DEPLOYMENT_METHOD="docker-hub"
 else
-    echo -e "${YELLOW}Skipping Docker Hub push. Will export image to tar file and transfer it.${NC}"
-    
     # Save image to tar file
-    echo -e "${YELLOW}Saving image to tar file...${NC}"
-    docker save -o trading-app-backend.tar $DOCKER_USERNAME/trading-app-backend:latest
+    echo "📦 Saving Docker image to tar file..."
+    docker save $IMAGE_NAME:$TAG > ${IMAGE_NAME}.tar
     
-    # Create deployment script with local image
-    DEPLOY_SCRIPT=$(cat <<EOF
+    # Use local image for deployment
+    REMOTE_IMAGE_NAME=$IMAGE_NAME:$TAG
+    DEPLOYMENT_METHOD="tar-file"
+fi
+
+# Transfer files to VPS
+echo "🚢 Transferring files to $SSH_HOST..."
+ssh -p $SSH_PORT $SSH_HOST "mkdir -p $DEPLOY_DIR"
+
+# Copy .env file if it exists
+if [ -f ".env" ]; then
+    echo "📄 Copying .env file..."
+    scp -P $SSH_PORT .env $SSH_HOST:$DEPLOY_DIR/.env
+else
+    echo "⚠️ No .env file found. Make sure environment variables are set on the remote server."
+fi
+
+# Handle deployment based on method
+if [ "$DEPLOYMENT_METHOD" = "tar-file" ]; then
+    echo "📤 Copying Docker image to server..."
+    scp -P $SSH_PORT ${IMAGE_NAME}.tar $SSH_HOST:$DEPLOY_DIR/
+    
+    # Load the image on the remote server
+    ssh -p $SSH_PORT $SSH_HOST "cd $DEPLOY_DIR && docker load < ${IMAGE_NAME}.tar && rm ${IMAGE_NAME}.tar"
+else
+    # Pull the image on the remote server
+    echo "📥 Pulling Docker image on server..."
+    ssh -p $SSH_PORT $SSH_HOST "docker pull $REMOTE_IMAGE_NAME"
+fi
+
+# Create deployment script
+cat > deploy-remote.sh << EOL
 #!/bin/bash
 set -e
 
-# Create directory if it doesn't exist
-mkdir -p $DEPLOY_DIR
 cd $DEPLOY_DIR
 
-# Load the image from tar file
-docker load -i trading-app-backend.tar
+# Create Docker network if not exists
+if ! docker network inspect trading-network >/dev/null 2>&1; then
+  echo "🌐 Creating Docker network: trading-network"
+  docker network create trading-network
+fi
 
-# Stop and remove existing container
-docker stop trading-backend || true
-docker rm trading-backend || true
+# Stop and remove existing container if it exists
+if docker ps -a | grep -q $CONTAINER_NAME; then
+  echo "🛑 Stopping and removing existing container..."
+  docker stop $CONTAINER_NAME || true
+  docker rm $CONTAINER_NAME || true
+fi
 
 # Run the new container
+echo "🚀 Starting new container..."
 docker run -d \\
-  --name trading-backend \\
+  --name $CONTAINER_NAME \\
   --restart unless-stopped \\
   -p 3001:3001 \\
-  --env-file .env \\
   --network trading-network \\
-  $DOCKER_USERNAME/trading-app-backend:latest
+  --env-file .env \\
+  $REMOTE_IMAGE_NAME
+
+# Verify container is running
+docker ps | grep $CONTAINER_NAME
+echo "✅ Deployment complete!"
+EOL
+
+# Transfer and execute deployment script
+chmod +x deploy-remote.sh
+scp -P $SSH_PORT deploy-remote.sh $SSH_HOST:/tmp/deploy-remote.sh
+ssh -p $SSH_PORT $SSH_HOST "bash /tmp/deploy-remote.sh && rm /tmp/deploy-remote.sh"
 
 # Clean up
-rm trading-app-backend.tar
-
-echo "Deployment completed successfully!"
-EOF
-    )
+if [ "$DEPLOYMENT_METHOD" = "tar-file" ]; then
+    rm ${IMAGE_NAME}.tar
 fi
+rm deploy-remote.sh
 
-# Create temporary deployment script
-echo "$DEPLOY_SCRIPT" > deploy-temp.sh
-chmod +x deploy-temp.sh
-
-# Copy .env file
-echo -e "${YELLOW}Copying .env file...${NC}"
-scp -P $SSH_PORT .env $SSH_HOST:$DEPLOY_DIR/.env
-
-if [[ "$PUSH_TO_DOCKERHUB" =~ ^[Yy]$ ]]; then
-    # Copy deployment script to server
-    echo -e "${YELLOW}Copying deployment script to server...${NC}"
-    scp -P $SSH_PORT deploy-temp.sh $SSH_HOST:$DEPLOY_DIR/deploy.sh
-    
-    # Execute deployment script
-    echo -e "${YELLOW}Executing deployment script on server...${NC}"
-    ssh -p $SSH_PORT $SSH_HOST "cd $DEPLOY_DIR && chmod +x deploy.sh && ./deploy.sh"
-else
-    # Copy tar file to server
-    echo -e "${YELLOW}Copying image to server (this may take a while)...${NC}"
-    scp -P $SSH_PORT trading-app-backend.tar $SSH_HOST:$DEPLOY_DIR/trading-app-backend.tar
-    
-    # Copy deployment script to server
-    echo -e "${YELLOW}Copying deployment script to server...${NC}"
-    scp -P $SSH_PORT deploy-temp.sh $SSH_HOST:$DEPLOY_DIR/deploy.sh
-    
-    # Execute deployment script
-    echo -e "${YELLOW}Executing deployment script on server...${NC}"
-    ssh -p $SSH_PORT $SSH_HOST "cd $DEPLOY_DIR && chmod +x deploy.sh && ./deploy.sh"
-    
-    # Clean up local tar file
-    rm trading-app-backend.tar
-fi
-
-# Clean up temporary script
-rm deploy-temp.sh
-
-echo -e "${GREEN}=== Deployment Complete ===${NC}"
+echo "✅ Deployment completed successfully!"
 echo -e "${YELLOW}To verify deployment:${NC}"
 echo -e "1. SSH into your server: ssh -p $SSH_PORT $SSH_HOST"
 echo -e "2. Check if container is running: docker ps | grep trading-backend"

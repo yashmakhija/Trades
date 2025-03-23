@@ -1,187 +1,230 @@
 # Manual Deployment to VPS
 
-This guide explains how to manually deploy the Trading App backend to a VPS using the provided deployment script.
+This document guides you through manually deploying the Trading App backend to a Virtual Private Server (VPS).
 
 ## Prerequisites
 
-Before you begin, make sure you have:
+Before you begin the deployment process, ensure you have:
 
-1. SSH access to your VPS
-2. Docker installed on your local machine and VPS
-3. Properly configured `.env` file with production settings
-4. Docker network `trading-network` created on your VPS
-
-## Deployment Script
-
-We provide a deployment script in `scripts/deploy-to-vps.sh` which automates the process of:
-
-1. Building a Docker image
-2. Optionally pushing it to Docker Hub
-3. Transferring necessary files to your VPS
-4. Setting up and running the container on your VPS
+- SSH access to your VPS
+- Docker installed on your VPS
+- A properly configured `.env` file with all required environment variables
+- Docker network named `trading-network` on your VPS (the script will create this if it doesn't exist)
 
 ## Usage
 
+The deployment script is located at `scripts/deploy-to-vps.sh` and automates the following tasks:
+
+1. Building a Docker image of the backend
+2. Optionally pushing it to Docker Hub
+3. Transferring necessary files to your VPS
+4. Starting the container on your VPS
+
+To use the script, run:
+
 ```bash
-cd backend/scripts
 ./deploy-to-vps.sh [user@host] [port] [directory]
 ```
 
-### Parameters
+### Parameters:
 
-- `user@host`: (Required) SSH user and host of your VPS (e.g., `root@123.456.789.123`)
-- `port`: (Optional) SSH port (default: `22`)
-- `directory`: (Optional) Deployment directory on the VPS (default: `/opt/trading-app`)
+- `user@host` (required): SSH username and hostname/IP of your VPS
+- `port` (optional): SSH port (default: 22)
+- `directory` (optional): Deployment directory on VPS (default: `/yash-code/Trades`)
 
-### Example
+Example:
 
 ```bash
-./deploy-to-vps.sh root@123.456.789.123 22 /opt/trading-app
+./deploy-to-vps.sh root@123.456.789.012 22 /yash-code/Trades
 ```
 
-## Options During Deployment
+### Deployment Options:
 
-The script will prompt you to decide whether to push the Docker image to Docker Hub:
+During deployment, you'll be asked if you want to push the Docker image to Docker Hub:
 
-- If you choose **Yes**, the image will be pushed to Docker Hub, and then pulled on your VPS
-- If you choose **No**, the script will pack the image as a `.tar` file and transfer it directly to your VPS
+- If you choose **Yes**, you'll need to provide your Docker Hub username, and the image will be pushed to Docker Hub and then pulled on the VPS.
+- If you choose **No**, the image will be exported as a `.tar` file and transferred directly to the VPS.
 
 ## Environment Variables
 
-Ensure your `.env` file is properly configured with all the necessary environment variables:
+The deployment requires the following environment variables in your `.env` file:
 
 ```
-DATABASE_URL=postgresql://postgres:securepassword@timescaledb:5432/trading_app?schema=public
+DATABASE_URL=postgresql://postgres:postgres@timescaledb:5432/trading_app?schema=public
 PORT=3001
 NODE_ENV=production
 JWT_SECRET=your-secure-jwt-secret
-JWT_EXPIRES_IN=7d
-BINANCE_WEBSOCKET_URL=wss://stream.binance.com:9443/ws
-TRADING_SYMBOLS=btcusdt,ethusdt,bnbusdt,solusdt,adausdt
-DOCKER_HUB_USERNAME=yourusername
 ```
+
+Example values:
+
+- `DATABASE_URL`: Connection string to your database
+- `PORT`: Port on which the backend will run (default: 3001)
+- `NODE_ENV`: Environment (production, development, test)
+- `JWT_SECRET`: Secret key for JWT token generation
 
 ## VPS Preparation
 
-Before running the deployment script, prepare your VPS:
+### Installing Docker (if not already installed)
 
-1. Install Docker:
+```bash
+# Update system packages
+apt update && apt upgrade -y
 
-   ```bash
-   curl -fsSL https://get.docker.com -o get-docker.sh
-   sh get-docker.sh
-   ```
+# Install Docker dependencies
+apt install -y apt-transport-https ca-certificates curl software-properties-common
 
-2. Create the Docker network:
+# Add Docker GPG key
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add -
 
-   ```bash
-   docker network create trading-network
-   ```
+# Add Docker repository
+add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
 
-3. Set up a database (if you're using a local TimescaleDB):
-   ```bash
-   docker run -d \
-     --name timescaledb \
-     -p 5432:5432 \
-     -e POSTGRES_USER=postgres \
-     -e POSTGRES_PASSWORD=securepassword \
-     -e POSTGRES_DB=trading_app \
-     -v timescale_data:/var/lib/postgresql/data \
-     --network trading-network \
-     timescale/timescaledb:latest-pg14
-   ```
+# Update repository information
+apt update
+
+# Install Docker
+apt install -y docker-ce
+
+# Start and enable Docker
+systemctl start docker
+systemctl enable docker
+```
+
+### Creating Docker Network
+
+```bash
+docker network create trading-network
+```
+
+### Setting up a TimescaleDB Database (Optional)
+
+If you want to run a TimescaleDB container on the same VPS:
+
+```bash
+docker run -d \
+  --name timescaledb \
+  --network trading-network \
+  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_DB=trading_app \
+  -v timescale_data:/var/lib/postgresql/data \
+  --restart unless-stopped \
+  timescale/timescaledb:latest-pg14
+```
+
+Then update your `.env` file's `DATABASE_URL` to point to this container:
+
+```
+DATABASE_URL=postgresql://postgres:postgres@timescaledb:5432/trading_app?schema=public
+```
 
 ## Verifying Deployment
 
-After the script finishes, verify that everything is working correctly:
+After deployment, you should verify that everything is working correctly.
 
-1. Check if the container is running:
+### Check Container Status
 
-   ```bash
-   docker ps | grep trading-backend
-   ```
+```bash
+docker ps | grep trading-backend-2
+```
 
-2. Check the container logs:
+### View Container Logs
 
-   ```bash
-   docker logs trading-backend
-   ```
+```bash
+docker logs trading-backend-2
+```
 
-3. Test the health endpoint:
-   ```bash
-   curl http://localhost:3001/health
-   ```
+### Test Health Endpoint
+
+```bash
+curl http://localhost:3001/health
+```
 
 ## Troubleshooting
 
-If you encounter issues:
+### Connection Error
 
-1. **Connection refused**:
+If you can't connect to the deployed API, ensure the port is open in your firewall:
 
-   - Ensure the port is open in your firewall
-   - Verify the Docker container is running
+```bash
+ufw allow 3001/tcp
+```
 
-2. **Database connection error**:
+### Database Connection Error
 
-   - Check your `DATABASE_URL` environment variable
-   - Ensure the database is running and accessible on the Docker network
+If the application can't connect to the database, verify:
 
-3. **Permission denied**:
+1. The database container is running (if using a containerized database)
+2. The `DATABASE_URL` is correct
+3. The Docker network is properly configured
 
-   - Check your SSH key permissions
-   - Ensure you have write access to the deployment directory
+### Permission Issues
 
-4. **Docker network issues**:
-   - Verify the network exists: `docker network ls`
-   - Check container network connections: `docker network inspect trading-network`
+If permission errors occur during deployment, ensure your SSH user has the necessary permissions.
 
-## Security Considerations
+### Docker Network Issues
 
-For enhanced security in production:
+If containers can't communicate, ensure they're on the same Docker network:
 
-1. Use non-root user for SSH access
-2. Set up a firewall (UFW or iptables)
-3. Use HTTPS with a reverse proxy
-4. Use strong, unique passwords for all services
-5. Regularly update your system and Docker images
+```bash
+docker network inspect trading-network
+```
 
-## Additional Configuration
+## Security Considerations for Production
 
-### Setting up a Reverse Proxy
+For production environments, consider:
 
-For production deployments, you should use a reverse proxy like Nginx:
+1. Using non-root SSH access with key authentication
+2. Setting up a firewall (ufw or firewalld)
+3. Using HTTPS with a reverse proxy (Nginx, Traefik)
+4. Regularly updating your server and Docker images
+5. Using Docker Compose for managing multiple services
+6. Implementing proper logging and monitoring
+
+## Setting up a Reverse Proxy (Nginx)
+
+For production, it's recommended to set up a reverse proxy:
 
 ```bash
 # Install Nginx
-apt-get update
-apt-get install -y nginx certbot python3-certbot-nginx
+apt install -y nginx
 
-# Configure Nginx
-cat > /etc/nginx/sites-available/trading-app << EOL
+# Create Nginx configuration
+cat > /etc/nginx/sites-available/trading-app << 'EOF'
 server {
     listen 80;
-    server_name yourdomain.com;
+    server_name api.yourdomain.com;
 
     location / {
         proxy_pass http://localhost:3001;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
-        proxy_set_header Host \$host;
-        proxy_cache_bypass \$http_upgrade;
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
     }
 }
-EOL
+EOF
 
 # Enable the site
 ln -s /etc/nginx/sites-available/trading-app /etc/nginx/sites-enabled/
 
-# Verify Nginx config
+# Test Nginx configuration
 nginx -t
 
 # Restart Nginx
 systemctl restart nginx
-
-# Obtain SSL certificate
-certbot --nginx -d yourdomain.com
 ```
+
+### Setting up SSL with Certbot
+
+```bash
+# Install Certbot
+apt install -y certbot python3-certbot-nginx
+
+# Obtain and install SSL certificate
+certbot --nginx -d api.yourdomain.com
+```
+
+This will automatically configure HTTPS for your domain.
