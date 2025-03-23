@@ -9,8 +9,14 @@ SSH_PORT=22
 DEPLOY_DIR="/yash-code/Trades"
 IMAGE_NAME="trading-app-backend"
 CONTAINER_NAME="trading-backend-2"
+DB_CONTAINER_NAME="timescaledb"
 CONTAINER_PORT=3001
 TAG="latest"
+
+# Database credentials
+DB_USER="postgres"
+DB_PASSWORD="postgres"
+DB_NAME="trading_app"
 
 # Check if at least host argument is provided
 if [ $# -lt 1 ]; then
@@ -85,7 +91,7 @@ if [ -f ".env" ]; then
     echo "📄 Copying .env file..."
     scp -P $SSH_PORT .env $SSH_HOST:$DEPLOY_DIR/.env
 else
-    echo "⚠️ No .env file found. Make sure environment variables are set on the remote server."
+    echo "⚠️ No .env file found. Will create one on the server with TimescaleDB connection."
 fi
 
 # Handle deployment based on method
@@ -108,31 +114,75 @@ set -e
 
 cd $DEPLOY_DIR
 
+# Set DATABASE_URL to point to the TimescaleDB container
+DATABASE_URL="postgresql://$DB_USER:$DB_PASSWORD@$DB_CONTAINER_NAME:5432/$DB_NAME?schema=public"
+
 # Create Docker network if not exists
 if ! docker network inspect trading-network >/dev/null 2>&1; then
   echo "🌐 Creating Docker network: trading-network"
   docker network create trading-network
 fi
 
-# Stop and remove existing container if it exists
+# Check if TimescaleDB container exists and is running
+if docker ps -a | grep -q $DB_CONTAINER_NAME; then
+  echo "🔍 TimescaleDB container exists"
+  if ! docker ps | grep -q $DB_CONTAINER_NAME; then
+    echo "🔄 Starting existing TimescaleDB container"
+    docker start $DB_CONTAINER_NAME
+  else
+    echo "✅ TimescaleDB container is already running"
+  fi
+else
+  echo "🛠️ Creating and starting TimescaleDB container"
+  docker run -d \\
+    --name $DB_CONTAINER_NAME \\
+    --network trading-network \\
+    -e POSTGRES_USER=$DB_USER \\
+    -e POSTGRES_PASSWORD=$DB_PASSWORD \\
+    -e POSTGRES_DB=$DB_NAME \\
+    -v timescale_data:/var/lib/postgresql/data \\
+    --restart unless-stopped \\
+    timescale/timescaledb:latest-pg14
+    
+  # Wait for database to be ready
+  echo "⏳ Waiting for database to be ready..."
+  sleep 15
+fi
+
+# Stop and remove existing backend container if it exists
 if docker ps -a | grep -q $CONTAINER_NAME; then
-  echo "🛑 Stopping and removing existing container..."
+  echo "🛑 Stopping and removing existing backend container..."
   docker stop $CONTAINER_NAME || true
   docker rm $CONTAINER_NAME || true
 fi
 
+# Create or update .env file
+cat > .env << ENVEOF
+DATABASE_URL=$DATABASE_URL
+JWT_SECRET=your-secure-jwt-secret-for-development
+NODE_ENV=production
+PORT=$CONTAINER_PORT
+ENVEOF
+
+echo "📄 Created .env file with contents:"
+cat .env
+
 # Run the new container
-echo "🚀 Starting new container..."
+echo "🚀 Starting backend container..."
 docker run -d \\
   --name $CONTAINER_NAME \\
   --restart unless-stopped \\
   -p $CONTAINER_PORT:$CONTAINER_PORT \\
   --network trading-network \\
-  --env-file .env \\
+  -e DATABASE_URL="\$DATABASE_URL" \\
+  -e JWT_SECRET="your-secure-jwt-secret-for-development" \\
+  -e NODE_ENV="production" \\
+  -e PORT="$CONTAINER_PORT" \\
   $REMOTE_IMAGE_NAME
 
-# Verify container is running
-docker ps | grep $CONTAINER_NAME
+# Verify containers are running
+echo "🔍 Verifying containers are running:"
+docker ps | grep -E "$CONTAINER_NAME|$DB_CONTAINER_NAME"
 echo "✅ Deployment complete!"
 EOL
 
