@@ -132,9 +132,75 @@ let globalReconnectTimeout: NodeJS.Timeout | null = null;
 let globalHeartbeatInterval: NodeJS.Timeout | null = null;
 let globalReconnectAttempts = 0;
 let globalIsReconnecting = false;
+let globalLastPongReceived = Date.now();
 
 // Create WebSocket store
 export const useWebSocketStore = create<WebSocketStore>((set, get) => {
+  const checkConnectionHealth = () => {
+    const now = Date.now();
+    const timeSinceLastPong = now - globalLastPongReceived;
+
+    if (timeSinceLastPong > 45000 && globalSocketInstance) {
+      console.log(
+        "WebSocket: Connection unhealthy, no pong received for",
+        timeSinceLastPong,
+        "ms"
+      );
+      reconnect();
+      return;
+    }
+
+    if (globalSocketInstance) {
+      switch (globalSocketInstance.readyState) {
+        case WebSocket.CLOSED:
+        case WebSocket.CLOSING:
+          console.log(
+            "WebSocket: Connection is closed or closing, reconnecting"
+          );
+          reconnect();
+          break;
+        case WebSocket.CONNECTING:
+          if (
+            get().connectionState === "connecting" &&
+            timeSinceLastPong > 10000
+          ) {
+            console.log(
+              "WebSocket: Stuck in connecting state, attempting to reconnect"
+            );
+            reconnect();
+          }
+          break;
+      }
+    } else if (get().connectionState !== "connecting") {
+      console.log(
+        "WebSocket: No socket instance but not connecting, reconnecting"
+      );
+      reconnect();
+    }
+  };
+
+  const setupHeartbeat = () => {
+    if (globalHeartbeatInterval) {
+      clearInterval(globalHeartbeatInterval);
+    }
+
+    globalHeartbeatInterval = setInterval(() => {
+      if (
+        globalSocketInstance &&
+        globalSocketInstance.readyState === WebSocket.OPEN
+      ) {
+        try {
+          globalSocketInstance.send(JSON.stringify({ type: "PING" }));
+        } catch (e) {
+          console.error("Error sending PING:", e);
+        }
+
+        // Check connection health on every heartbeat
+        checkConnectionHealth();
+      }
+    }, WS_HEARTBEAT_INTERVAL_MS);
+  };
+
   // Setup WebSocket connection
   const connect = () => {
     console.log("WebSocket: Connect method called");
@@ -176,6 +242,9 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
       // Set up event handlers
       globalSocketInstance.onopen = () => {
         console.log("WebSocket: Connection established");
+
+        // Reset pong timestamp on successful connection
+        globalLastPongReceived = Date.now();
 
         if (globalReconnectTimeout) {
           clearTimeout(globalReconnectTimeout);
@@ -229,22 +298,32 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
           console.log("WebSocket: No symbols to resubscribe to");
         }
 
-        // Set up heartbeat
-        if (globalHeartbeatInterval) {
-          clearInterval(globalHeartbeatInterval);
-        }
-
-        globalHeartbeatInterval = setInterval(() => {
-          if (
-            globalSocketInstance &&
-            globalSocketInstance.readyState === WebSocket.OPEN
-          ) {
-            globalSocketInstance.send(JSON.stringify({ type: "PING" }));
-          }
-        }, WS_HEARTBEAT_INTERVAL_MS);
+        // Setup heartbeat with health checks
+        setupHeartbeat();
       };
 
       globalSocketInstance.onmessage = (event) => {
+        // Update activity timestamps
+        globalLastPongReceived = Date.now();
+
+        // Fast-path for PING messages to respond immediately without any processing delay
+        try {
+          const data = event.data;
+          if (typeof data === "string" && data.includes('"type":"PING"')) {
+            // Immediately respond with PONG without parsing JSON
+            if (
+              globalSocketInstance &&
+              globalSocketInstance.readyState === WebSocket.OPEN
+            ) {
+              globalSocketInstance.send(JSON.stringify({ type: "PONG" }));
+              console.log("WebSocket: Immediately responded to PING with PONG");
+            }
+          }
+        } catch (e) {
+          // Ignore errors in the fast path
+        }
+
+        // Regular processing path
         handleMessage(event);
       };
 
@@ -257,7 +336,22 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
       };
 
       globalSocketInstance.onclose = (event) => {
-        console.log(`WebSocket: Connection closed (${event.code})`);
+        console.log(
+          `WebSocket: Connection closed (${event.code}) - ${
+            event.reason || "No reason provided"
+          }`
+        );
+
+        // Reset connection state
+        set({
+          connectionState: "disconnected",
+          isAuthenticated: false,
+        });
+
+        // Determine if this is an abnormal closure
+        // (1006 is abnormal closure often caused by server restarts)
+        const isAbnormalClosure = event.code === 1006 || event.code === 1001;
+        const shouldReconnectImmediately = isAbnormalClosure;
 
         // Clear intervals
         if (globalHeartbeatInterval) {
@@ -265,35 +359,45 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
           globalHeartbeatInterval = null;
         }
 
-        // Update connection state
-        set({
-          connectionState: "disconnected",
-          isAuthenticated: false,
-        });
-
-        // Check if we should attempt to reconnect
-        if (
-          !globalIsReconnecting &&
-          globalReconnectAttempts < WS_RECONNECT_ATTEMPTS
-        ) {
-          globalReconnectAttempts++;
-          console.log(
-            `WebSocket: Reconnecting after close... Attempt ${globalReconnectAttempts} in ${WS_RECONNECT_DELAY_MS}ms`
-          );
-
-          globalReconnectTimeout = setTimeout(() => {
-            // Only reconnect if we haven't already started reconnecting
-            if (!globalIsReconnecting) {
-              reconnect();
+        // Check if we should attempt to reconnect - use exponential backoff
+        if (!globalIsReconnecting) {
+          if (shouldReconnectImmediately) {
+            console.log(
+              `WebSocket: Abnormal closure (${event.code}), reconnecting immediately`
+            );
+            // Try to reconnect immediately for abnormal closures
+            if (globalReconnectTimeout) {
+              clearTimeout(globalReconnectTimeout);
             }
-          }, WS_RECONNECT_DELAY_MS);
-        } else if (globalReconnectAttempts >= WS_RECONNECT_ATTEMPTS) {
-          console.log(
-            `WebSocket: Max reconnection attempts (${WS_RECONNECT_ATTEMPTS}) reached`
-          );
-          set({
-            lastError: "Max reconnection attempts reached",
-          });
+            globalReconnectTimeout = setTimeout(reconnect, 1000);
+          } else if (globalReconnectAttempts < WS_RECONNECT_ATTEMPTS) {
+            globalReconnectAttempts++;
+            console.log(
+              `WebSocket: Reconnecting after close... Attempt ${globalReconnectAttempts} in ${WS_RECONNECT_DELAY_MS}ms`
+            );
+
+            globalReconnectTimeout = setTimeout(() => {
+              // Only reconnect if we haven't already started reconnecting
+              if (!globalIsReconnecting) {
+                reconnect();
+              }
+            }, WS_RECONNECT_DELAY_MS);
+          } else if (globalReconnectAttempts >= WS_RECONNECT_ATTEMPTS) {
+            console.log(
+              `WebSocket: Max reconnection attempts (${WS_RECONNECT_ATTEMPTS}) reached`
+            );
+            set({
+              lastError: "Max reconnection attempts reached",
+            });
+
+            globalReconnectTimeout = setTimeout(() => {
+              console.log(
+                "WebSocket: Continuing to try reconnecting after delay"
+              );
+              globalReconnectAttempts = 0;
+              reconnect();
+            }, 60000); 
+          }
         }
       };
     } catch (error) {
@@ -368,11 +472,33 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
   // Handle WebSocket messages
   const handleMessage = (event: MessageEvent) => {
     try {
-      const message: WebSocketMessage = JSON.parse(event.data);
-      console.log("WebSocket: Received message:", message.type);
+      const message = JSON.parse(event.data) as WebSocketMessage;
+
+      // Don't log every PING/PONG message to reduce console noise
+      if (message.type !== "PING" && message.type !== "PONG") {
+        console.log("WebSocket: Received message:", message.type);
+      }
 
       // Update last heartbeat time
       set({ lastHeartbeat: Date.now() });
+
+      // Handle PING messages from server by responding with PONG
+      if (message.type === "PING") {
+        // We've already sent the PONG in the fast path, but here's a fallback
+        if (
+          globalSocketInstance &&
+          globalSocketInstance.readyState === WebSocket.OPEN
+        ) {
+          globalSocketInstance.send(JSON.stringify({ type: "PONG" }));
+        }
+        return;
+      }
+
+      // Handle PONG responses explicitly
+      if (message.type === "PONG") {
+        globalLastPongReceived = Date.now();
+        return;
+      }
 
       switch (message.type) {
         case "CONNECTION_SUCCESS":
@@ -424,16 +550,19 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
             const symbol = message.symbol.toLowerCase();
             const rawData = message.data;
 
-            console.log(
-              `WebSocket: Processing RAW_DATA for ${symbol}, event type: ${rawData.e}`,
-              JSON.stringify(rawData).substring(0, 200) + "..." // Log truncated data for debugging
-            );
+            // Log with lower verbosity to reduce processing overhead
+            if (Math.random() < 0.01) {
+              // Only log ~1% of raw data messages to reduce overhead
+              console.log(
+                `WebSocket: Processing RAW_DATA for ${symbol}, event type: ${rawData.e}`
+              );
+            }
 
             // Handle different types of Binance WebSocket messages
             if (rawData.e === "kline" && rawData.k) {
               const kline = rawData.k;
 
-              // Update ticker data with latest price
+              // Update ticker data with latest price - using optimized update
               set((state) => {
                 const currentTicker = state.tickerData[symbol] || {
                   symbol,
@@ -448,8 +577,6 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
                     ...state.tickerData,
                     [symbol]: {
                       ...currentTicker,
-                      // Convert price from string to number and then divide by 100 if it's from the backend
-                      // If it's directly from Binance, it's already a floating-point number as a string
                       price: parseFloat(kline.c),
                       volume: parseFloat(kline.v),
                       timestamp: rawData.E,
@@ -458,29 +585,19 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
                 };
               });
 
-              // Log kline data
-              console.log(`WebSocket: Kline update for ${symbol}`, {
-                time: kline.t,
-                open: kline.o,
-                high: kline.h,
-                low: kline.l,
-                close: kline.c,
-                volume: kline.v,
-              });
-
-              // Create candle data from kline
-              const candle: CandleData = {
-                time: Math.floor(kline.t / 1000), // Convert to seconds for charts
-                open: parseFloat(kline.o),
-                high: parseFloat(kline.h),
-                low: parseFloat(kline.l),
-                close: parseFloat(kline.c),
-                volume: parseFloat(kline.v),
-              };
-
-              // Update candle data for active timeframe
+              // Create candle data from kline - only if needed
               const activeTimeframe = get().activeTimeframe;
               if (kline.i.toLowerCase() === activeTimeframe) {
+                const candle: CandleData = {
+                  time: Math.floor(kline.t / 1000), // Convert to seconds for charts
+                  open: parseFloat(kline.o),
+                  high: parseFloat(kline.h),
+                  low: parseFloat(kline.l),
+                  close: parseFloat(kline.c),
+                  volume: parseFloat(kline.v),
+                };
+
+                // Update candle data for active timeframe with minimal processing
                 set((state) => {
                   const symbolCandles = state.candleData[symbol] || {};
                   const timeframeCandles = symbolCandles[activeTimeframe] || [];
@@ -521,30 +638,16 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
                 });
               }
             } else if (rawData.e === "24hrTicker") {
-              // Log 24hr ticker data with full details
-              console.log(`WebSocket: 24hr ticker for ${symbol}`, {
-                price: parseFloat(rawData.c),
-                priceChangePercent: parseFloat(rawData.P),
-                volume: parseFloat(rawData.v),
-                high: parseFloat(rawData.h),
-                low: parseFloat(rawData.l),
-                open: parseFloat(rawData.o),
-                timestamp: rawData.E,
-                fullData: rawData, // Log the full raw data for debugging
-              });
-
-              // Update ticker data with full 24hr information
+              // Update ticker data with minimal logging
               set((state) => ({
                 tickerData: {
                   ...state.tickerData,
                   [symbol]: {
                     symbol,
-                    // Convert price from string to number
                     price: parseFloat(rawData.c),
                     priceChangePercent: parseFloat(rawData.P),
                     volume: parseFloat(rawData.v),
                     timestamp: rawData.E,
-                    // Include 24hr high, low and open prices
                     high: parseFloat(rawData.h),
                     low: parseFloat(rawData.l),
                     openPrice: parseFloat(rawData.o),
@@ -552,30 +655,16 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
                 },
               }));
             } else if (rawData.e === "trade") {
-              // Log trade data
-              console.log(`WebSocket: Trade update for ${symbol}`, {
-                price: rawData.p,
-                quantity: rawData.q,
-                time: rawData.T,
-              });
-
-              // Update ticker with latest trade price
+              // Only update the price for trade events
               set((state) => {
-                const currentTicker = state.tickerData[symbol] || {
-                  symbol,
-                  price: 0,
-                  priceChangePercent: 0,
-                  volume: 0,
-                  timestamp: Date.now(),
-                };
+                const currentTicker = state.tickerData[symbol];
+                if (!currentTicker) return state; // Skip if no existing ticker data
 
                 return {
                   tickerData: {
                     ...state.tickerData,
                     [symbol]: {
                       ...currentTicker,
-                      // Convert price from string to number
-                      // If it's from Binance, it's already a floating-point number as a string
                       price: parseFloat(rawData.p),
                       timestamp: rawData.T,
                     },

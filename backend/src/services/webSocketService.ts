@@ -76,7 +76,24 @@ class WebSocketService {
           return ws.terminate();
         }
         client.isAlive = false;
-        ws.ping();
+
+        try {
+          if (typeof ws.ping === "function") {
+            ws.ping();
+          } else {
+            ws.send(JSON.stringify({ type: "PING" }));
+          }
+        } catch (error) {
+          console.error("Error sending ping:", error);
+
+          client.isAlive = false;
+          this.clients.delete(ws);
+          try {
+            ws.terminate();
+          } catch (e) {
+            console.error("Error terminating connection:", e);
+          }
+        }
       });
     }, 30000);
 
@@ -256,8 +273,22 @@ class WebSocketService {
         }
       });
 
+      // Handle ping messages from client for clients that don't support pong events
       ws.on("message", async (message) => {
         try {
+          // Parse the message
+          const data = JSON.parse(message.toString());
+
+          // If it's a PONG response, mark the client as alive
+          if (data.type === "PONG") {
+            const client = this.clients.get(ws);
+            if (client) {
+              client.isAlive = true;
+              return; // Don't process this as a regular message
+            }
+          }
+
+          // Process all other messages normally
           await this.handleClientMessage(ws, message);
         } catch (error) {
           console.error("Error processing message:", error);

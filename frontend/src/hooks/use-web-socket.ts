@@ -1,6 +1,5 @@
-import { useEffect, useRef } from "react";
-import { useAuthStore } from "@/store/use-auth-store";
-import { useWebSocket as useWebSocketStore } from "@/services/websocket";
+import { useEffect, useState, useCallback } from "react";
+import { useWebSocketStore } from "@/services/websocket";
 
 interface WebSocketConfig {
   onMessage?: (event: MessageEvent) => void;
@@ -9,50 +8,93 @@ interface WebSocketConfig {
   onError?: (error: Event) => void;
 }
 
+/**
+ * Enhanced custom WebSocket hook for component-specific WebSocket handling
+ * Uses the singleton WebSocketStore for the actual connection
+ */
 export function useCustomWebSocket(config: WebSocketConfig) {
-  const wsRef = useRef<WebSocket | null>(null);
-  const { user } = useAuthStore();
+  const store = useWebSocketStore();
+  const [lastEvent, setLastEvent] = useState<MessageEvent | null>(null);
+  const [isConnected, setIsConnected] = useState<boolean>(
+    store.connectionState === "connected"
+  );
 
   useEffect(() => {
-    if (!user?.id) return;
+    // Ensure we have an active connection when component mounts
+    if (store.connectionState !== "connected") {
+      store.connect();
+    }
 
-    const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:4000";
-    const ws = new WebSocket(wsUrl);
+    // Call onOpen if we're already connected
+    if (store.connectionState === "connected" && config.onOpen) {
+      config.onOpen();
+    }
 
-    ws.onopen = () => {
-      // Authenticate the WebSocket connection
-      ws.send(
-        JSON.stringify({
-          type: "AUTHENTICATE",
-          userId: user.id,
-        })
-      );
+    // Track connection state changes
+    const handleConnectionChange = () => {
+      const newConnected = store.connectionState === "connected";
+      setIsConnected(newConnected);
 
-      config.onOpen?.();
-    };
-
-    ws.onmessage = (event) => {
-      config.onMessage?.(event);
-    };
-
-    ws.onclose = () => {
-      config.onClose?.();
-    };
-
-    ws.onerror = (error) => {
-      config.onError?.(error);
-    };
-
-    wsRef.current = ws;
-
-    return () => {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.close();
+      if (newConnected && config.onOpen) {
+        config.onOpen();
+      } else if (!newConnected && config.onClose) {
+        config.onClose();
       }
     };
-  }, [user?.id, config]);
 
-  return wsRef.current;
+    // Set up an interval to check connection state
+    const connectionCheckInterval = setInterval(() => {
+      const newConnected = store.connectionState === "connected";
+      if (isConnected !== newConnected) {
+        handleConnectionChange();
+      }
+
+      // If we're not connected, try to reconnect
+      if (
+        store.connectionState !== "connected" &&
+        store.connectionState !== "connecting"
+      ) {
+        store.connect();
+      }
+    }, 5000);
+
+    return () => {
+      clearInterval(connectionCheckInterval);
+      // We don't actually close the connection on unmount
+      // to maintain persistence across the app
+    };
+  }, [config, store]);
+
+  // Subscribe to WebSocket messages using the store's connection state
+  useEffect(() => {
+    // Create a global event listener for WebSocket messages
+    const handleMessage = (event: Event) => {
+      // MessageEvent type is expected here
+      const messageEvent = event as MessageEvent;
+      setLastEvent(messageEvent);
+      config.onMessage?.(messageEvent);
+    };
+
+    // Add a global event listener
+    window.addEventListener("ws-message", handleMessage);
+
+    return () => {
+      window.removeEventListener("ws-message", handleMessage);
+    };
+  }, [config]);
+
+  // Manual reconnect method
+  const reconnect = useCallback(() => {
+    store.reconnect();
+  }, [store]);
+
+  return {
+    isConnected,
+    lastEvent,
+    reconnect,
+    connectionState: store.connectionState,
+    // No need to return the WebSocket instance as we're using the singleton
+  };
 }
 
 export { useWebSocketStore as useWebSocket };
