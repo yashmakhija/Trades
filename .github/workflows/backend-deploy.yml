@@ -59,8 +59,8 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -p $VPS_PORT $VPS_HOST >> ~/.ssh/known_hosts
 
-          # Create deploy script
-          cat > deploy.sh << 'EOF'
+          # Create deploy script with proper escaping for environment variables
+          cat > deploy.sh << EOF
           #!/bin/bash
           set -e
 
@@ -69,45 +69,94 @@ jobs:
           DEPLOY_DIR="/yash-code/Trades"
           IMAGE_NAME="${{ secrets.DOCKER_HUB_USERNAME }}/$APP_NAME:latest"
           CONTAINER_NAME="trading-backend-2"
+          DB_CONTAINER_NAME="timescaledb"
           NETWORK_NAME="trading-network"
           CONTAINER_PORT=3001
+
+          # Database credentials
+          DB_USER="postgres"
+          DB_PASSWORD="postgres"
+          DB_NAME="trading_app"
+
+          # Set DATABASE_URL to point to the TimescaleDB container
+          DATABASE_URL="postgresql://\${DB_USER}:\${DB_PASSWORD}@\${DB_CONTAINER_NAME}:5432/\${DB_NAME}?schema=public"
+          JWT_SECRET="${JWT_SECRET}"
+          NODE_ENV="${NODE_ENV}"
 
           # Create directory if it doesn't exist
           mkdir -p $DEPLOY_DIR
 
           # Create Docker network if not exists
           if ! docker network inspect $NETWORK_NAME >/dev/null 2>&1; then
+            echo "Creating Docker network: $NETWORK_NAME"
             docker network create $NETWORK_NAME
           fi
 
-          # Stop and remove existing container if it exists
+          # Check if TimescaleDB container exists and is running
+          if docker ps -a | grep -q $DB_CONTAINER_NAME; then
+            echo "TimescaleDB container exists"
+            if ! docker ps | grep -q $DB_CONTAINER_NAME; then
+              echo "Starting existing TimescaleDB container"
+              docker start $DB_CONTAINER_NAME
+            else
+              echo "TimescaleDB container is already running"
+            fi
+          else
+            echo "Creating and starting TimescaleDB container"
+            docker run -d \\
+              --name $DB_CONTAINER_NAME \\
+              --network $NETWORK_NAME \\
+              -e POSTGRES_USER=$DB_USER \\
+              -e POSTGRES_PASSWORD=$DB_PASSWORD \\
+              -e POSTGRES_DB=$DB_NAME \\
+              -v timescale_data:/var/lib/postgresql/data \\
+              --restart unless-stopped \\
+              timescale/timescaledb:latest-pg14
+              
+            # Wait for database to be ready
+            echo "Waiting for database to be ready..."
+            sleep 15
+          fi
+
+          # Stop and remove existing backend container if it exists
           if docker ps -a | grep -q $CONTAINER_NAME; then
+            echo "Stopping and removing existing backend container"
             docker stop $CONTAINER_NAME || true
             docker rm $CONTAINER_NAME || true
           fi
 
-          # Create env file
+          # Create env file with explicit values
           cat > $DEPLOY_DIR/.env << EOFENV
-          DATABASE_URL=$DATABASE_URL
-          JWT_SECRET=$JWT_SECRET
-          NODE_ENV=$NODE_ENV
-          PORT=$CONTAINER_PORT
+          DATABASE_URL=${DATABASE_URL}
+          JWT_SECRET=${JWT_SECRET}
+          NODE_ENV=${NODE_ENV}
+          PORT=${CONTAINER_PORT}
           EOFENV
 
           # Pull latest image
+          echo "Pulling latest backend image"
           docker pull $IMAGE_NAME
 
-          # Run new container
-          docker run -d \
-            --name $CONTAINER_NAME \
-            --network $NETWORK_NAME \
-            -p $CONTAINER_PORT:$CONTAINER_PORT \
-            --restart unless-stopped \
-            --env-file $DEPLOY_DIR/.env \
+          # Debug env file
+          echo "Created .env file with contents:"
+          cat $DEPLOY_DIR/.env
+
+          # Run new container with explicit environment variables
+          echo "Starting backend container"
+          docker run -d \\
+            --name $CONTAINER_NAME \\
+            --network $NETWORK_NAME \\
+            -p $CONTAINER_PORT:$CONTAINER_PORT \\
+            --restart unless-stopped \\
+            -e DATABASE_URL="\${DATABASE_URL}" \\
+            -e JWT_SECRET="\${JWT_SECRET}" \\
+            -e NODE_ENV="\${NODE_ENV}" \\
+            -e PORT="\${CONTAINER_PORT}" \\
             $IMAGE_NAME
 
-          # Verify container is running
-          docker ps | grep $CONTAINER_NAME
+          # Verify containers are running
+          echo "Verifying containers are running:"
+          docker ps | grep -E "$CONTAINER_NAME|$DB_CONTAINER_NAME"
 
           echo "Deployment complete!"
           EOF
