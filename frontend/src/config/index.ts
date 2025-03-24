@@ -17,6 +17,11 @@ export const API_BASE_URL = (() => {
       return "http://localhost:3001";
     } else if (window.location.hostname === "trade.classicoder.com") {
       return "https://trade.classicoder.com";
+    } else if (
+      window.location.hostname === "www.codesquarelabs.com" ||
+      window.location.hostname === "codesquarelabs.com"
+    ) {
+      return "https://trade.codesquarelabs.com";
     }
   }
 

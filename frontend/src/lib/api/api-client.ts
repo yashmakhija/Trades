@@ -70,6 +70,10 @@ async function fetchApi<T>(
       headers,
       credentials: "include", // Include credentials for cross-origin requests
       mode: "cors", // Explicitly set mode to cors
+      referrerPolicy: "strict-origin-when-cross-origin", // Add referrer policy
+      keepalive: true, // Keep connection alive
+      cache: "no-cache", // Disable caching
+      redirect: "follow", // Follow redirects
     });
 
     console.log(

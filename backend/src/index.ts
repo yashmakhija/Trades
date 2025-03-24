@@ -16,7 +16,7 @@ app.use(
         "http://localhost:3000",
         "https://trade.classicoder.com",
         "https://www.codesquarelabs.com",
-        "https://codesquarelabs.com"
+        "https://codesquarelabs.com",
       ];
 
       // Allow requests with no origin (like mobile apps or curl requests)
@@ -34,12 +34,36 @@ app.use(
       "X-Requested-With",
       "Accept",
       "Origin",
+      "Access-Control-Allow-Origin",
+      "Access-Control-Allow-Headers",
+      "Access-Control-Allow-Methods",
+      "Access-Control-Allow-Credentials",
     ],
     exposedHeaders: ["Content-Disposition"],
     credentials: true,
     maxAge: 86400, // 24 hours
+    preflightContinue: false,
+    optionsSuccessStatus: 204,
   })
 );
+
+// Add additional CORS headers middleware
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin) {
+    res.header("Access-Control-Allow-Origin", origin);
+    res.header("Access-Control-Allow-Credentials", "true");
+    res.header(
+      "Access-Control-Allow-Methods",
+      "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+    );
+    res.header(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Authorization, X-Requested-With, Accept, Origin"
+    );
+  }
+  next();
+});
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));

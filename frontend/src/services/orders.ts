@@ -181,10 +181,16 @@ export async function createOrder(
     console.log(`Sending order to API endpoint: ${endpoint}`);
 
     try {
-      // Make the API request
+      // Make the API request with credentials
       const response = await apiClient.post<OrderCreateResponse>(
         endpoint,
-        convertedParams
+        convertedParams,
+        {
+          credentials: "include", // Include cookies in the request
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
       );
 
       // Check for empty response
@@ -205,14 +211,27 @@ export async function createOrder(
       return order;
     } catch (apiError: unknown) {
       console.error("API error details:", apiError);
+
+      // Enhanced error handling for CORS and network issues
+      if (
+        apiError instanceof TypeError &&
+        apiError.message === "Failed to fetch"
+      ) {
+        console.error("Network error - possible CORS issue");
+        throw new Error(
+          "Unable to connect to the trading server. Please check your connection and try again."
+        );
+      }
+
       // Get more information about the API base URL
       console.log("API configuration:", {
         apiEndpoint: endpoint,
         symbolId: params.symbolId,
+        baseUrl: process.env.NEXT_PUBLIC_API_BASE_URL,
       });
 
       // Log the most likely causes of 404 errors
-      console.error("Possible causes of 404 error:");
+      console.error("Possible causes of error:");
       console.error(
         "1. Backend API route not found - verify the endpoint path"
       );
@@ -221,6 +240,7 @@ export async function createOrder(
         "3. CORS issues preventing the request from reaching the server"
       );
       console.error("4. Environment configuration issue (API_BASE_URL)");
+      console.error("5. Authentication token missing or invalid");
 
       throw apiError;
     }
