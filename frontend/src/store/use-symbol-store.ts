@@ -16,6 +16,7 @@ interface SymbolState {
   lastFetched: number | null;
   isLoading: boolean;
   fetchSymbols: () => Promise<TradingSymbol[]>;
+  fetchSymbolsForce: () => Promise<TradingSymbol[]>;
   setSymbols: (symbols: TradingSymbol[]) => void;
   reset: () => void;
 }
@@ -50,24 +51,80 @@ export const useSymbolStore = create<SymbolState>()(
                 (now - lastFetched) / 1000 / 60
               )} minutes`,
             });
+
+            // Quick data validation on cached symbols
+            if (symbols.some((s) => !s.id || !s.name)) {
+              console.warn("Invalid symbol data in cache, forcing refresh");
+              return get().fetchSymbolsForce();
+            }
+
             return symbols;
           }
 
-          // Otherwise fetch fresh data
+          // If we're already loading symbols, wait for that request to complete
+          if (get().isLoading) {
+            console.log("Symbol fetch already in progress, waiting...");
+            // Wait for current fetch to complete (max 5 seconds)
+            for (let i = 0; i < 50; i++) {
+              await new Promise((r) => setTimeout(r, 100));
+              if (!get().isLoading) {
+                console.log("Ongoing symbol fetch completed");
+                return get().symbols;
+              }
+            }
+            console.warn("Timed out waiting for symbol fetch");
+          }
+
+          return get().fetchSymbolsForce();
+        },
+        fetchSymbolsForce: async () => {
+          // Check if we're already loading
+          if (get().isLoading) {
+            console.log(
+              "Symbol fetch already in progress, waiting for completion"
+            );
+            // Wait a bit and then return current symbols
+            await new Promise((r) => setTimeout(r, 1000));
+            return get().symbols;
+          }
+
+          // Force fetch fresh data regardless of cache
           try {
             set({ isLoading: true });
-            console.log("Fetching fresh symbols data");
+            console.log("Fetching fresh symbols data (forced)");
             const fetchedSymbols = await apiFetchSymbols();
+
+            if (!fetchedSymbols || fetchedSymbols.length === 0) {
+              console.error(
+                "No symbols returned from API, using cached data as fallback"
+              );
+              set({ isLoading: false });
+              return get().symbols;
+            }
+
+            console.log(
+              "Symbols fetched successfully:",
+              fetchedSymbols.map((s) => `${s.name} (${s.id})`).join(", ")
+            );
+
+            // Data validation before setting
+            const validSymbols = fetchedSymbols.filter((s) => s.id && s.name);
+            if (validSymbols.length !== fetchedSymbols.length) {
+              console.warn(
+                "Some fetched symbols had invalid data and were filtered out"
+              );
+            }
+
             set({
-              symbols: fetchedSymbols,
-              lastFetched: now,
+              symbols: validSymbols,
+              lastFetched: Date.now(),
               isLoading: false,
             });
-            return fetchedSymbols;
+            return validSymbols;
           } catch (error) {
             console.error("Error fetching symbols:", error);
             set({ isLoading: false });
-            return symbols; // Return cached symbols on error
+            return get().symbols; // Return cached symbols on error
           }
         },
         setSymbols: (symbols) => set({ symbols, lastFetched: Date.now() }),

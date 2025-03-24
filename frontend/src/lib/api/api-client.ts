@@ -14,7 +14,12 @@ async function fetchApi<T>(
   const { params, ...fetchOptions } = options;
 
   // Add query parameters if provided
-  const url = new URL(`${API_URL}${endpoint}`);
+  // Make sure the endpoint starts with / and strip any extra slashes
+  const normalizedEndpoint = endpoint.startsWith("/")
+    ? endpoint
+    : `/${endpoint}`;
+  const url = new URL(`${API_URL}${normalizedEndpoint}`);
+
   if (params) {
     Object.entries(params).forEach(([key, value]) => {
       url.searchParams.append(key, value);
@@ -137,14 +142,22 @@ export const apiClient = {
   get: <T>(endpoint: string, options?: FetchOptions) =>
     fetchApi<T>(endpoint, { method: "GET", ...options }),
 
-  post: <T>(endpoint: string, data?: any, options?: FetchOptions) =>
+  post: <T>(
+    endpoint: string,
+    data?: Record<string, unknown>,
+    options?: FetchOptions
+  ) =>
     fetchApi<T>(endpoint, {
       method: "POST",
       body: data ? JSON.stringify(data) : undefined,
       ...options,
     }),
 
-  put: <T>(endpoint: string, data?: any, options?: FetchOptions) =>
+  put: <T>(
+    endpoint: string,
+    data?: Record<string, unknown>,
+    options?: FetchOptions
+  ) =>
     fetchApi<T>(endpoint, {
       method: "PUT",
       body: data ? JSON.stringify(data) : undefined,

@@ -39,6 +39,14 @@ export interface CreateOrderParams {
 }
 
 /**
+ * Response format from the backend order creation endpoint
+ */
+interface OrderCreateResponse {
+  message?: string;
+  order?: Order;
+}
+
+/**
  * Fetch all orders for the current user
  */
 export async function fetchOrders(): Promise<Order[]> {
@@ -140,8 +148,21 @@ export async function createOrder(
   try {
     console.log("Creating order with params (before conversion):", params);
 
+    // Verify symbol ID exists and is in the correct format
+    if (
+      !params.symbolId ||
+      typeof params.symbolId !== "string" ||
+      params.symbolId.length < 10
+    ) {
+      console.error("Invalid symbol ID provided:", params.symbolId);
+      throw new Error("Invalid symbol ID. Please refresh and try again.");
+    }
+
+    // The backend expects prices in cents without decimal points
+    // Convert the full price (e.g. 87580.24) to cents (8758024)
     const convertedParams = {
       ...params,
+      // Multiply by 100 to convert to cents (removing decimal point)
       price: Math.round(Number(params.price) * 100),
       stopLoss:
         params.stopLoss !== undefined
@@ -155,21 +176,42 @@ export async function createOrder(
 
     console.log("Params for backend (converted to cents):", convertedParams);
 
+    // Use the correct API endpoint with /api prefix
     const endpoint = "/orders";
     console.log(`Sending order to API endpoint: ${endpoint}`);
 
     try {
-      const response = await apiClient.post<Order>(endpoint, convertedParams);
-      console.log("Order created successfully:", response);
-      return response;
+      // Make the API request
+      const response = await apiClient.post<OrderCreateResponse>(
+        endpoint,
+        convertedParams
+      );
+
+      // Check for empty response
+      if (!response) {
+        console.error("Received empty response from server");
+        throw new Error("Server returned an empty response");
+      }
+
+      // Check for response structure
+      if (!response.order && !response.message) {
+        console.warn("Unexpected response format:", response);
+      }
+
+      // Extract the order from the response
+      const order = response.order || (response as unknown as Order);
+      console.log("Order created successfully:", order);
+
+      return order;
     } catch (apiError: unknown) {
       console.error("API error details:", apiError);
-
+      // Get more information about the API base URL
       console.log("API configuration:", {
         apiEndpoint: endpoint,
         symbolId: params.symbolId,
       });
 
+      // Log the most likely causes of 404 errors
       console.error("Possible causes of 404 error:");
       console.error(
         "1. Backend API route not found - verify the endpoint path"

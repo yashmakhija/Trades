@@ -89,8 +89,9 @@ export function PriceChart({
     DEFAULT_ORDER_QUANTITY.toString()
   );
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
-  const { symbols } = useSymbolStore();
 
+  // Don't destructure symbols from the store as we'll access it directly when needed
+  // to ensure we always have the latest data
   const { theme } = useTheme();
   const isDarkTheme = theme === "dark";
 
@@ -132,17 +133,28 @@ export function PriceChart({
   useEffect(() => {
     console.log(`PriceChart: Setting up for symbol ${normalizedSymbol}`);
 
+    const initSymbols = async () => {
+      const currentSymbols = useSymbolStore.getState().symbols;
+      if (currentSymbols.length === 0) {
+        console.log("Symbol store empty, performing initial fetch");
+        try {
+          await useSymbolStore.getState().fetchSymbols();
+        } catch (error) {
+          console.error("Failed to fetch initial symbols:", error);
+        }
+      } else {
+        console.log(
+          "Using existing symbols from store:",
+          currentSymbols.map((s) => `${s.name} (${s.id})`).join(", ")
+        );
+      }
+    };
+
+    initSymbols();
     subscribeToSymbol(normalizedSymbol);
     setActiveSymbol(normalizedSymbol);
     setActiveTimeframe(timeframe);
     subscribeToCandles(normalizedSymbol, timeframe);
-
-    if (symbols.length > 0) {
-      console.log(
-        "Available symbols in PriceChart:",
-        symbols.map((s) => `${s.name} (${s.id})`)
-      );
-    }
 
     return () => {
       console.log(`PriceChart: Component unmounting`);
@@ -154,7 +166,6 @@ export function PriceChart({
     setActiveSymbol,
     setActiveTimeframe,
     subscribeToCandles,
-    symbols,
   ]);
 
   // Format price for display
@@ -696,29 +707,46 @@ export function PriceChart({
       return;
     }
 
+    // Get current symbols from store
+    const currentSymbols = useSymbolStore.getState().symbols;
+
+    // Only force refresh if necessary (no symbols or outdated cache)
+    let symbolsToUse = currentSymbols;
+    if (currentSymbols.length === 0) {
+      console.log("No symbols in store, fetching before order");
+      symbolsToUse = await useSymbolStore.getState().fetchSymbolsForce();
+    } else {
+      // Check if cache is stale (more than 5 minutes old)
+      const lastFetched = useSymbolStore.getState().lastFetched || 0;
+      const cacheAge = Date.now() - lastFetched;
+      const FIVE_MINUTES = 5 * 60 * 1000;
+
+      if (cacheAge > FIVE_MINUTES) {
+        console.log(
+          `Symbol cache is ${Math.round(
+            cacheAge / 1000 / 60
+          )} minutes old, refreshing before order`
+        );
+        symbolsToUse = await useSymbolStore.getState().fetchSymbolsForce();
+      } else {
+        console.log(
+          `Using symbol cache (${Math.round(cacheAge / 1000)} seconds old)`
+        );
+      }
+    }
+
     // Find the exact symbol match by standardizing both strings for comparison
-    // Be extra careful with string comparison to ensure exact matches
     const symbolKey = normalizedSymbol.toLowerCase().trim();
 
-    // Log all available symbols for debugging
-    console.log(
-      "Quick order - available symbols:",
-      symbols.map((s) => ({
-        id: s.id,
-        name: s.name.toLowerCase().trim(),
-        matched: s.name.toLowerCase().trim() === symbolKey,
-      }))
-    );
-
-    // Find with exact matching
-    const symbolData = symbols.find(
+    // Find with exact matching using symbols
+    const symbolData = symbolsToUse.find(
       (s) => s.name.toLowerCase().trim() === symbolKey
     );
 
     if (!symbolData) {
       console.error("Symbol lookup error:", {
         lookingFor: symbolKey,
-        availableSymbols: symbols.map(
+        availableSymbols: symbolsToUse.map(
           (s) => `${s.name.toLowerCase().trim()} (${s.id})`
         ),
       });
