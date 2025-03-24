@@ -218,7 +218,7 @@ function TradingPageContent() {
 
       <main className="container mx-auto px-4 py-4">
         <div className="flex flex-col lg:flex-row gap-4">
-          <aside className="w-full lg:w-80 shrink-0 h-[calc(100vh-120px)] sticky top-[73px]">
+          <aside className="w-full lg:w-80 shrink-0 h-[calc(100vh-120px)]  top-[73px]">
             <MarketSidebar />
           </aside>
 
@@ -226,7 +226,7 @@ function TradingPageContent() {
             <div className="grid grid-cols-1 gap-0 w-full">
               <div className="lg:col-span-2 w-full">
                 <Card className="overflow-hidden border-0 shadow-md h-full w-full">
-                  <CardContent className="p-0 h-[650px] w-full">
+                  <CardContent className="p-0 h-[750px] w-full">
                     <PriceChart
                       symbol={selectedSymbol}
                       height={650}
