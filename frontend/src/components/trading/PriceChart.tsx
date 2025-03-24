@@ -26,6 +26,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AlertCircle } from "lucide-react";
 import { useTheme } from "next-themes";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { toast } from "sonner";
+import { createOrder } from "@/services/orders";
+import { useAuthStore } from "@/store/use-auth-store";
+import { DEFAULT_ORDER_QUANTITY, SPREAD_FEE_PERCENTAGE } from "@/config";
+import { useSymbolStore } from "@/store/use-symbol-store";
+import { Loader2 } from "lucide-react";
 
 // Define a type for the watermark options
 interface WatermarkOptions {
@@ -76,6 +84,12 @@ export function PriceChart({
   const [historicalDataLoaded, setHistoricalDataLoaded] = useState(false);
   const [currentPrice, setCurrentPrice] = useState<number | null>(null);
   const [priceChange, setPriceChange] = useState<number>(0);
+  const { isAuthenticated } = useAuthStore();
+  const [quantity, setQuantity] = useState<string>(
+    DEFAULT_ORDER_QUANTITY.toString()
+  );
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const { symbols } = useSymbolStore();
 
   const { theme } = useTheme();
   const isDarkTheme = theme === "dark";
@@ -118,14 +132,19 @@ export function PriceChart({
   useEffect(() => {
     console.log(`PriceChart: Setting up for symbol ${normalizedSymbol}`);
 
-    // Subscribe to symbol and candles
     subscribeToSymbol(normalizedSymbol);
     setActiveSymbol(normalizedSymbol);
     setActiveTimeframe(timeframe);
     subscribeToCandles(normalizedSymbol, timeframe);
 
+    if (symbols.length > 0) {
+      console.log(
+        "Available symbols in PriceChart:",
+        symbols.map((s) => `${s.name} (${s.id})`)
+      );
+    }
+
     return () => {
-      // No need to unsubscribe on unmount as other components might need the data
       console.log(`PriceChart: Component unmounting`);
     };
   }, [
@@ -135,6 +154,7 @@ export function PriceChart({
     setActiveSymbol,
     setActiveTimeframe,
     subscribeToCandles,
+    symbols,
   ]);
 
   // Format price for display
@@ -205,7 +225,9 @@ export function PriceChart({
         candleSeries.current = null;
         volumeSeries.current = null;
       } catch (error) {
-        console.log("Chart was already disposed or invalid, creating new instance");
+        console.log(
+          "Chart was already disposed or invalid, creating new instance"
+        );
       }
     }
 
@@ -658,6 +680,104 @@ export function PriceChart({
     [normalizedSymbol, setActiveTimeframe, subscribeToCandles]
   );
 
+  // Handle quick order submission
+  const handleQuickOrder = async (side: "BUY" | "SELL") => {
+    if (!isAuthenticated) {
+      toast.error("Authentication required", {
+        description: "Please log in to place orders",
+      });
+      return;
+    }
+
+    if (!currentPrice) {
+      toast.error("Price not available", {
+        description: "Current price is not available. Please try again.",
+      });
+      return;
+    }
+
+    // Find the exact symbol match by standardizing both strings for comparison
+    // Be extra careful with string comparison to ensure exact matches
+    const symbolKey = normalizedSymbol.toLowerCase().trim();
+
+    // Log all available symbols for debugging
+    console.log(
+      "Quick order - available symbols:",
+      symbols.map((s) => ({
+        id: s.id,
+        name: s.name.toLowerCase().trim(),
+        matched: s.name.toLowerCase().trim() === symbolKey,
+      }))
+    );
+
+    // Find with exact matching
+    const symbolData = symbols.find(
+      (s) => s.name.toLowerCase().trim() === symbolKey
+    );
+
+    if (!symbolData) {
+      console.error("Symbol lookup error:", {
+        lookingFor: symbolKey,
+        availableSymbols: symbols.map(
+          (s) => `${s.name.toLowerCase().trim()} (${s.id})`
+        ),
+      });
+
+      toast.error("Symbol not found", {
+        description: `Unable to find symbol '${symbolKey}' in available symbols. Please refresh the page.`,
+      });
+      return;
+    }
+
+    console.log("Symbol found for order:", {
+      name: symbolData.name,
+      id: symbolData.id,
+      symbolKey,
+    });
+
+    try {
+      setIsSubmitting(true);
+      const quantityValue = parseFloat(quantity);
+
+      // Apply spread fee to price based on order side
+      const spreadAmount = currentPrice * SPREAD_FEE_PERCENTAGE;
+      const priceWithSpread =
+        side === "BUY"
+          ? currentPrice + spreadAmount // Higher price for buyers
+          : currentPrice - spreadAmount; // Lower price for sellers
+
+      // Ensure the request data format matches exactly what the API expects
+      const orderData = {
+        symbolId: symbolData.id,
+        type: side,
+        price: priceWithSpread,
+        quantity: quantityValue,
+        isShort: side === "SELL",
+      };
+
+      console.log("Submitting order:", orderData);
+
+      const response = await createOrder(orderData);
+
+      if (response) {
+        toast.success(`${side} order placed successfully`, {
+          description: `${side} ${quantity} ${normalizedSymbol.toUpperCase()} at ${formatPrice(
+            priceWithSpread
+          )}`,
+        });
+      }
+    } catch (error) {
+      console.error("Error placing quick order:", error);
+      toast.error(
+        `Error placing order: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   return (
     <Card className={`overflow-hidden ${className}`}>
       <CardHeader className="p-4 pb-0">
@@ -710,7 +830,47 @@ export function PriceChart({
           </div>
         </div>
       </CardHeader>
-      <CardContent className="p-0 pt-4 relative">
+
+      <CardContent className="p-0 pt-0 relative">
+        {/* Floating Buy/Sell bar */}
+        <div className="absolute top-4 left-4 z-10 flex rounded-md overflow-hidden border border-border shadow-md">
+          <Button
+            variant="default"
+            size="sm"
+            className="bg-blue-600 hover:bg-blue-700 text-white px-5 h-8 text-sm font-bold rounded-none border-0"
+            disabled={isSubmitting || !isAuthenticated}
+            onClick={() => handleQuickOrder("BUY")}
+          >
+            {isSubmitting ? (
+              <Loader2 className="h-3 w-3 animate-spin mr-1" />
+            ) : null}
+            BUY
+          </Button>
+
+          <Input
+            type="number"
+            value={quantity}
+            onChange={(e) => setQuantity(e.target.value)}
+            className="w-16 text-center font-mono text-sm border-0 h-8 rounded-none bg-card"
+            min="0.001"
+            step="0.001"
+            disabled={isSubmitting}
+          />
+
+          <Button
+            variant="destructive"
+            size="sm"
+            className="bg-red-600 hover:bg-red-700 text-white px-5 h-8 text-sm font-bold rounded-none border-0"
+            disabled={isSubmitting || !isAuthenticated}
+            onClick={() => handleQuickOrder("SELL")}
+          >
+            {isSubmitting ? (
+              <Loader2 className="h-3 w-3 animate-spin mr-1" />
+            ) : null}
+            SELL
+          </Button>
+        </div>
+
         <div
           ref={chartContainerRef}
           className="w-full"

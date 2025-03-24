@@ -49,7 +49,6 @@ export async function fetchOrders(): Promise<Order[]> {
       balance: unknown;
     }>("/orders");
 
-    // Check if response has the expected structure
     if (
       typeof response !== "object" ||
       response === null ||
@@ -63,10 +62,8 @@ export async function fetchOrders(): Promise<Order[]> {
       return [];
     }
 
-    // Combine open and closed orders
     const allOrders = [...response.openOrders, ...response.closedOrders];
 
-    // Validate each order in the array
     const validOrders = allOrders.filter((order): order is Order => {
       const isValid =
         typeof order === "object" &&
@@ -85,8 +82,6 @@ export async function fetchOrders(): Promise<Order[]> {
 
     console.log("Received orders from backend:", validOrders);
 
-    // We're already receiving full prices for exitPrice
-    // No need to modify prices for our UI
     return validOrders;
   } catch (error) {
     console.error("Error fetching orders:", error);
@@ -94,9 +89,6 @@ export async function fetchOrders(): Promise<Order[]> {
   }
 }
 
-/**
- * Fetch only open orders for the current user
- */
 export async function fetchOpenOrders(): Promise<Order[]> {
   try {
     const response = await apiClient.get<{
@@ -105,7 +97,6 @@ export async function fetchOpenOrders(): Promise<Order[]> {
       balance: unknown;
     }>("/orders");
 
-    // Check if response has the expected structure
     if (
       typeof response !== "object" ||
       response === null ||
@@ -115,10 +106,8 @@ export async function fetchOpenOrders(): Promise<Order[]> {
       return [];
     }
 
-    // Get just the open orders
     const openOrders = response.openOrders;
 
-    // Validate each order in the array
     const validOrders = openOrders.filter((order): order is Order => {
       const isValid =
         typeof order === "object" &&
@@ -135,7 +124,6 @@ export async function fetchOpenOrders(): Promise<Order[]> {
       return isValid;
     });
 
-    // Return orders as is - no conversion needed
     return validOrders;
   } catch (error) {
     console.error("Error fetching open orders:", error);
@@ -152,27 +140,48 @@ export async function createOrder(
   try {
     console.log("Creating order with params (before conversion):", params);
 
-    // The backend divides full BTC prices by 10000 (85865 → 8.59)
-    // Send the raw prices without any conversion
     const convertedParams = {
       ...params,
-      // Don't modify the price values at all - send as is
-      price: Number(params.price),
+      price: Math.round(Number(params.price) * 100),
       stopLoss:
-        params.stopLoss !== undefined ? Number(params.stopLoss) : undefined,
+        params.stopLoss !== undefined
+          ? Math.round(Number(params.stopLoss) * 100)
+          : undefined,
       takeProfit:
-        params.takeProfit !== undefined ? Number(params.takeProfit) : undefined,
+        params.takeProfit !== undefined
+          ? Math.round(Number(params.takeProfit) * 100)
+          : undefined,
     };
 
-    console.log("Params for backend (unmodified prices):", convertedParams);
+    console.log("Params for backend (converted to cents):", convertedParams);
 
-    const response = await apiClient.post<Order>("/orders", convertedParams);
+    const endpoint = "/orders";
+    console.log(`Sending order to API endpoint: ${endpoint}`);
 
-    console.log("Response from backend (original):", response);
+    try {
+      const response = await apiClient.post<Order>(endpoint, convertedParams);
+      console.log("Order created successfully:", response);
+      return response;
+    } catch (apiError: unknown) {
+      console.error("API error details:", apiError);
 
-    // The backend returns prices divided by 10000
-    // We don't need to modify the response since our UI expects full BTC prices
-    return response;
+      console.log("API configuration:", {
+        apiEndpoint: endpoint,
+        symbolId: params.symbolId,
+      });
+
+      console.error("Possible causes of 404 error:");
+      console.error(
+        "1. Backend API route not found - verify the endpoint path"
+      );
+      console.error("2. Backend server not running or unreachable");
+      console.error(
+        "3. CORS issues preventing the request from reaching the server"
+      );
+      console.error("4. Environment configuration issue (API_BASE_URL)");
+
+      throw apiError;
+    }
   } catch (error) {
     console.error("Error creating order:", error);
     throw error;
@@ -184,7 +193,7 @@ export async function createOrder(
  */
 export async function cancelOrder(orderId: string): Promise<boolean> {
   try {
-    await apiClient.delete<void>(`/orders/${orderId}`);
+    await apiClient.delete<void>(`/api/orders/${orderId}`);
     return true;
   } catch (error) {
     console.error(`Error cancelling order ${orderId}:`, error);
@@ -202,7 +211,7 @@ export async function exitOrder(
   try {
     console.log(`Exiting order ${orderId} at price ${exitPrice}`);
 
-    await apiClient.post<void>(`/orders/${orderId}/exit`, {
+    await apiClient.post<void>(`/api/orders/${orderId}/exit`, {
       exitPrice,
     });
 
