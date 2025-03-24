@@ -186,9 +186,14 @@ export async function createOrder(
         endpoint,
         convertedParams,
         {
-          credentials: "include", // Include cookies in the request
+          credentials: "include",
           headers: {
             "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+            "Access-Control-Allow-Headers":
+              "Content-Type, Authorization, X-Requested-With, Accept, Origin",
           },
         }
       );

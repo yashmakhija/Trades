@@ -3,6 +3,18 @@ import { NextRequest, NextResponse } from "next/server";
 // API base URL
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 204,
+    headers: {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      "Access-Control-Max-Age": "86400",
+    },
+  });
+}
+
 export async function POST(request: NextRequest) {
   try {
     const orderData = await request.json();
@@ -78,7 +90,16 @@ export async function POST(request: NextRequest) {
 
     const result = await response.json();
 
-    return NextResponse.json(result);
+    // Add CORS headers to the response
+    const headers = new Headers();
+    headers.set("Access-Control-Allow-Origin", "*");
+    headers.set(
+      "Access-Control-Allow-Methods",
+      "GET, POST, PUT, DELETE, OPTIONS"
+    );
+    headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+
+    return NextResponse.json(result, { headers });
   } catch (error) {
     console.error("Error creating order:", error);
     return NextResponse.json(

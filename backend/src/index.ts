@@ -17,6 +17,9 @@ app.use(
         "https://trade.classicoder.com",
         "https://www.codesquarelabs.com",
         "https://codesquarelabs.com",
+        "https://trade.codesquarelabs.com",
+        "https://www.trade.codesquarelabs.com",
+        "https://www.codesquarelabs.com",
       ];
 
       // Allow requests with no origin (like mobile apps or curl requests)
@@ -64,6 +67,8 @@ app.use((req, res, next) => {
   }
   next();
 });
+
+app.options("*", cors());
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
