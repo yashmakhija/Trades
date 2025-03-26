@@ -39,14 +39,6 @@ export interface CreateOrderParams {
 }
 
 /**
- * Response format from the backend order creation endpoint
- */
-interface OrderCreateResponse {
-  message?: string;
-  order?: Order;
-}
-
-/**
  * Fetch all orders for the current user
  */
 export async function fetchOrders(): Promise<Order[]> {
