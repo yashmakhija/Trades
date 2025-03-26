@@ -174,7 +174,7 @@ export async function createOrder(
 
     try {
       // Make the API request with credentials
-      const response = await apiClient.post<OrderCreateResponse>(
+      const response = await apiClient.post<Order>(
         endpoint,
         convertedParams,
         {
