@@ -553,7 +553,15 @@ class WebSocketService {
         case "SUBSCRIBE_CANDLES":
           if (symbol) {
             const timeframe = data.timeframe || "1m";
-            await this.handleCandleSubscription(client, symbol, timeframe);
+            const startTime = data.startTime;
+            const endTime = data.endTime;
+            await this.handleCandleSubscription(
+              client,
+              symbol,
+              timeframe,
+              startTime,
+              endTime
+            );
           }
           break;
 
@@ -635,7 +643,9 @@ class WebSocketService {
   private async handleCandleSubscription(
     client: WSClient,
     symbol: string,
-    timeframe: string
+    timeframe: string,
+    startTime?: string,
+    endTime?: string
   ): Promise<void> {
     try {
       if (!symbol) {
@@ -653,14 +663,49 @@ class WebSocketService {
         } subscribed to ${symbol} candles with timeframe ${timeframe}`
       );
 
-      const candles = await candleService.getCandles(symbol, timeframeEnum);
+      // Parse time range if provided
+      let startDate: Date | undefined;
+      let endDate: Date | undefined;
+
+      if (startTime) {
+        startDate = new Date(startTime);
+        if (isNaN(startDate.getTime())) {
+          console.warn(`Invalid startTime format: ${startTime}`);
+          return;
+        }
+      }
+
+      if (endTime) {
+        endDate = new Date(endTime);
+        if (isNaN(endDate.getTime())) {
+          console.warn(`Invalid endTime format: ${endTime}`);
+          return;
+        }
+      }
+
+      // Get historical candles with time range
+      const candles = await candleService.getCandles(
+        symbol,
+        timeframeEnum,
+        1000, // Increased limit for historical data
+        startDate,
+        endDate
+      );
+
       if (candles?.length) {
         client.ws.send(
           JSON.stringify({
             type: "CANDLE_HISTORY",
             symbol,
             timeframe,
-            data: candles,
+            data: candles.map((candle) => ({
+              time: Math.floor(candle.time.getTime() / 1000),
+              open: candle.open,
+              high: candle.high,
+              low: candle.low,
+              close: candle.close,
+              volume: candle.volume,
+            })),
           })
         );
 

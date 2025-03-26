@@ -24,6 +24,23 @@ services:
       postgres -c shared_preload_libraries=timescaledb
               -c timescaledb.telemetry_level=off
 
+  # Redis for caching
+  redis:
+    image: redis:7.2-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - trading-network
+
   # Trading app backend
   backend:
     build:
@@ -43,8 +60,14 @@ services:
       - TRADING_SYMBOLS=btcusdt,ethusdt,bnbusdt,solusdt,adausdt
       - PRISMA_CLIENT_ENGINE_TYPE=binary
       - SEED_DATABASE=true
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=
+      - REDIS_DB=0
     depends_on:
       timescaledb:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     networks:
       - trading-network
@@ -58,6 +81,9 @@ services:
 volumes:
   trading_db_data:
     name: trading_db_data
+    external: true
+  redis_data:
+    name: redis_data
     external: true
 
 networks:

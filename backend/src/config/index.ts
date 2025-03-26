@@ -13,6 +13,12 @@ const configSchema = z.object({
   tradingSymbols: z.string().default("btcusdt,ethusdt,bnbusdt,solusdt,adausdt"),
   jwtSecret: z.string().default("trading-app-secret-key"),
   jwtExpiresIn: z.string().default("7d"),
+  redis: z.object({
+    host: z.string().default("localhost"),
+    port: z.coerce.number().default(6379),
+    password: z.string().optional(),
+    db: z.coerce.number().default(0),
+  }),
 });
 
 export const config = {
@@ -27,6 +33,12 @@ export const config = {
     process.env.TRADING_SYMBOLS || "btcusdt,ethusdt,bnbusdt,solusdt,adausdt",
   jwtSecret: process.env.JWT_SECRET || "trading-app-secret-key",
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || "7d",
+  redis: {
+    host: process.env.REDIS_HOST || "localhost",
+    port: parseInt(process.env.REDIS_PORT || "6379"),
+    password: process.env.REDIS_PASSWORD,
+    db: parseInt(process.env.REDIS_DB || "0"),
+  },
 };
 
 try {

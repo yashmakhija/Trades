@@ -16,9 +16,9 @@ RUN bunx prisma generate
 FROM oven/bun:1.0.30 AS production
 WORKDIR /app
 
-# Install PostgreSQL client for database operations
 RUN apt-get update && apt-get install -y \
     postgresql-client \
+    redis-tools \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -36,11 +36,16 @@ RUN chmod +x /app/scripts/db-init.sh
 ENV PORT=3001 \
     NODE_ENV=production 
 
-# Create healthcheck script
-RUN echo '#!/bin/sh\ncurl -f http://localhost:${PORT:-3001}/health || exit 1' > /app/healthcheck.sh && \
+# Create healthcheck script with Redis check
+RUN echo '#!/bin/sh\n\
+# Check Redis connection\n\
+redis-cli -h ${REDIS_HOST:-redis} -p ${REDIS_PORT:-6379} ping || exit 1\n\
+\n\
+# Check application health\n\
+curl -f http://localhost:${PORT:-3001}/health || exit 1' > /app/healthcheck.sh && \
     chmod +x /app/healthcheck.sh
 
-# Create entrypoint script with better data protection
+# Create entrypoint script with better data protection and Redis check
 RUN echo '#!/bin/sh\n\
 if [ -z "$SKIP_DB_SETUP" ]; then\n\
   echo "Running database setup..."\n\
@@ -60,6 +65,14 @@ if [ -z "$SKIP_DB_SETUP" ]; then\n\
 else\n\
   echo "Skipping database setup as SKIP_DB_SETUP is set"\n\
 fi\n\
+\n\
+# Wait for Redis to be ready\n\
+echo "Waiting for Redis to be ready..."\n\
+until redis-cli -h ${REDIS_HOST:-redis} -p ${REDIS_PORT:-6379} ping; do\n\
+  echo "Redis is unavailable - sleeping"\n\
+  sleep 1\n\
+done\n\
+echo "Redis is ready!"\n\
 \n\
 echo "Starting application..."\n\
 exec bun src/index.ts\n\

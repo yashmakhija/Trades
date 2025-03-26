@@ -56,7 +56,13 @@ interface TransformedCandle {
  */
 export async function getCandles(req: Request, res: Response): Promise<void> {
   try {
-    const { symbol, timeframe = "1m", limit = "100" } = req.query;
+    const {
+      symbol,
+      timeframe = "1m",
+      limit = "100",
+      startTime,
+      endTime,
+    } = req.query;
 
     // Validate inputs
     if (!symbol) {
@@ -64,11 +70,31 @@ export async function getCandles(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    // Convert limit to number with a maximum of 100
-    const limitNum = Math.min(parseInt(limit as string) || 100, 100);
+    // Convert limit to number with a maximum of 1000
+    const limitNum = Math.min(parseInt(limit as string) || 100, 1000);
 
     // Map timeframe string to enum
     const tf = mapTimeframe(timeframe as string);
+
+    // Parse time range if provided
+    let startDate: Date | undefined;
+    let endDate: Date | undefined;
+
+    if (startTime) {
+      startDate = new Date(startTime as string);
+      if (isNaN(startDate.getTime())) {
+        res.status(400).json({ error: "Invalid startTime format" });
+        return;
+      }
+    }
+
+    if (endTime) {
+      endDate = new Date(endTime as string);
+      if (isNaN(endDate.getTime())) {
+        res.status(400).json({ error: "Invalid endTime format" });
+        return;
+      }
+    }
 
     // Find the symbol ID
     const symbolRecord = await prisma.symbol.findUnique({
@@ -80,14 +106,16 @@ export async function getCandles(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    // Query candles
+    // Query candles with time range
     const candles = await prisma.oHLCV.findMany({
       where: {
         symbolId: symbolRecord.id,
         timeframe: tf,
+        ...(startDate && { time: { gte: startDate } }),
+        ...(endDate && { time: { lte: endDate } }),
       },
       orderBy: {
-        time: "desc",
+        time: "asc",
       },
       take: limitNum,
     });
@@ -101,9 +129,6 @@ export async function getCandles(req: Request, res: Response): Promise<void> {
       close: candle.close,
       volume: candle.volume,
     }));
-
-    // Sort by time ascending for chart display
-    transformedCandles.sort((a, b) => a.time - b.time);
 
     res.json(transformedCandles);
   } catch (error) {

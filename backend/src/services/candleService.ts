@@ -1,5 +1,7 @@
 import { PrismaClient, OHLCV, Timeframe } from "@prisma/client";
 import { WebSocketServer } from "ws";
+import { redisService } from "./redisService";
+import { config } from "../config";
 
 const prisma = new PrismaClient();
 
@@ -8,6 +10,40 @@ const prisma = new PrismaClient();
  */
 class CandleService {
   private wss: WebSocketServer | null = null;
+  private readonly RETENTION_POLICIES = {
+    [Timeframe.ONE_MINUTE]: {
+      redis: 7 * 24 * 60 * 60, // 7 days in Redis
+      timescale: 30 * 24 * 60 * 60, // 30 days in TimescaleDB
+    },
+    [Timeframe.FIVE_MINUTES]: {
+      redis: 14 * 24 * 60 * 60,
+      timescale: 90 * 24 * 60 * 60,
+    },
+    [Timeframe.TEN_MINUTES]: {
+      redis: 30 * 24 * 60 * 60,
+      timescale: 180 * 24 * 60 * 60,
+    },
+    [Timeframe.FIFTEEN_MINUTES]: {
+      redis: 30 * 24 * 60 * 60,
+      timescale: 180 * 24 * 60 * 60,
+    },
+    [Timeframe.THIRTY_MINUTES]: {
+      redis: 60 * 24 * 60 * 60,
+      timescale: 365 * 24 * 60 * 60,
+    },
+    [Timeframe.ONE_HOUR]: {
+      redis: 90 * 24 * 60 * 60,
+      timescale: 730 * 24 * 60 * 60,
+    },
+    [Timeframe.FOUR_HOURS]: {
+      redis: 180 * 24 * 60 * 60,
+      timescale: 1460 * 24 * 60 * 60,
+    },
+    [Timeframe.ONE_DAY]: {
+      redis: 365 * 24 * 60 * 60,
+      timescale: 3650 * 24 * 60 * 60,
+    },
+  };
 
   /**
    * Set the WebSocket server instance for real-time updates
@@ -40,7 +76,7 @@ class CandleService {
         throw new Error(`Symbol ${symbol} not found`);
       }
 
-      // Store the candle
+      // Store the candle in TimescaleDB
       const candle = await prisma.oHLCV.create({
         data: {
           symbolId: symbolRecord.id,
@@ -54,37 +90,11 @@ class CandleService {
         },
       });
 
-      // Apply retention policy - keep only the last 100 candles per symbol/timeframe
-      const count = await prisma.oHLCV.count({
-        where: {
-          symbolId: symbolRecord.id,
-          timeframe,
-        },
-      });
+      // Update Redis cache
+      await this.updateRedisCache(symbol, timeframe, candle);
 
-      if (count > 100) {
-        // Delete the oldest candles beyond the 100 limit
-        const oldestCandles = await prisma.oHLCV.findMany({
-          where: {
-            symbolId: symbolRecord.id,
-            timeframe,
-          },
-          orderBy: {
-            time: "asc",
-          },
-          take: count - 100,
-        });
-
-        if (oldestCandles.length > 0) {
-          await prisma.oHLCV.deleteMany({
-            where: {
-              id: {
-                in: oldestCandles.map((c) => c.id),
-              },
-            },
-          });
-        }
-      }
+      // Apply retention policy
+      await this.applyRetentionPolicy(symbolRecord.id, timeframe);
 
       // Broadcast the update to WebSocket clients
       this.broadcastCandleUpdate(symbol, timeframe, candle);
@@ -102,7 +112,9 @@ class CandleService {
   async getCandles(
     symbol: string,
     timeframe: Timeframe = Timeframe.ONE_MINUTE,
-    limit: number = 100
+    limit: number = 100,
+    startTime?: Date,
+    endTime?: Date
   ): Promise<OHLCV[]> {
     try {
       // Check if the symbol exists
@@ -114,22 +126,63 @@ class CandleService {
         throw new Error(`Symbol ${symbol} not found`);
       }
 
-      // Get the candles
-      const candles = await prisma.oHLCV.findMany({
+      // Try to get from Redis cache first
+      const cachedCandles = await redisService.getCachedCandles(
+        symbol,
+        timeframe,
+        startTime?.getTime(),
+        endTime?.getTime()
+      );
+
+      if (cachedCandles) {
+        return cachedCandles.map((candle) => ({
+          id: `${symbolRecord.id}-${timeframe}-${candle.time}`,
+          symbolId: symbolRecord.id,
+          symbol: symbolRecord,
+          open: candle.open,
+          high: candle.high,
+          low: candle.low,
+          close: candle.close,
+          volume: candle.volume,
+          timeframe,
+          time: new Date(candle.time),
+        }));
+      }
+
+      // If no cache or data too old, query TimescaleDB
+      const dbCandles = await prisma.oHLCV.findMany({
         where: {
           symbolId: symbolRecord.id,
           timeframe,
+          time: {
+            gte: startTime,
+            lte: endTime,
+          },
         },
         orderBy: {
-          time: "desc",
+          time: "asc",
         },
-        take: Math.min(limit, 100), // Limit to 100 candles max
+        take: Math.min(limit, 1000),
         include: {
-          symbol: true, // Include symbol details for the response
+          symbol: true,
         },
       });
 
-      return candles.reverse(); // Return in ascending order by time
+      // Cache recent candles
+      await redisService.cacheCandles(
+        symbol,
+        timeframe,
+        dbCandles.map((candle) => ({
+          time: candle.time.getTime(),
+          open: candle.open,
+          high: candle.high,
+          low: candle.low,
+          close: candle.close,
+          volume: candle.volume,
+        }))
+      );
+
+      return dbCandles;
     } catch (error) {
       console.error("Error getting candles:", error);
       throw error;
@@ -153,7 +206,26 @@ class CandleService {
         throw new Error(`Symbol ${symbol} not found`);
       }
 
-      // Get the latest candle
+      // Try to get from Redis cache first
+      const cachedCandle = await redisService.getLatestCandle(
+        symbol,
+        timeframe
+      );
+      if (cachedCandle) {
+        return {
+          id: `${symbolRecord.id}-${timeframe}-${cachedCandle.time}`,
+          symbolId: symbolRecord.id,
+          open: cachedCandle.open,
+          high: cachedCandle.high,
+          low: cachedCandle.low,
+          close: cachedCandle.close,
+          volume: cachedCandle.volume,
+          timeframe,
+          time: new Date(cachedCandle.time),
+        };
+      }
+
+      // If no cache, get from database
       const candle = await prisma.oHLCV.findFirst({
         where: {
           symbolId: symbolRecord.id,
@@ -163,9 +235,21 @@ class CandleService {
           time: "desc",
         },
         include: {
-          symbol: true, // Include symbol details for the response
+          symbol: true,
         },
       });
+
+      // Cache the latest candle
+      if (candle) {
+        await redisService.updateLatestCandle(symbol, timeframe, {
+          time: candle.time.getTime(),
+          open: candle.open,
+          high: candle.high,
+          low: candle.low,
+          close: candle.close,
+          volume: candle.volume,
+        });
+      }
 
       return candle;
     } catch (error) {
@@ -193,6 +277,28 @@ class CandleService {
         throw new Error(`Symbol ${symbol} not found`);
       }
 
+      // Try to get from Redis cache first
+      const cachedAggregates = await redisService.getCachedAggregatedCandles(
+        symbol,
+        sourceTimeframe,
+        targetTimeframe
+      );
+
+      if (cachedAggregates) {
+        return cachedAggregates.map((candle) => ({
+          id: `${symbolRecord.id}-${targetTimeframe}-${candle.time}`,
+          symbolId: symbolRecord.id,
+          symbol: symbolRecord,
+          open: candle.open,
+          high: candle.high,
+          low: candle.low,
+          close: candle.close,
+          volume: candle.volume,
+          timeframe: targetTimeframe,
+          time: new Date(candle.time),
+        }));
+      }
+
       // Map timeframes to minutes
       const timeframeToMinutes: Record<Timeframe, number> = {
         [Timeframe.ONE_MINUTE]: 1,
@@ -214,7 +320,7 @@ class CandleService {
         );
       }
 
-      // Get the source candles
+      // Get the source candles from TimescaleDB
       const sourceCandles = await prisma.oHLCV.findMany({
         where: {
           symbolId: symbolRecord.id,
@@ -223,7 +329,7 @@ class CandleService {
         orderBy: {
           time: "desc",
         },
-        take: Math.min(limit * (targetMinutes / sourceMinutes), 1000), // Reasonable upper limit
+        take: Math.min(limit * (targetMinutes / sourceMinutes), 1000),
         include: {
           symbol: true,
         },
@@ -281,12 +387,79 @@ class CandleService {
         }
       );
 
+      // Cache the aggregated results
+      await redisService.cacheAggregatedCandles(
+        symbol,
+        sourceTimeframe,
+        targetTimeframe,
+        aggregatedCandles.map((candle) => ({
+          time: candle.time.getTime(),
+          open: candle.open,
+          high: candle.high,
+          low: candle.low,
+          close: candle.close,
+          volume: candle.volume,
+        }))
+      );
+
       return aggregatedCandles.sort(
         (a, b) => a.time.getTime() - b.time.getTime()
       );
     } catch (error) {
       console.error("Error aggregating candles:", error);
       throw error;
+    }
+  }
+
+  /**
+   * Update Redis cache with new candle data
+   */
+  private async updateRedisCache(
+    symbol: string,
+    timeframe: Timeframe,
+    candle: OHLCV
+  ): Promise<void> {
+    try {
+      // Update latest candle
+      await redisService.updateLatestCandle(symbol, timeframe, {
+        time: candle.time.getTime(),
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        volume: candle.volume,
+      });
+
+      // Invalidate other caches
+      await redisService.invalidateCache(symbol, timeframe);
+    } catch (error) {
+      console.error("Error updating Redis cache:", error);
+    }
+  }
+
+  /**
+   * Apply retention policy for a symbol and timeframe
+   */
+  private async applyRetentionPolicy(
+    symbolId: string,
+    timeframe: Timeframe
+  ): Promise<void> {
+    try {
+      const policy = this.RETENTION_POLICIES[timeframe];
+      const cutoffDate = new Date(Date.now() - policy.timescale * 1000);
+
+      // Delete candles older than retention period from TimescaleDB
+      await prisma.oHLCV.deleteMany({
+        where: {
+          symbolId,
+          timeframe,
+          time: {
+            lt: cutoffDate,
+          },
+        },
+      });
+    } catch (error) {
+      console.error("Error applying retention policy:", error);
     }
   }
 

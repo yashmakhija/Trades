@@ -457,7 +457,7 @@ paths:
       tags:
         - Candles
       summary: Get historical candle data
-      description: Returns historical OHLCV candle data for a specific symbol and timeframe
+      description: Returns historical candle data for a specific symbol and timeframe
       operationId: getCandles
       parameters:
         - name: symbol
@@ -477,11 +477,27 @@ paths:
         - name: limit
           in: query
           required: false
-          description: Maximum number of candles to return (max 100)
+          description: Maximum number of candles to return (max 1000)
           schema:
             type: integer
             default: 100
-            maximum: 100
+            maximum: 1000
+        - name: startTime
+          in: query
+          required: false
+          description: Start time for historical data (ISO 8601 format)
+          schema:
+            type: string
+            format: date-time
+            example: "2024-03-01T00:00:00Z"
+        - name: endTime
+          in: query
+          required: false
+          description: End time for historical data (ISO 8601 format)
+          schema:
+            type: string
+            format: date-time
+            example: "2024-03-26T00:00:00Z"
       responses:
         "200":
           description: Historical candle data
