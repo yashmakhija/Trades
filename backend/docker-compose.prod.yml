@@ -1,4 +1,4 @@
-version: "3.8"
+upversion: "3.8"
 
 services:
   # TimescaleDB with PostGIS extension
@@ -24,30 +24,6 @@ services:
       postgres -c shared_preload_libraries=timescaledb
               -c timescaledb.telemetry_level=off
 
-  # Redis for caching
-  redis:
-    image: redis:7.2-alpine
-    container_name: trading-redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru --protected-mode no
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 3
-      start_period: 10s
-    networks:
-      - trading-network
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
   # Trading app backend
   backend:
     build:
@@ -67,14 +43,14 @@ services:
       - TRADING_SYMBOLS=btcusdt,ethusdt,bnbusdt,solusdt,adausdt
       - PRISMA_CLIENT_ENGINE_TYPE=binary
       - SEED_DATABASE=true
-      - REDIS_HOST=redis
+      - REDIS_HOST=host.docker.internal
       - REDIS_PORT=6379
       - REDIS_PASSWORD=
       - REDIS_DB=0
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       timescaledb:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     networks:
       - trading-network
@@ -93,9 +69,6 @@ services:
 volumes:
   trading_db_data:
     name: trading_db_data
-    external: true
-  redis_data:
-    name: redis_data
     external: true
 
 networks:
