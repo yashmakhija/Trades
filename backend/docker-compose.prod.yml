@@ -1,9 +1,10 @@
-upversion: "3.8"
+version: "3.8"
 
 services:
   # TimescaleDB with PostGIS extension
   timescaledb:
     image: timescale/timescaledb:latest-pg14
+    container_name: timescaledb
     ports:
       - "5432:5432"
     environment:
@@ -11,13 +12,14 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: trading_app
     volumes:
-      - trading_db_data:/var/lib/postgresql/data
+      - timescale_data:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
     networks:
       - trading-network
     command: >
@@ -26,34 +28,24 @@ services:
 
   # Trading app backend
   backend:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: trading-backend
+    image: ${DOCKER_USERNAME}/trading-app-backend:latest
+    container_name: trading-backend-2
     restart: unless-stopped
     ports:
       - "3001:3001"
     environment:
-      - NODE_ENV=production
       - DATABASE_URL=postgresql://postgres:postgres@timescaledb:5432/trading_app?schema=public
+      - JWT_SECRET=${JWT_SECRET}
+      - NODE_ENV=production
       - PORT=3001
-      - JWT_SECRET=super-secure-jwt-secret-for-development
-      - JWT_EXPIRES_IN=7d
-      - BINANCE_WEBSOCKET_URL=wss://stream.binance.com:9443/ws
-      - TRADING_SYMBOLS=btcusdt,ethusdt,bnbusdt,solusdt,adausdt
-      - PRISMA_CLIENT_ENGINE_TYPE=binary
-      - SEED_DATABASE=true
-      - REDIS_HOST=host.docker.internal
+      - REDIS_HOST=${HOST_IP}
       - REDIS_PORT=6379
-      - REDIS_PASSWORD=
+      - REDIS_PASSWORD=tradingapp
       - REDIS_DB=0
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    depends_on:
-      timescaledb:
-        condition: service_healthy
     networks:
       - trading-network
+    depends_on:
+      - timescaledb
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
       interval: 30s
@@ -67,11 +59,9 @@ services:
         max-file: "3"
 
 volumes:
-  trading_db_data:
-    name: trading_db_data
-    external: true
+  timescale_data:
+    driver: local
 
 networks:
   trading-network:
-    name: trading-network
     driver: bridge
