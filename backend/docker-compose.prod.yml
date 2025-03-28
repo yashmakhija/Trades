@@ -31,21 +31,16 @@ services:
     image: ${DOCKER_USERNAME}/trading-app-backend:latest
     container_name: trading-backend-2
     restart: unless-stopped
-    ports:
-      - "3001:3001"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    network_mode: host
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@timescaledb:5432/trading_app?schema=public
+      - DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/trading_app?schema=public
       - JWT_SECRET=${JWT_SECRET}
       - NODE_ENV=production
       - PORT=3001
-      - REDIS_HOST=host.docker.internal
+      - REDIS_HOST=127.0.0.1
       - REDIS_PORT=6379
       - REDIS_PASSWORD=tradingapp
       - REDIS_DB=0
-    networks:
-      - trading-network
     depends_on:
       - timescaledb
     healthcheck:
