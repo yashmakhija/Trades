@@ -193,12 +193,12 @@ jobs:
             --network trading-network \\
             -p 3001:3001 \\
             --restart unless-stopped \\
-            --add-host=host.docker.internal:host-gateway \\
+            --network host \\
             -e DATABASE_URL="postgresql://postgres:postgres@timescaledb:5432/trading_app?schema=public" \\
             -e JWT_SECRET="${JWT_SECRET}" \\
             -e NODE_ENV="production" \\
             -e PORT="3001" \\
-            -e REDIS_HOST="host.docker.internal" \\
+            -e REDIS_HOST="\${HOST_IP}" \\
             -e REDIS_PORT="6379" \\
             -e REDIS_PASSWORD="tradingapp" \\
             -e REDIS_DB="0" \\
