@@ -55,7 +55,7 @@ class AuthApi {
 
   // Verify authentication token
   async verifyToken(): Promise<VerifyResponse> {
-    const response = await api.get<VerifyResponse>("/auth/verify");
+    const response = await api.get<VerifyResponse>("/api/auth/verify");
     return response.data;
   }
 
