@@ -33,12 +33,14 @@ services:
     restart: unless-stopped
     ports:
       - "3001:3001"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@timescaledb:5432/trading_app?schema=public
       - JWT_SECRET=${JWT_SECRET}
       - NODE_ENV=production
       - PORT=3001
-      - REDIS_HOST=${HOST_IP}
+      - REDIS_HOST=host.docker.internal
       - REDIS_PORT=6379
       - REDIS_PASSWORD=tradingapp
       - REDIS_DB=0
