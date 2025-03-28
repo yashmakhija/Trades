@@ -20,29 +20,45 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-    networks:
-      - trading-network
     command: >
       postgres -c shared_preload_libraries=timescaledb
               -c timescaledb.telemetry_level=off
+              -c max_connections=200
+              -c shared_buffers=256MB
+              -c effective_cache_size=768MB
+              -c maintenance_work_mem=64MB
+              -c checkpoint_completion_target=0.9
+              -c wal_buffers=7864kB
+              -c default_statistics_target=100
+              -c random_page_cost=1.1
+              -c effective_io_concurrency=200
+              -c work_mem=5242kB
+              -c min_wal_size=1GB
+              -c max_wal_size=4GB
 
   # Trading app backend
   backend:
     image: ${DOCKER_USERNAME}/trading-app-backend:latest
     container_name: trading-backend-2
     restart: unless-stopped
-    network_mode: host
+    ports:
+      - "3001:3001"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/trading_app?schema=public
+      - DATABASE_URL=postgresql://postgres:postgres@timescaledb:5432/trading_app?schema=public
       - JWT_SECRET=${JWT_SECRET}
       - NODE_ENV=production
       - PORT=3001
-      - REDIS_HOST=127.0.0.1
+      - REDIS_HOST=host.docker.internal
       - REDIS_PORT=6379
       - REDIS_PASSWORD=tradingapp
       - REDIS_DB=0
+    networks:
+      - trading-network
     depends_on:
-      - timescaledb
+      timescaledb:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
       interval: 30s
