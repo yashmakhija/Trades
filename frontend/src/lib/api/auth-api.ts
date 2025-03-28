@@ -24,6 +24,13 @@ interface RegisterRequest {
   password: string;
 }
 
+interface VerifyResponse {
+  valid: boolean;
+  user?: {
+    id: string;
+  };
+}
+
 class AuthApi {
   // Login with email and password
   async login(credentials: LoginRequest): Promise<LoginResponse> {
@@ -43,6 +50,12 @@ class AuthApi {
   // Get the current user's profile
   async getProfile(): Promise<User> {
     const response = await api.get<User>("/auth/profile");
+    return response.data;
+  }
+
+  // Verify authentication token
+  async verifyToken(): Promise<VerifyResponse> {
+    const response = await api.get<VerifyResponse>("/auth/verify");
     return response.data;
   }
 

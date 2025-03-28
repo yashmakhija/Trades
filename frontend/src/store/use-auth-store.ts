@@ -1,21 +1,24 @@
 import { create } from "zustand";
+import { authApi } from "@/lib/api/auth-api";
 
 export interface User {
   id: string;
-  email: string;
   username: string;
-  createdAt?: string;
+  email: string;
   usdcBalance: number;
+  createdAt: string;
 }
 
 interface AuthState {
   user: User | null;
   token: string | null;
   isAuthenticated: boolean;
+  isInitialized: boolean;
   setUser: (user: User | null) => void;
   setToken: (token: string | null) => void;
   login: (user: User, token: string) => void;
   logout: () => void;
+  verifyAuth: () => Promise<boolean>;
 }
 
 // Initialize state from localStorage if available (client-side only)
@@ -25,6 +28,7 @@ const getInitialState = () => {
       user: null,
       token: null,
       isAuthenticated: false,
+      isInitialized: false,
     };
   }
 
@@ -38,6 +42,7 @@ const getInitialState = () => {
         user,
         token,
         isAuthenticated: true,
+        isInitialized: false,
       };
     }
   } catch (error) {
@@ -50,10 +55,11 @@ const getInitialState = () => {
     user: null,
     token: null,
     isAuthenticated: false,
+    isInitialized: false,
   };
 };
 
-export const useAuthStore = create<AuthState>((set) => ({
+export const useAuthStore = create<AuthState>((set, get) => ({
   ...getInitialState(),
 
   setUser: (user) => {
@@ -102,6 +108,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       user,
       token,
       isAuthenticated: true,
+      isInitialized: true,
     });
   },
 
@@ -116,6 +123,31 @@ export const useAuthStore = create<AuthState>((set) => ({
       user: null,
       token: null,
       isAuthenticated: false,
+      isInitialized: true,
     });
+  },
+
+  verifyAuth: async () => {
+    const { token } = get();
+
+    if (!token) {
+      set({ isInitialized: true });
+      return false;
+    }
+
+    try {
+      const response = await authApi.verifyToken();
+
+      if (!response.valid) {
+        get().logout();
+        return false;
+      }
+
+      set({ isInitialized: true });
+      return true;
+    } catch (error) {
+      get().logout();
+      return false;
+    }
   },
 }));

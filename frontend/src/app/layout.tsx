@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 import { Navbar, NavbarSpacer } from "@/components/layout/navbar";
+import { AuthProvider } from "@/components/auth/auth-provider";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
 
@@ -20,12 +21,14 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark" style={{ colorScheme: "dark" }}>
       <body className={`${inter.variable} font-sans antialiased`}>
-        <div className="relative flex min-h-screen flex-col">
-          <Navbar />
-          <NavbarSpacer />
-          <main className="flex-1">{children}</main>
-        </div>
-        <Toaster position="top-right" richColors closeButton />
+        <AuthProvider>
+          <div className="relative flex min-h-screen flex-col">
+            <Navbar />
+            <NavbarSpacer />
+            <main className="flex-1">{children}</main>
+          </div>
+          <Toaster position="top-right" richColors closeButton />
+        </AuthProvider>
       </body>
     </html>
   );
