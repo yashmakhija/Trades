@@ -343,7 +343,10 @@ class CandleService {
         targetTimeframe
       );
 
-      if (cachedAggregates) {
+      if (cachedAggregates && cachedAggregates.length > 0) {
+        console.log(
+          `Using cached aggregated candles for ${symbol} (${sourceTimeframe} -> ${targetTimeframe})`
+        );
         return cachedAggregates.map((candle) => ({
           id: `${symbolRecord.id}-${targetTimeframe}-${candle.time}`,
           symbolId: symbolRecord.id,
@@ -379,20 +382,39 @@ class CandleService {
         );
       }
 
-      // Get the source candles from TimescaleDB
+      const ratio = targetMinutes / sourceMinutes;
+      const neededSourceCandles = limit * ratio;
+
+      console.log(
+        `Aggregating ${sourceTimeframe} to ${targetTimeframe} candles for ${symbol} (ratio: ${ratio}, needed: ${neededSourceCandles})`
+      );
+
+      // Calculate a reasonable time range to fetch source candles
+      const now = new Date();
+      const timeRangeMs = neededSourceCandles * sourceMinutes * 60 * 1000;
+      const startDate = new Date(now.getTime() - timeRangeMs);
+
+      // Get the source candles from TimescaleDB with more organized query
       const sourceCandles = await prisma.oHLCV.findMany({
         where: {
           symbolId: symbolRecord.id,
           timeframe: sourceTimeframe,
+          time: {
+            gte: startDate,
+          },
         },
         orderBy: {
-          time: "desc",
+          time: "asc",
         },
-        take: Math.min(limit * (targetMinutes / sourceMinutes), 1000),
+        take: Math.min(neededSourceCandles, 5000), // Limit to prevent excessive DB load
         include: {
           symbol: true,
         },
       });
+
+      console.log(
+        `Found ${sourceCandles.length} source candles for aggregation`
+      );
 
       if (sourceCandles.length === 0) {
         return [];
@@ -403,14 +425,66 @@ class CandleService {
 
       sourceCandles.forEach((candle) => {
         const time = new Date(candle.time);
-        // Round down to the nearest target timeframe
-        const targetTime = new Date(
-          time.getFullYear(),
-          time.getMonth(),
-          time.getDate(),
-          time.getHours(),
-          Math.floor(time.getMinutes() / targetMinutes) * targetMinutes
-        );
+
+        // Calculate target time by rounding down to the nearest target timeframe interval
+        let targetTime: Date;
+
+        if (targetTimeframe === Timeframe.ONE_DAY) {
+          // For daily candles, round to midnight UTC
+          targetTime = new Date(
+            Date.UTC(
+              time.getUTCFullYear(),
+              time.getUTCMonth(),
+              time.getUTCDate(),
+              0,
+              0,
+              0,
+              0
+            )
+          );
+        } else if (targetTimeframe === Timeframe.FOUR_HOURS) {
+          // For 4h candles, round to 00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC
+          const hours = Math.floor(time.getUTCHours() / 4) * 4;
+          targetTime = new Date(
+            Date.UTC(
+              time.getUTCFullYear(),
+              time.getUTCMonth(),
+              time.getUTCDate(),
+              hours,
+              0,
+              0,
+              0
+            )
+          );
+        } else if (targetTimeframe === Timeframe.ONE_HOUR) {
+          // For hourly candles, round to the start of the hour
+          targetTime = new Date(
+            Date.UTC(
+              time.getUTCFullYear(),
+              time.getUTCMonth(),
+              time.getUTCDate(),
+              time.getUTCHours(),
+              0,
+              0,
+              0
+            )
+          );
+        } else {
+          // For smaller timeframes, round to the nearest target minutes
+          const minutes =
+            Math.floor(time.getUTCMinutes() / targetMinutes) * targetMinutes;
+          targetTime = new Date(
+            Date.UTC(
+              time.getUTCFullYear(),
+              time.getUTCMonth(),
+              time.getUTCDate(),
+              time.getUTCHours(),
+              minutes,
+              0,
+              0
+            )
+          );
+        }
 
         const key = targetTime.toISOString();
 
@@ -422,14 +496,20 @@ class CandleService {
       });
 
       // Aggregate candles
-      const aggregatedCandles = Object.entries(groupedCandles).map(
-        ([key, candles]) => {
+      const aggregatedCandles = Object.entries(groupedCandles)
+        .map(([key, candles]) => {
+          if (candles.length === 0) return null;
+
           const time = new Date(key);
-          const open = candles[0].open;
-          const close = candles[candles.length - 1].close;
-          const high = Math.max(...candles.map((c) => c.high));
-          const low = Math.min(...candles.map((c) => c.low));
-          const volume = candles.reduce((sum, c) => sum + c.volume, 0);
+          const sortedCandles = [...candles].sort(
+            (a, b) => a.time.getTime() - b.time.getTime()
+          );
+
+          const open = sortedCandles[0].open;
+          const close = sortedCandles[sortedCandles.length - 1].close;
+          const high = Math.max(...sortedCandles.map((c) => c.high));
+          const low = Math.min(...sortedCandles.map((c) => c.low));
+          const volume = sortedCandles.reduce((sum, c) => sum + c.volume, 0);
 
           return {
             id: `${symbolRecord.id}-${targetTimeframe}-${time.getTime()}`,
@@ -443,8 +523,62 @@ class CandleService {
             timeframe: targetTimeframe,
             time,
           };
-        }
+        })
+        .filter(Boolean) as OHLCV[];
+
+      // Sort chronologically
+      aggregatedCandles.sort((a, b) => a.time.getTime() - b.time.getTime());
+
+      console.log(
+        `Generated ${aggregatedCandles.length} aggregated ${targetTimeframe} candles`
       );
+
+      // Store the newly aggregated candles in the database to speed up future requests
+      if (aggregatedCandles.length > 0) {
+        try {
+          console.log(
+            `Storing ${aggregatedCandles.length} aggregated candles in database`
+          );
+          for (const candle of aggregatedCandles) {
+            // Extract the symbol object to avoid type error
+            const { symbol: _, ...candleData } = candle as any;
+            await prisma.oHLCV
+              .upsert({
+                where: {
+                  id_time: {
+                    id: candleData.id,
+                    time: candleData.time,
+                  },
+                },
+                update: {
+                  open: candleData.open,
+                  high: candleData.high,
+                  low: candleData.low,
+                  close: candleData.close,
+                  volume: candleData.volume,
+                },
+                create: {
+                  id: candleData.id,
+                  symbolId: candleData.symbolId,
+                  open: candleData.open,
+                  high: candleData.high,
+                  low: candleData.low,
+                  close: candleData.close,
+                  volume: candleData.volume,
+                  timeframe: candleData.timeframe,
+                  time: candleData.time,
+                },
+              })
+              .catch((e) => {
+                // Catch errors for individual candles to prevent entire operation from failing
+                console.warn(`Failed to store aggregated candle: ${e.message}`);
+              });
+          }
+        } catch (storeError) {
+          console.error("Error storing aggregated candles:", storeError);
+          // Continue even if storage fails - we still want to return the aggregated data
+        }
+      }
 
       // Cache the aggregated results
       await redisService.cacheAggregatedCandles(
@@ -461,11 +595,13 @@ class CandleService {
         }))
       );
 
-      return aggregatedCandles.sort(
-        (a, b) => a.time.getTime() - b.time.getTime()
-      );
+      // Return only the requested number of most recent candles
+      return aggregatedCandles.slice(-limit);
     } catch (error) {
-      console.error("Error aggregating candles:", error);
+      console.error(
+        `Error aggregating candles from ${sourceTimeframe} to ${targetTimeframe}:`,
+        error
+      );
       throw error;
     }
   }
@@ -672,37 +808,52 @@ class CandleService {
 
       const minutesInTimeframe = timeframeToMinutes[timeframe];
 
-      // Calculate appropriate window boundaries
+      // Create a new Date object to avoid modifying the original
       const boundaryTime = new Date(endTime);
+
+      // Reset to exact boundary (always start with resetting milliseconds and seconds)
       boundaryTime.setMilliseconds(0);
       boundaryTime.setSeconds(0);
 
-      // Adjust minutes based on timeframe
-      if (timeframe === Timeframe.FIVE_MINUTES) {
-        boundaryTime.setMinutes(Math.floor(boundaryTime.getMinutes() / 5) * 5);
-      } else if (timeframe === Timeframe.TEN_MINUTES) {
-        boundaryTime.setMinutes(
-          Math.floor(boundaryTime.getMinutes() / 10) * 10
-        );
-      } else if (timeframe === Timeframe.FIFTEEN_MINUTES) {
-        boundaryTime.setMinutes(
-          Math.floor(boundaryTime.getMinutes() / 15) * 15
-        );
-      } else if (timeframe === Timeframe.THIRTY_MINUTES) {
-        boundaryTime.setMinutes(
-          Math.floor(boundaryTime.getMinutes() / 30) * 30
-        );
-      } else if (timeframe === Timeframe.ONE_HOUR) {
-        boundaryTime.setMinutes(0);
-      } else if (timeframe === Timeframe.FOUR_HOURS) {
-        boundaryTime.setMinutes(0);
-        boundaryTime.setHours(Math.floor(boundaryTime.getHours() / 4) * 4);
-      } else if (timeframe === Timeframe.ONE_DAY) {
-        boundaryTime.setMinutes(0);
-        boundaryTime.setHours(0);
+      // Adjust time based on timeframe using more precise calculations
+      switch (timeframe) {
+        case Timeframe.FIVE_MINUTES:
+          boundaryTime.setMinutes(
+            Math.floor(boundaryTime.getMinutes() / 5) * 5
+          );
+          break;
+        case Timeframe.TEN_MINUTES:
+          boundaryTime.setMinutes(
+            Math.floor(boundaryTime.getMinutes() / 10) * 10
+          );
+          break;
+        case Timeframe.FIFTEEN_MINUTES:
+          boundaryTime.setMinutes(
+            Math.floor(boundaryTime.getMinutes() / 15) * 15
+          );
+          break;
+        case Timeframe.THIRTY_MINUTES:
+          boundaryTime.setMinutes(
+            Math.floor(boundaryTime.getMinutes() / 30) * 30
+          );
+          break;
+        case Timeframe.ONE_HOUR:
+          boundaryTime.setMinutes(0); // Reset minutes for hourly candles
+          break;
+        case Timeframe.FOUR_HOURS:
+          boundaryTime.setMinutes(0);
+          boundaryTime.setHours(Math.floor(boundaryTime.getHours() / 4) * 4);
+          break;
+        case Timeframe.ONE_DAY:
+          boundaryTime.setMinutes(0);
+          boundaryTime.setHours(0);
+          break;
+        default:
+          // For 1-minute candles, we don't need special handling
+          break;
       }
 
-      // Calculate start time for data aggregation
+      // Calculate exact start time for data aggregation
       const startTime = new Date(boundaryTime);
       startTime.setMinutes(startTime.getMinutes() - minutesInTimeframe);
 
@@ -710,7 +861,7 @@ class CandleService {
         `Updating ${timeframe} for ${symbol}: ${startTime.toISOString()} to ${boundaryTime.toISOString()}`
       );
 
-      // Get all 1-minute candles in this timeframe period
+      // Get all 1-minute candles in this timeframe period with improved error handling
       const sourceCandles = await prisma.oHLCV.findMany({
         where: {
           symbolId: symbolRecord.id,
@@ -725,8 +876,24 @@ class CandleService {
         },
       });
 
-      if (sourceCandles.length === 0) {
-        console.log(`No source candles found for ${symbol} ${timeframe}`);
+      // Check if we have enough data for this timeframe
+      const expectedCandleCount = minutesInTimeframe;
+      const actualCandleCount = sourceCandles.length;
+
+      console.log(
+        `Found ${actualCandleCount}/${expectedCandleCount} 1-minute candles for ${timeframe} aggregation`
+      );
+
+      // For higher timeframes, allow partial aggregation if we have at least 25% of expected candles
+      const minimumRequiredCandles = Math.max(
+        1,
+        Math.ceil(expectedCandleCount * 0.25)
+      );
+
+      if (actualCandleCount < minimumRequiredCandles) {
+        console.log(
+          `Not enough 1-minute candles for ${timeframe} aggregation (${actualCandleCount}/${minimumRequiredCandles} minimum)`
+        );
         return;
       }
 
@@ -792,8 +959,8 @@ class CandleService {
       // Broadcast the update
       this.broadcastCandleUpdate(symbol, timeframe, candle);
 
-      // Invalidate the cache for this timeframe
-      await redisService.invalidateCache(symbol, timeframe);
+      // Update Redis cache for this timeframe
+      await this.updateRedisCache(symbol, timeframe, candle);
 
       return candle;
     } catch (error) {

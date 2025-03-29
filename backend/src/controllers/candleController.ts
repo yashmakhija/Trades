@@ -51,18 +51,13 @@ interface TransformedCandle {
 }
 
 /**
- * Get historical candle data for a symbol
+ * Get historical candle data
  * @route GET /api/candles
  */
 export async function getCandles(req: Request, res: Response): Promise<void> {
   try {
-    const {
-      symbol,
-      timeframe = "1m",
-      limit = "100",
-      startTime,
-      endTime,
-    } = req.query;
+    const { symbol, timeframe = "1m", limit = "100" } = req.query;
+    let { startTime, endTime } = req.query;
 
     // Validate inputs
     if (!symbol) {
@@ -70,92 +65,118 @@ export async function getCandles(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    // Convert limit to number with a maximum of 1000
+    // Convert limit to number with a maximum value
     const limitNum = Math.min(parseInt(limit as string) || 100, 1000);
 
-    // Map timeframe string to enum
-    const tf = mapTimeframe(timeframe as string);
+    // Parse timeframe
+    const timeframeEnum = mapTimeframe(timeframe as string);
 
-    // Parse time range if provided
+    // Log the request for debugging
+    console.log(
+      `API request for candles: ${symbol}/${timeframe} (limit: ${limitNum})`
+    );
+
+    // Parse start and end times if provided
     let startDate: Date | undefined;
     let endDate: Date | undefined;
 
     if (startTime) {
-      startDate = new Date(parseInt(startTime as string) * 1000);
-      if (isNaN(startDate.getTime())) {
-        // Try ISO format if numeric fails
+      // Try parsing as Unix timestamp first (in seconds)
+      const timestamp = parseInt(startTime as string);
+      if (!isNaN(timestamp)) {
+        startDate = new Date(timestamp * 1000); // Convert seconds to milliseconds
+      } else {
+        // Try as ISO string
         startDate = new Date(startTime as string);
-        if (isNaN(startDate.getTime())) {
-          res.status(400).json({ error: "Invalid startTime format" });
-          return;
-        }
       }
     }
 
     if (endTime) {
-      endDate = new Date(parseInt(endTime as string) * 1000);
-      if (isNaN(endDate.getTime())) {
-        // Try ISO format if numeric fails
+      // Try parsing as Unix timestamp first (in seconds)
+      const timestamp = parseInt(endTime as string);
+      if (!isNaN(timestamp)) {
+        endDate = new Date(timestamp * 1000); // Convert seconds to milliseconds
+      } else {
+        // Try as ISO string
         endDate = new Date(endTime as string);
-        if (isNaN(endDate.getTime())) {
-          res.status(400).json({ error: "Invalid endTime format" });
-          return;
-        }
       }
     }
 
-    // If we have a large date range, let's enforce a reasonable limit
-    if (startDate && endDate) {
-      const diffInDays =
-        (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24);
-
-      // For each timeframe, set a maximum range
-      const maxRangeDays = {
-        [Timeframe.ONE_MINUTE]: 2,
-        [Timeframe.FIVE_MINUTES]: 7,
-        [Timeframe.TEN_MINUTES]: 14,
-        [Timeframe.FIFTEEN_MINUTES]: 30,
-        [Timeframe.THIRTY_MINUTES]: 60,
-        [Timeframe.ONE_HOUR]: 90,
-        [Timeframe.FOUR_HOURS]: 180,
-        [Timeframe.ONE_DAY]: 365 * 2,
+    // If no valid date range is provided, use a reasonable default based on timeframe
+    if (!startDate) {
+      const now = new Date();
+      const defaultRanges: Record<string, number> = {
+        "1m": 24 * 60 * 60 * 1000, // 1 day for 1m
+        "5m": 5 * 24 * 60 * 60 * 1000, // 5 days for 5m
+        "10m": 7 * 24 * 60 * 60 * 1000, // 7 days for 10m
+        "15m": 7 * 24 * 60 * 60 * 1000, // 7 days for 15m
+        "30m": 14 * 24 * 60 * 60 * 1000, // 14 days for 30m
+        "1h": 30 * 24 * 60 * 60 * 1000, // 30 days for 1h
+        "4h": 60 * 24 * 60 * 60 * 1000, // 60 days for 4h
+        "1d": 180 * 24 * 60 * 60 * 1000, // 180 days for 1d
       };
 
-      if (diffInDays > maxRangeDays[tf]) {
-        console.warn(
-          `Requested date range of ${diffInDays} days exceeds the maximum of ${maxRangeDays[tf]} days for ${tf}. Limiting range.`
-        );
-        // Adjust startDate to respect the maximum range
-        startDate = new Date(
-          endDate.getTime() - maxRangeDays[tf] * 24 * 60 * 60 * 1000
-        );
-      }
+      const defaultRange =
+        defaultRanges[timeframe as string] || 24 * 60 * 60 * 1000;
+      startDate = new Date(now.getTime() - defaultRange);
     }
 
-    // Find the symbol ID
-    const symbolRecord = await prisma.symbol.findUnique({
-      where: { name: symbol as string },
-    });
+    console.log(
+      `Fetching ${timeframe} candles for ${symbol} from ${startDate?.toISOString() || "unknown"} to ${endDate?.toISOString() || "now"}`
+    );
 
-    if (!symbolRecord) {
-      res.status(404).json({ error: "Symbol not found" });
-      return;
-    }
-
-    // Try to use the candleService for fetching data (it handles caching and aggregation)
+    // Get candles from service
     const candles = await import("../services/candleService").then((module) =>
       module.default.getCandles(
         symbol as string,
-        tf,
+        timeframeEnum,
         limitNum,
         startDate,
         endDate
       )
     );
 
-    // Transform data to match expected format
-    const transformedCandles = candles.map((candle) => ({
-      time: Math.floor(candle.time.getTime() / 1000),
+    if (candles.length === 0 && timeframeEnum !== Timeframe.ONE_MINUTE) {
+      console.log(
+        `No ${timeframe} candles found, attempting direct aggregation from 1m candles`
+      );
+
+      // Try to force aggregate from 1m if available
+      const aggregatedCandles = await import("../services/candleService").then(
+        (module) =>
+          module.default.aggregateCandles(
+            symbol as string,
+            Timeframe.ONE_MINUTE,
+            timeframeEnum,
+            limitNum * 2 // Request more candles to ensure we have enough for aggregation
+          )
+      );
+
+      if (aggregatedCandles && aggregatedCandles.length > 0) {
+        console.log(
+          `Successfully aggregated ${aggregatedCandles.length} candles for ${timeframe}`
+        );
+
+        // Format and return the aggregated candles
+        const formattedCandles = aggregatedCandles.map((candle) => ({
+          time: Math.floor(candle.time.getTime() / 1000), // Convert to Unix timestamp
+          open: candle.open / 100, // Convert to dollars
+          high: candle.high / 100,
+          low: candle.low / 100,
+          close: candle.close / 100,
+          volume: candle.volume / 100,
+        }));
+
+        res.json(formattedCandles);
+        return;
+      }
+
+      console.log(`Failed to aggregate ${timeframe} candles from 1m data`);
+    }
+
+    // Format candles for API response
+    const formattedCandles = candles.map((candle) => ({
+      time: Math.floor(candle.time.getTime() / 1000), // Convert to Unix timestamp
       open: candle.open / 100, // Convert to dollars for display
       high: candle.high / 100,
       low: candle.low / 100,
@@ -163,10 +184,16 @@ export async function getCandles(req: Request, res: Response): Promise<void> {
       volume: candle.volume / 100,
     }));
 
-    res.json(transformedCandles);
+    console.log(
+      `Returning ${formattedCandles.length} ${timeframe} candles for ${symbol}`
+    );
+    res.json(formattedCandles);
   } catch (error) {
-    console.error("Error fetching candle data:", error);
-    res.status(500).json({ error: "Failed to fetch candle data" });
+    console.error("Error getting candles:", error);
+    res.status(500).json({
+      error: "Failed to get candles",
+      details: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 

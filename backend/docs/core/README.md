@@ -72,3 +72,23 @@ When working with the codebase, keep in mind:
 - Performance is critical for real-time trading functionality
 
 For more detailed information, explore the individual documentation sections linked above.
+
+## Available Documentation
+
+### Candle Data System
+
+- [Candle Data System Architecture](candle-data-architecture.md) - Overview of the candle data system architecture
+- [Timeframe Aggregation System](timeframe-aggregation-overview.md) - Technical details of how we aggregate candle data across timeframes
+- [Timeframe Aggregation Implementation Guide](timeframe-aggregation.md) - Detailed implementation guide for developers
+
+### Authentication
+
+- [Authentication Flow](authentication-flow.md) - How authentication works in the platform
+
+### Data Storage
+
+- [TimescaleDB Integration](../timescaledb/README.md) - How we use TimescaleDB for time-series data
+
+### API Documentation
+
+- [API Overview](../api/README.md) - Overview of available API endpoints

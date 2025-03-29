@@ -938,57 +938,42 @@ class WebSocketService {
   ): void {
     if (!this.wss) return;
 
-    // Normalize timeframe to client-friendly format
-    const timeframeMap: Record<string, string> = {
-      ONE_MINUTE: "1m",
-      FIVE_MINUTES: "5m",
-      TEN_MINUTES: "10m",
-      FIFTEEN_MINUTES: "15m",
-      THIRTY_MINUTES: "30m",
-      ONE_HOUR: "1h",
-      FOUR_HOURS: "4h",
-      ONE_DAY: "1d",
-    };
+    console.log(`Broadcasting ${timeframe} candle update for ${symbol}`);
 
-    const clientTimeframe = timeframeMap[timeframe] || timeframe;
-
-    // Format data for frontend consumption
-    // Make sure we're sending properly formatted data that the chart can understand
+    // Format candle data for client consumption if needed
     const formattedData = {
       ...data,
-      // Ensure price fields are sent as numbers, not strings
-      open: typeof data.open === "number" ? data.open : parseFloat(data.open),
-      high: typeof data.high === "number" ? data.high : parseFloat(data.high),
-      low: typeof data.low === "number" ? data.low : parseFloat(data.low),
-      close:
-        typeof data.close === "number" ? data.close : parseFloat(data.close),
-      volume:
-        typeof data.volume === "number" ? data.volume : parseFloat(data.volume),
-      // Make sure time is in the expected format for the frontend
-      time:
-        typeof data.time === "number"
-          ? data.time
-          : typeof data.timestamp === "string"
-            ? new Date(data.timestamp).getTime() / 1000
-            : new Date(data.time).getTime() / 1000,
+      // Format price values for display (convert from cents to dollars)
+      ...(data.open && { open: data.open / 100 }),
+      ...(data.high && { high: data.high / 100 }),
+      ...(data.low && { low: data.low / 100 }),
+      ...(data.close && { close: data.close / 100 }),
+      ...(data.volume && { volume: data.volume / 100 }),
+      // Convert timestamp to Unix timestamp in seconds if it's a Date
+      ...(data.time &&
+        data.time instanceof Date && {
+          time: Math.floor(data.time.getTime() / 1000),
+        }),
     };
 
-    // Log sample data periodically for debugging
-    if (Math.random() < 0.01) {
-      // Log roughly 1% of updates to avoid log spam
-      console.log(
-        `Sample OHLCV update for ${symbol}/${clientTimeframe}:`,
-        formattedData
-      );
+    // Update balance manager with new price if it's the latest candle
+    // This helps keep unrealized PnL calculations up-to-date
+    if (data.close) {
+      balanceManager.updateSymbolPrice(symbol, data.close);
     }
 
+    // Prepare the message
     const message = JSON.stringify({
       type: "OHLCV_UPDATE",
       symbol,
-      timeframe: clientTimeframe,
+      timeframe,
       data: formattedData,
     });
 
+    // Count how many clients received this update
+    let clientCount = 0;
+
+    // Send to all clients subscribed to this symbol
     this.clients.forEach((client) => {
       if (
         client.ws.readyState === WebSocket.OPEN &&
@@ -997,16 +982,14 @@ class WebSocketService {
       ) {
         try {
           client.ws.send(message);
-
-          // Update balance manager with new price if client has positions
-          if (client.userId && client.isAuthenticated) {
-            balanceManager.updateSymbolPrice(symbol, formattedData.close);
-          }
+          clientCount++;
         } catch (error) {
-          console.error(`Error sending OHLCV update to client: ${error}`);
+          console.error(`Failed to send candle update to client:`, error);
         }
       }
     });
+
+    console.log(`Sent ${timeframe} candle update to ${clientCount} clients`);
   }
 
   /**
