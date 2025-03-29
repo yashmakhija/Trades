@@ -187,7 +187,12 @@ export function PriceChart({
   // Format price for display
   const formatPrice = useCallback((price: number): string => {
     // For crypto, use appropriate decimal places based on price magnitude
-    if (price >= 1000) {
+    if (price >= 10000) {
+      return price.toLocaleString("en-US", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+    } else if (price >= 1000) {
       return price.toLocaleString("en-US", {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
@@ -207,13 +212,8 @@ export function PriceChart({
 
   // Update the normalizePrice function to properly handle different cryptocurrency price scales
   const normalizePrice = useCallback((price: number): number => {
-    // If price is already a normal floating point number (not an integer cents value), return it
-    if (price < 1000) {
-      return price;
-    }
-
-    // Otherwise assume it's in cents and convert to dollars
-    return price / 100;
+    // Just return the original price without any conversion
+    return price;
   }, []);
 
   // Initialize chart

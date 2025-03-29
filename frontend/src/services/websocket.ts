@@ -535,10 +535,10 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
               const tickerInfo = data as any;
               tickerData[symbol] = {
                 symbol,
-                // Convert price from integer to floating-point (divide by 100)
+                // Use the price directly without conversion
                 price:
                   typeof tickerInfo.price === "number"
-                    ? tickerInfo.price / 100
+                    ? tickerInfo.price
                     : tickerInfo.price,
                 priceChangePercent: tickerInfo.priceChangePercent || 0,
                 volume: tickerInfo.volume || 0,
@@ -566,32 +566,42 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
             if (rawData.e === "kline" && rawData.k) {
               const kline = rawData.k;
 
-              // Update ticker data with latest price - using optimized update
-              set((state) => {
-                const currentTicker = state.tickerData[symbol] || {
-                  symbol,
-                  price: 0,
-                  priceChangePercent: 0,
-                  volume: 0,
-                  timestamp: Date.now(),
-                };
+              // Batch ticker data updates to reduce state changes
+              const shouldUpdateTicker =
+                !get().tickerData[symbol] ||
+                Math.abs(parseFloat(kline.c) - get().tickerData[symbol].price) >
+                  0.001;
 
-                return {
-                  tickerData: {
-                    ...state.tickerData,
-                    [symbol]: {
-                      ...currentTicker,
-                      price: parseFloat(kline.c),
-                      volume: parseFloat(kline.v),
-                      timestamp: rawData.E,
+              if (shouldUpdateTicker) {
+                // Update ticker data with latest price - using optimized update
+                set((state) => {
+                  const currentTicker = state.tickerData[symbol] || {
+                    symbol,
+                    price: 0,
+                    priceChangePercent: 0,
+                    volume: 0,
+                    timestamp: Date.now(),
+                  };
+
+                  return {
+                    tickerData: {
+                      ...state.tickerData,
+                      [symbol]: {
+                        ...currentTicker,
+                        price: parseFloat(kline.c),
+                        volume: parseFloat(kline.v),
+                        timestamp: rawData.E,
+                      },
                     },
-                  },
-                };
-              });
+                  };
+                });
+              }
 
               // Create candle data from kline - only if needed
               const activeTimeframe = get().activeTimeframe;
-              if (kline.i.toLowerCase() === activeTimeframe) {
+              const isActiveSymbol = get().activeSymbol === symbol;
+
+              if (isActiveSymbol && kline.i.toLowerCase() === activeTimeframe) {
                 const candle: CandleData = {
                   time: Math.floor(kline.t / 1000), // Convert to seconds for charts
                   open: parseFloat(kline.o),
@@ -642,39 +652,59 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
                 });
               }
             } else if (rawData.e === "24hrTicker") {
-              // Update ticker data with minimal logging
-              set((state) => ({
-                tickerData: {
-                  ...state.tickerData,
-                  [symbol]: {
-                    symbol,
-                    price: parseFloat(rawData.c),
-                    priceChangePercent: parseFloat(rawData.P),
-                    volume: parseFloat(rawData.v),
-                    timestamp: rawData.E,
-                    high: parseFloat(rawData.h),
-                    low: parseFloat(rawData.l),
-                    openPrice: parseFloat(rawData.o),
-                  },
-                },
-              }));
-            } else if (rawData.e === "trade") {
-              // Only update the price for trade events
-              set((state) => {
-                const currentTicker = state.tickerData[symbol];
-                if (!currentTicker) return state; // Skip if no existing ticker data
+              // Only update ticker data if price has changed significantly
+              const currentTicker = get().tickerData[symbol];
+              const newPrice = parseFloat(rawData.c);
 
-                return {
+              const priceChanged =
+                !currentTicker ||
+                Math.abs(newPrice - currentTicker.price) > 0.001 ||
+                Date.now() - currentTicker.timestamp > 10000; // At least update every 10 seconds
+
+              if (priceChanged) {
+                // Update ticker data with minimal logging
+                set((state) => ({
                   tickerData: {
                     ...state.tickerData,
                     [symbol]: {
-                      ...currentTicker,
-                      price: parseFloat(rawData.p),
-                      timestamp: rawData.T,
+                      symbol,
+                      price: newPrice,
+                      priceChangePercent: parseFloat(rawData.P),
+                      volume: parseFloat(rawData.v),
+                      timestamp: rawData.E,
+                      high: parseFloat(rawData.h),
+                      low: parseFloat(rawData.l),
+                      openPrice: parseFloat(rawData.o),
                     },
                   },
-                };
-              });
+                }));
+              }
+            } else if (rawData.e === "trade") {
+              // Only update the price for trade events if price has changed significantly
+              const currentTicker = get().tickerData[symbol];
+              const newPrice = parseFloat(rawData.p);
+
+              if (!currentTicker) return; // Skip if no existing ticker data
+
+              const priceChanged =
+                Math.abs(newPrice - currentTicker.price) > 0.001 ||
+                Date.now() - currentTicker.timestamp > 10000; // At least update every 10 seconds
+
+              if (priceChanged) {
+                // Only update the price for trade events
+                set((state) => {
+                  return {
+                    tickerData: {
+                      ...state.tickerData,
+                      [symbol]: {
+                        ...currentTicker,
+                        price: newPrice,
+                        timestamp: rawData.T,
+                      },
+                    },
+                  };
+                });
+              }
             }
           }
           break;
@@ -693,11 +723,11 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
 
               const updatedTicker = {
                 symbol: message.symbol!,
-                // Check if displayPrice is provided, otherwise convert price from integer to dollars
+                // Use price directly without conversion
                 price:
                   updates.displayPrice ||
                   (typeof updates.price === "number"
-                    ? updates.price / 100
+                    ? updates.price
                     : updates.price),
                 // Ensure we use the correct price change percentage value
                 priceChangePercent: updates.priceChangePercent || 0,
