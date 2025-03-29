@@ -14,6 +14,7 @@ import {
 } from "./webSocketService";
 import axios from "axios";
 import { orderManager } from "./orderManager";
+import { Timeframe } from "@prisma/client";
 
 const tickerCache: Record<string, ProcessedTickerData> = {};
 
@@ -133,10 +134,39 @@ async function updateSymbolPrice(data: ProcessedTickerData): Promise<void> {
   }
 }
 
+/**
+ * Map Binance timeframe to our Timeframe enum
+ */
+function mapBinanceTimeframeToEnum(timeframe: string): string {
+  switch (timeframe) {
+    case "1m":
+      return "ONE_MINUTE";
+    case "5m":
+      return "FIVE_MINUTES";
+    case "15m":
+      return "FIFTEEN_MINUTES";
+    case "30m":
+      return "THIRTY_MINUTES";
+    case "1h":
+      return "ONE_HOUR";
+    case "4h":
+      return "FOUR_HOURS";
+    case "1d":
+      return "ONE_DAY";
+    default:
+      return "ONE_MINUTE";
+  }
+}
+
 async function processKlineData(data: BinanceKlineMessage): Promise<void> {
   try {
     const kline = data.k;
     const symbolName = data.s.toLowerCase();
+
+    // Extract the timeframe from the Binance kline data
+    // Format is like "1m", "5m", etc.
+    const binanceTimeframe = kline.i;
+    const timeframe = mapBinanceTimeframeToEnum(binanceTimeframe);
 
     const symbol = await getSymbol(symbolName);
 
@@ -161,17 +191,17 @@ async function processKlineData(data: BinanceKlineMessage): Promise<void> {
           close,
           volume,
           time: new Date(kline.T),
-          timeframe: "ONE_MINUTE",
+          timeframe: timeframe as Timeframe,
         },
       });
 
       console.log(
-        `Stored OHLCV data for ${symbolName} at ${new Date(
+        `Stored OHLCV data for ${symbolName} (${timeframe}) at ${new Date(
           kline.T
         ).toISOString()}`
       );
 
-      broadcastOHLCVUpdate(symbolName, "ONE_MINUTE", {
+      broadcastOHLCVUpdate(symbolName, timeframe, {
         id: ohlcvData.id,
         symbol: symbolName,
         open: open / 100,
@@ -300,7 +330,7 @@ function subscribeToStreams(ws: WebSocket): void {
     id: 1,
   };
 
-  // Create subscription message for klines (1m timeframe)
+  // Only subscribe to 1m klines from Binance - we'll derive other timeframes
   const klineSubscriptionMsg: BinanceSubscriptionMessage = {
     method: "SUBSCRIBE",
     params: symbols.map((symbol) => `${symbol}@kline_1m`),
@@ -369,9 +399,12 @@ function reconnectWebSocket(): void {
   }
 
   // Reconnect with exponential backoff
-  setTimeout(() => {
-    startBinanceWebSocket();
-  }, RECONNECT_DELAY_MS * Math.pow(1.5, reconnectAttempts - 1));
+  setTimeout(
+    () => {
+      startBinanceWebSocket();
+    },
+    RECONNECT_DELAY_MS * Math.pow(1.5, reconnectAttempts - 1)
+  );
 }
 
 /**

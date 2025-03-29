@@ -134,7 +134,8 @@ class CandleService {
         endTime?.getTime()
       );
 
-      if (cachedCandles) {
+      if (cachedCandles && cachedCandles.length > 0) {
+        console.log(`Using cached candles for ${symbol} (${timeframe})`);
         return cachedCandles.map((candle) => ({
           id: `${symbolRecord.id}-${timeframe}-${candle.time}`,
           symbolId: symbolRecord.id,
@@ -149,15 +150,20 @@ class CandleService {
         }));
       }
 
+      console.log(
+        `Fetching candles from database for ${symbol} (${timeframe})`
+      );
+
       // If no cache or data too old, query TimescaleDB
-      const dbCandles = await prisma.oHLCV.findMany({
+      let dbCandles;
+
+      // First try to get the candles directly from the database (native timeframe)
+      dbCandles = await prisma.oHLCV.findMany({
         where: {
           symbolId: symbolRecord.id,
           timeframe,
-          time: {
-            gte: startTime,
-            lte: endTime,
-          },
+          ...(startTime && { time: { gte: startTime } }),
+          ...(endTime && { time: { lte: endTime } }),
         },
         orderBy: {
           time: "asc",
@@ -168,19 +174,72 @@ class CandleService {
         },
       });
 
+      // If we don't have enough data for the requested timeframe,
+      // try to aggregate from a smaller timeframe
+      if (dbCandles.length < limit && timeframe !== Timeframe.ONE_MINUTE) {
+        console.log(
+          `Not enough ${timeframe} candles, aggregating from smaller timeframe`
+        );
+
+        // Get source candles with extended range to ensure we have enough data
+        const sourceTimeframe = this.getNextSmallerTimeframe(timeframe);
+        const extendedLimit =
+          limit * this.getTimeframeRatio(sourceTimeframe, timeframe);
+
+        const aggregatedCandles = await this.aggregateCandles(
+          symbol,
+          sourceTimeframe,
+          timeframe,
+          extendedLimit
+        );
+
+        if (aggregatedCandles.length > 0) {
+          // Filter by time range if specified
+          const filteredCandles = aggregatedCandles.filter((candle) => {
+            if (startTime && candle.time < startTime) return false;
+            if (endTime && candle.time > endTime) return false;
+            return true;
+          });
+
+          // Combine with any existing candles in the DB, removing duplicates
+          const existingTimeMap = new Map(
+            dbCandles.map((c) => [c.time.getTime(), c])
+          );
+
+          for (const candle of filteredCandles) {
+            const timeKey = candle.time.getTime();
+            if (!existingTimeMap.has(timeKey)) {
+              // Make sure to include the symbol property
+              dbCandles.push({
+                ...candle,
+                symbol: symbolRecord,
+              });
+            }
+          }
+
+          // Sort by time
+          dbCandles.sort((a, b) => a.time.getTime() - b.time.getTime());
+
+          // Limit to requested amount
+          dbCandles = dbCandles.slice(0, limit);
+        }
+      }
+
       // Cache recent candles
-      await redisService.cacheCandles(
-        symbol,
-        timeframe,
-        dbCandles.map((candle) => ({
-          time: candle.time.getTime(),
-          open: candle.open,
-          high: candle.high,
-          low: candle.low,
-          close: candle.close,
-          volume: candle.volume,
-        }))
-      );
+      if (dbCandles.length > 0) {
+        await redisService.cacheCandles(
+          symbol,
+          timeframe,
+          dbCandles.map((candle) => ({
+            time: candle.time.getTime(),
+            open: candle.open,
+            high: candle.high,
+            low: candle.low,
+            close: candle.close,
+            volume: candle.volume,
+          }))
+        );
+      }
 
       return dbCandles;
     } catch (error) {
@@ -481,12 +540,12 @@ class CandleService {
         symbol,
         timeframe,
         candle: {
-          time: candle.time,
-          open: candle.open,
-          high: candle.high,
-          low: candle.low,
-          close: candle.close,
-          volume: candle.volume,
+          time: candle.time.getTime(),
+          open: candle.open / 100, // Convert to dollars for display
+          high: candle.high / 100,
+          low: candle.low / 100,
+          close: candle.close / 100,
+          volume: candle.volume / 100,
         },
       },
     });
@@ -497,6 +556,291 @@ class CandleService {
         client.send(message);
       }
     });
+
+    // When we receive a new 1-minute candle, also update higher timeframes
+    if (timeframe === Timeframe.ONE_MINUTE) {
+      this.updateHigherTimeframes(symbol, candle);
+    }
+  }
+
+  /**
+   * Update higher timeframes when a new 1-minute candle is received
+   */
+  private async updateHigherTimeframes(symbol: string, candle: OHLCV) {
+    try {
+      // Get current time
+      const candleTime = candle.time;
+
+      // Check if this candle should trigger an update for higher timeframes
+      const minute = candleTime.getMinutes();
+      const hour = candleTime.getHours();
+      const day = candleTime.getDate();
+
+      console.log(
+        `Checking timeframe updates for ${symbol} at ${candleTime.toISOString()}`
+      );
+
+      // Update all timeframes as needed
+      const updates = [];
+
+      // Check 5-minute boundary
+      if (minute % 5 === 0) {
+        updates.push(
+          this.updateTimeframe(symbol, Timeframe.FIVE_MINUTES, candleTime)
+        );
+      }
+
+      // Check 10-minute boundary
+      if (minute % 10 === 0) {
+        updates.push(
+          this.updateTimeframe(symbol, Timeframe.TEN_MINUTES, candleTime)
+        );
+      }
+
+      // Check 15-minute boundary
+      if (minute % 15 === 0) {
+        updates.push(
+          this.updateTimeframe(symbol, Timeframe.FIFTEEN_MINUTES, candleTime)
+        );
+      }
+
+      // Check 30-minute boundary
+      if (minute % 30 === 0) {
+        updates.push(
+          this.updateTimeframe(symbol, Timeframe.THIRTY_MINUTES, candleTime)
+        );
+      }
+
+      // Check hourly boundary
+      if (minute === 0) {
+        updates.push(
+          this.updateTimeframe(symbol, Timeframe.ONE_HOUR, candleTime)
+        );
+      }
+
+      // Check 4-hour boundary
+      if (minute === 0 && hour % 4 === 0) {
+        updates.push(
+          this.updateTimeframe(symbol, Timeframe.FOUR_HOURS, candleTime)
+        );
+      }
+
+      // Check daily boundary
+      if (minute === 0 && hour === 0) {
+        updates.push(
+          this.updateTimeframe(symbol, Timeframe.ONE_DAY, candleTime)
+        );
+      }
+
+      // Run all the timeframe updates in parallel
+      await Promise.all(updates);
+    } catch (error) {
+      console.error("Error updating higher timeframes:", error);
+    }
+  }
+
+  /**
+   * Update a specific timeframe
+   */
+  private async updateTimeframe(
+    symbol: string,
+    timeframe: Timeframe,
+    endTime: Date
+  ) {
+    try {
+      // Get the symbol record
+      const symbolRecord = await prisma.symbol.findUnique({
+        where: { name: symbol },
+      });
+
+      if (!symbolRecord) {
+        console.error(`Symbol ${symbol} not found`);
+        return;
+      }
+
+      // Calculate the start time for this timeframe
+      const timeframeToMinutes: Record<Timeframe, number> = {
+        [Timeframe.ONE_MINUTE]: 1,
+        [Timeframe.FIVE_MINUTES]: 5,
+        [Timeframe.TEN_MINUTES]: 10,
+        [Timeframe.FIFTEEN_MINUTES]: 15,
+        [Timeframe.THIRTY_MINUTES]: 30,
+        [Timeframe.ONE_HOUR]: 60,
+        [Timeframe.FOUR_HOURS]: 240,
+        [Timeframe.ONE_DAY]: 1440,
+      };
+
+      const minutesInTimeframe = timeframeToMinutes[timeframe];
+
+      // Calculate appropriate window boundaries
+      const boundaryTime = new Date(endTime);
+      boundaryTime.setMilliseconds(0);
+      boundaryTime.setSeconds(0);
+
+      // Adjust minutes based on timeframe
+      if (timeframe === Timeframe.FIVE_MINUTES) {
+        boundaryTime.setMinutes(Math.floor(boundaryTime.getMinutes() / 5) * 5);
+      } else if (timeframe === Timeframe.TEN_MINUTES) {
+        boundaryTime.setMinutes(
+          Math.floor(boundaryTime.getMinutes() / 10) * 10
+        );
+      } else if (timeframe === Timeframe.FIFTEEN_MINUTES) {
+        boundaryTime.setMinutes(
+          Math.floor(boundaryTime.getMinutes() / 15) * 15
+        );
+      } else if (timeframe === Timeframe.THIRTY_MINUTES) {
+        boundaryTime.setMinutes(
+          Math.floor(boundaryTime.getMinutes() / 30) * 30
+        );
+      } else if (timeframe === Timeframe.ONE_HOUR) {
+        boundaryTime.setMinutes(0);
+      } else if (timeframe === Timeframe.FOUR_HOURS) {
+        boundaryTime.setMinutes(0);
+        boundaryTime.setHours(Math.floor(boundaryTime.getHours() / 4) * 4);
+      } else if (timeframe === Timeframe.ONE_DAY) {
+        boundaryTime.setMinutes(0);
+        boundaryTime.setHours(0);
+      }
+
+      // Calculate start time for data aggregation
+      const startTime = new Date(boundaryTime);
+      startTime.setMinutes(startTime.getMinutes() - minutesInTimeframe);
+
+      console.log(
+        `Updating ${timeframe} for ${symbol}: ${startTime.toISOString()} to ${boundaryTime.toISOString()}`
+      );
+
+      // Get all 1-minute candles in this timeframe period
+      const sourceCandles = await prisma.oHLCV.findMany({
+        where: {
+          symbolId: symbolRecord.id,
+          timeframe: Timeframe.ONE_MINUTE,
+          time: {
+            gte: startTime,
+            lt: boundaryTime,
+          },
+        },
+        orderBy: {
+          time: "asc",
+        },
+      });
+
+      if (sourceCandles.length === 0) {
+        console.log(`No source candles found for ${symbol} ${timeframe}`);
+        return;
+      }
+
+      // Aggregate the candles
+      const open = sourceCandles[0].open;
+      const high = Math.max(...sourceCandles.map((c) => c.high));
+      const low = Math.min(...sourceCandles.map((c) => c.low));
+      const close = sourceCandles[sourceCandles.length - 1].close;
+      const volume = sourceCandles.reduce((sum, c) => sum + c.volume, 0);
+
+      // Check if we already have a candle for this timeframe and boundary
+      const existingCandle = await prisma.oHLCV.findFirst({
+        where: {
+          symbolId: symbolRecord.id,
+          timeframe,
+          time: boundaryTime,
+        },
+      });
+
+      let candle;
+
+      if (existingCandle) {
+        // Update existing candle
+        candle = await prisma.oHLCV.update({
+          where: {
+            id_time: {
+              id: existingCandle.id,
+              time: existingCandle.time,
+            },
+          },
+          data: {
+            open,
+            high,
+            low,
+            close,
+            volume,
+          },
+        });
+
+        console.log(
+          `Updated ${timeframe} candle for ${symbol} at ${boundaryTime.toISOString()}`
+        );
+      } else {
+        // Create new candle
+        candle = await prisma.oHLCV.create({
+          data: {
+            symbolId: symbolRecord.id,
+            open,
+            high,
+            low,
+            close,
+            volume,
+            timeframe,
+            time: boundaryTime,
+          },
+        });
+
+        console.log(
+          `Created new ${timeframe} candle for ${symbol} at ${boundaryTime.toISOString()}`
+        );
+      }
+
+      // Broadcast the update
+      this.broadcastCandleUpdate(symbol, timeframe, candle);
+
+      // Invalidate the cache for this timeframe
+      await redisService.invalidateCache(symbol, timeframe);
+
+      return candle;
+    } catch (error) {
+      console.error(`Error updating ${timeframe} for ${symbol}:`, error);
+    }
+  }
+
+  /**
+   * Get the next smaller timeframe for a given timeframe
+   */
+  private getNextSmallerTimeframe(timeframe: Timeframe): Timeframe {
+    switch (timeframe) {
+      case Timeframe.ONE_DAY:
+        return Timeframe.FOUR_HOURS;
+      case Timeframe.FOUR_HOURS:
+        return Timeframe.ONE_HOUR;
+      case Timeframe.ONE_HOUR:
+        return Timeframe.THIRTY_MINUTES;
+      case Timeframe.THIRTY_MINUTES:
+        return Timeframe.FIFTEEN_MINUTES;
+      case Timeframe.FIFTEEN_MINUTES:
+        return Timeframe.TEN_MINUTES;
+      case Timeframe.TEN_MINUTES:
+        return Timeframe.FIVE_MINUTES;
+      case Timeframe.FIVE_MINUTES:
+        return Timeframe.ONE_MINUTE;
+      default:
+        return Timeframe.ONE_MINUTE;
+    }
+  }
+
+  /**
+   * Get the ratio between two timeframes
+   */
+  private getTimeframeRatio(smaller: Timeframe, larger: Timeframe): number {
+    const timeframeToMinutes: Record<Timeframe, number> = {
+      [Timeframe.ONE_MINUTE]: 1,
+      [Timeframe.FIVE_MINUTES]: 5,
+      [Timeframe.TEN_MINUTES]: 10,
+      [Timeframe.FIFTEEN_MINUTES]: 15,
+      [Timeframe.THIRTY_MINUTES]: 30,
+      [Timeframe.ONE_HOUR]: 60,
+      [Timeframe.FOUR_HOURS]: 240,
+      [Timeframe.ONE_DAY]: 1440,
+    };
+
+    return timeframeToMinutes[larger] / timeframeToMinutes[smaller];
   }
 }
 

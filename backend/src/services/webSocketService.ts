@@ -164,9 +164,8 @@ class WebSocketService {
                 await this.initializeUserBalance(userId);
 
                 // Try to get the balance again
-                const retryBalance = await balanceManager.getUserBalance(
-                  userId
-                );
+                const retryBalance =
+                  await balanceManager.getUserBalance(userId);
                 if (retryBalance) {
                   console.log(`Balance initialized for user ${userId}`);
                   ws.send(
@@ -434,9 +433,8 @@ class WebSocketService {
                   await this.initializeUserBalance(userId);
 
                   // Try to get the balance again
-                  const retryBalance = await balanceManager.getUserBalance(
-                    userId
-                  );
+                  const retryBalance =
+                    await balanceManager.getUserBalance(userId);
                   if (retryBalance) {
                     console.log(`Balance initialized for user ${userId}`);
                     ws.send(
@@ -668,20 +666,56 @@ class WebSocketService {
       let endDate: Date | undefined;
 
       if (startTime) {
-        startDate = new Date(startTime);
+        // Try parsing as Unix timestamp first
+        const timestamp = parseInt(startTime);
+        if (!isNaN(timestamp)) {
+          startDate = new Date(timestamp * 1000); // Convert seconds to milliseconds
+        } else {
+          // Try as ISO string
+          startDate = new Date(startTime);
+        }
+
         if (isNaN(startDate.getTime())) {
           console.warn(`Invalid startTime format: ${startTime}`);
           return;
         }
+      } else {
+        // If no start time specified, use a reasonable default based on timeframe
+        const now = new Date();
+        const defaultRanges: Record<string, number> = {
+          "1m": 24 * 60 * 60 * 1000, // 1 day for 1m
+          "5m": 5 * 24 * 60 * 60 * 1000, // 5 days for 5m
+          "10m": 7 * 24 * 60 * 60 * 1000, // 7 days for 10m
+          "15m": 7 * 24 * 60 * 60 * 1000, // 7 days for 15m
+          "30m": 14 * 24 * 60 * 60 * 1000, // 14 days for 30m
+          "1h": 30 * 24 * 60 * 60 * 1000, // 30 days for 1h
+          "4h": 60 * 24 * 60 * 60 * 1000, // 60 days for 4h
+          "1d": 365 * 24 * 60 * 60 * 1000, // 365 days for 1d
+        };
+
+        const defaultRange = defaultRanges[timeframe] || 24 * 60 * 60 * 1000;
+        startDate = new Date(now.getTime() - defaultRange);
       }
 
       if (endTime) {
-        endDate = new Date(endTime);
+        // Try parsing as Unix timestamp first
+        const timestamp = parseInt(endTime);
+        if (!isNaN(timestamp)) {
+          endDate = new Date(timestamp * 1000); // Convert seconds to milliseconds
+        } else {
+          // Try as ISO string
+          endDate = new Date(endTime);
+        }
+
         if (isNaN(endDate.getTime())) {
           console.warn(`Invalid endTime format: ${endTime}`);
           return;
         }
       }
+
+      console.log(
+        `Fetching ${timeframe} candles for ${symbol} from ${startDate?.toISOString() || "unknown"} to ${endDate?.toISOString() || "now"}`
+      );
 
       // Get historical candles with time range
       const candles = await candleService.getCandles(
@@ -693,20 +727,27 @@ class WebSocketService {
       );
 
       if (candles?.length) {
+        // Format candles for the front-end
+        const formattedCandles = candles.map((candle) => ({
+          time: Math.floor(candle.time.getTime() / 1000),
+          open: candle.open / 100, // Convert to dollars for display
+          high: candle.high / 100,
+          low: candle.low / 100,
+          close: candle.close / 100,
+          volume: candle.volume / 100,
+        }));
+
         client.ws.send(
           JSON.stringify({
             type: "CANDLE_HISTORY",
             symbol,
             timeframe,
-            data: candles.map((candle) => ({
-              time: Math.floor(candle.time.getTime() / 1000),
-              open: candle.open,
-              high: candle.high,
-              low: candle.low,
-              close: candle.close,
-              volume: candle.volume,
-            })),
+            data: formattedCandles,
           })
+        );
+
+        console.log(
+          `Sent ${formattedCandles.length} ${timeframe} candles for ${symbol} to client ${client.userId || "anonymous"}`
         );
 
         // Update balance manager with latest candle price if client has positions
@@ -718,9 +759,73 @@ class WebSocketService {
         console.log(
           `No candle data available for ${symbol} with timeframe ${timeframe}`
         );
+        // Try to force aggregate from 1m if available and this is a higher timeframe
+        if (timeframeEnum !== Timeframe.ONE_MINUTE) {
+          console.log(
+            `Attempting to aggregate ${timeframe} candles from 1m data`
+          );
+
+          const aggregatedCandles = await candleService.aggregateCandles(
+            symbol,
+            Timeframe.ONE_MINUTE,
+            timeframeEnum,
+            1000
+          );
+
+          if (aggregatedCandles?.length) {
+            const formattedCandles = aggregatedCandles.map((candle) => ({
+              time: Math.floor(candle.time.getTime() / 1000),
+              open: candle.open / 100,
+              high: candle.high / 100,
+              low: candle.low / 100,
+              close: candle.close / 100,
+              volume: candle.volume / 100,
+            }));
+
+            client.ws.send(
+              JSON.stringify({
+                type: "CANDLE_HISTORY",
+                symbol,
+                timeframe,
+                data: formattedCandles,
+              })
+            );
+
+            console.log(
+              `Sent ${formattedCandles.length} aggregated ${timeframe} candles for ${symbol} to client`
+            );
+          } else {
+            client.ws.send(
+              JSON.stringify({
+                type: "CANDLE_HISTORY",
+                symbol,
+                timeframe,
+                data: [],
+                message: "No candle data available for this timeframe",
+              })
+            );
+          }
+        } else {
+          client.ws.send(
+            JSON.stringify({
+              type: "CANDLE_HISTORY",
+              symbol,
+              timeframe,
+              data: [],
+              message: "No candle data available for 1m timeframe",
+            })
+          );
+        }
       }
     } catch (error) {
       console.error(`Error subscribing to candles for ${symbol}:`, error);
+      client.ws.send(
+        JSON.stringify({
+          type: "ERROR",
+          error: `Failed to fetch candle data for ${symbol}`,
+          details: error instanceof Error ? error.message : String(error),
+        })
+      );
     }
   }
 
@@ -833,6 +938,20 @@ class WebSocketService {
   ): void {
     if (!this.wss) return;
 
+    // Normalize timeframe to client-friendly format
+    const timeframeMap: Record<string, string> = {
+      ONE_MINUTE: "1m",
+      FIVE_MINUTES: "5m",
+      TEN_MINUTES: "10m",
+      FIFTEEN_MINUTES: "15m",
+      THIRTY_MINUTES: "30m",
+      ONE_HOUR: "1h",
+      FOUR_HOURS: "4h",
+      ONE_DAY: "1d",
+    };
+
+    const clientTimeframe = timeframeMap[timeframe] || timeframe;
+
     // Format data for frontend consumption
     // Make sure we're sending properly formatted data that the chart can understand
     const formattedData = {
@@ -849,14 +968,16 @@ class WebSocketService {
       time:
         typeof data.time === "number"
           ? data.time
-          : new Date(data.time).getTime(),
+          : typeof data.timestamp === "string"
+            ? new Date(data.timestamp).getTime() / 1000
+            : new Date(data.time).getTime() / 1000,
     };
 
     // Log sample data periodically for debugging
     if (Math.random() < 0.01) {
       // Log roughly 1% of updates to avoid log spam
       console.log(
-        `Sample OHLCV update for ${symbol}/${timeframe}:`,
+        `Sample OHLCV update for ${symbol}/${clientTimeframe}:`,
         formattedData
       );
     }
@@ -864,7 +985,7 @@ class WebSocketService {
     const message = JSON.stringify({
       type: "OHLCV_UPDATE",
       symbol,
-      timeframe,
+      timeframe: clientTimeframe,
       data: formattedData,
     });
 
@@ -874,11 +995,15 @@ class WebSocketService {
         (client.subscribedSymbols.size === 0 ||
           client.subscribedSymbols.has(symbol))
       ) {
-        client.ws.send(message);
+        try {
+          client.ws.send(message);
 
-        // Update balance manager with new price if client has positions
-        if (client.userId && client.isAuthenticated) {
-          balanceManager.updateSymbolPrice(symbol, formattedData.close);
+          // Update balance manager with new price if client has positions
+          if (client.userId && client.isAuthenticated) {
+            balanceManager.updateSymbolPrice(symbol, formattedData.close);
+          }
+        } catch (error) {
+          console.error(`Error sending OHLCV update to client: ${error}`);
         }
       }
     });

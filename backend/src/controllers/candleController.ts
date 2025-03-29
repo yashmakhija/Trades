@@ -81,18 +81,54 @@ export async function getCandles(req: Request, res: Response): Promise<void> {
     let endDate: Date | undefined;
 
     if (startTime) {
-      startDate = new Date(startTime as string);
+      startDate = new Date(parseInt(startTime as string) * 1000);
       if (isNaN(startDate.getTime())) {
-        res.status(400).json({ error: "Invalid startTime format" });
-        return;
+        // Try ISO format if numeric fails
+        startDate = new Date(startTime as string);
+        if (isNaN(startDate.getTime())) {
+          res.status(400).json({ error: "Invalid startTime format" });
+          return;
+        }
       }
     }
 
     if (endTime) {
-      endDate = new Date(endTime as string);
+      endDate = new Date(parseInt(endTime as string) * 1000);
       if (isNaN(endDate.getTime())) {
-        res.status(400).json({ error: "Invalid endTime format" });
-        return;
+        // Try ISO format if numeric fails
+        endDate = new Date(endTime as string);
+        if (isNaN(endDate.getTime())) {
+          res.status(400).json({ error: "Invalid endTime format" });
+          return;
+        }
+      }
+    }
+
+    // If we have a large date range, let's enforce a reasonable limit
+    if (startDate && endDate) {
+      const diffInDays =
+        (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24);
+
+      // For each timeframe, set a maximum range
+      const maxRangeDays = {
+        [Timeframe.ONE_MINUTE]: 2,
+        [Timeframe.FIVE_MINUTES]: 7,
+        [Timeframe.TEN_MINUTES]: 14,
+        [Timeframe.FIFTEEN_MINUTES]: 30,
+        [Timeframe.THIRTY_MINUTES]: 60,
+        [Timeframe.ONE_HOUR]: 90,
+        [Timeframe.FOUR_HOURS]: 180,
+        [Timeframe.ONE_DAY]: 365 * 2,
+      };
+
+      if (diffInDays > maxRangeDays[tf]) {
+        console.warn(
+          `Requested date range of ${diffInDays} days exceeds the maximum of ${maxRangeDays[tf]} days for ${tf}. Limiting range.`
+        );
+        // Adjust startDate to respect the maximum range
+        startDate = new Date(
+          endDate.getTime() - maxRangeDays[tf] * 24 * 60 * 60 * 1000
+        );
       }
     }
 
@@ -106,28 +142,25 @@ export async function getCandles(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    // Query candles with time range
-    const candles = await prisma.oHLCV.findMany({
-      where: {
-        symbolId: symbolRecord.id,
-        timeframe: tf,
-        ...(startDate && { time: { gte: startDate } }),
-        ...(endDate && { time: { lte: endDate } }),
-      },
-      orderBy: {
-        time: "asc",
-      },
-      take: limitNum,
-    });
+    // Try to use the candleService for fetching data (it handles caching and aggregation)
+    const candles = await import("../services/candleService").then((module) =>
+      module.default.getCandles(
+        symbol as string,
+        tf,
+        limitNum,
+        startDate,
+        endDate
+      )
+    );
 
     // Transform data to match expected format
     const transformedCandles = candles.map((candle) => ({
       time: Math.floor(candle.time.getTime() / 1000),
-      open: candle.open,
-      high: candle.high,
-      low: candle.low,
-      close: candle.close,
-      volume: candle.volume,
+      open: candle.open / 100, // Convert to dollars for display
+      high: candle.high / 100,
+      low: candle.low / 100,
+      close: candle.close / 100,
+      volume: candle.volume / 100,
     }));
 
     res.json(transformedCandles);
@@ -270,11 +303,32 @@ export async function aggregateCandles(
     }
 
     // Convert limit to number with a maximum of 100
-    const limitNum = Math.min(parseInt(limit as string) || 100, 100);
+    const limitNum = Math.min(parseInt(limit as string) || 100, 1000);
 
     // Map timeframes
     const sourceTf = mapTimeframe(sourceTimeframe as string);
     const targetTf = mapTimeframe(targetTimeframe as string);
+
+    // Ensure target timeframe is larger than source
+    const timeframeToMinutes = {
+      [Timeframe.ONE_MINUTE]: 1,
+      [Timeframe.FIVE_MINUTES]: 5,
+      [Timeframe.TEN_MINUTES]: 10,
+      [Timeframe.FIFTEEN_MINUTES]: 15,
+      [Timeframe.THIRTY_MINUTES]: 30,
+      [Timeframe.ONE_HOUR]: 60,
+      [Timeframe.FOUR_HOURS]: 240,
+      [Timeframe.ONE_DAY]: 1440,
+    };
+
+    if (timeframeToMinutes[targetTf] <= timeframeToMinutes[sourceTf]) {
+      res.status(400).json({
+        error: "Target timeframe must be larger than source timeframe",
+        source: sourceTf,
+        target: targetTf,
+      });
+      return;
+    }
 
     // Find the symbol ID
     const symbolRecord = await prisma.symbol.findUnique({
@@ -286,143 +340,34 @@ export async function aggregateCandles(
       return;
     }
 
-    // For TimescaleDB, we can use the continuous aggregates
-    // Check if we can use a pre-computed view
-    if (sourceTf === Timeframe.ONE_MINUTE) {
-      try {
-        // Determine which continuous aggregate view to use
-        let viewName = "";
-        switch (targetTf) {
-          case Timeframe.FIVE_MINUTES:
-            viewName = "candles_5m";
-            break;
-          case Timeframe.FIFTEEN_MINUTES:
-            viewName = "candles_15m";
-            break;
-          case Timeframe.ONE_HOUR:
-            viewName = "candles_1h";
-            break;
-          case Timeframe.ONE_DAY:
-            viewName = "candles_1d";
-            break;
-        }
+    // Use the candleService to aggregate candles
+    const aggregatedCandles = await import("../services/candleService").then(
+      (module) =>
+        module.default.aggregateCandles(
+          symbol as string,
+          sourceTf,
+          targetTf,
+          limitNum
+        )
+    );
 
-        if (viewName) {
-          // Use the continuous aggregate view
-          const result = await prisma.$queryRaw`
-            SELECT 
-              EXTRACT(EPOCH FROM bucket)::integer as time,
-              open,
-              high,
-              low,
-              close,
-              volume
-            FROM ${Prisma.raw(viewName)}
-            WHERE "symbolId" = ${symbolRecord.id}
-            ORDER BY bucket DESC
-            LIMIT ${limitNum}
-          `;
+    // Transform for API response
+    const transformedCandles = aggregatedCandles.map((candle) => ({
+      time: Math.floor(candle.time.getTime() / 1000),
+      open: candle.open / 100, // Convert to dollars for display
+      high: candle.high / 100,
+      low: candle.low / 100,
+      close: candle.close / 100,
+      volume: candle.volume / 100,
+    }));
 
-          // Sort by time ascending for chart display
-          const typedResult = result as TransformedCandle[];
-          typedResult.sort((a, b) => a.time - b.time);
-
-          res.json(typedResult);
-          return;
-        }
-      } catch (error) {
-        console.error("Error using continuous aggregate:", error);
-        // Fall back to manual aggregation
-      }
-    }
-
-    // Get source candles
-    const sourceCandles = await prisma.oHLCV.findMany({
-      where: {
-        symbolId: symbolRecord.id,
-        timeframe: sourceTf,
-      },
-      orderBy: {
-        time: "asc",
-      },
-    });
-
-    if (sourceCandles.length === 0) {
-      res.json([]);
-      return;
-    }
-
-    // Determine the aggregation interval in minutes
-    let intervalMinutes = 1;
-    switch (targetTf) {
-      case Timeframe.FIVE_MINUTES:
-        intervalMinutes = 5;
-        break;
-      case Timeframe.TEN_MINUTES:
-        intervalMinutes = 10;
-        break;
-      case Timeframe.FIFTEEN_MINUTES:
-        intervalMinutes = 15;
-        break;
-      case Timeframe.THIRTY_MINUTES:
-        intervalMinutes = 30;
-        break;
-      case Timeframe.ONE_HOUR:
-        intervalMinutes = 60;
-        break;
-      case Timeframe.FOUR_HOURS:
-        intervalMinutes = 240;
-        break;
-      case Timeframe.ONE_DAY:
-        intervalMinutes = 1440;
-        break;
-    }
-
-    // Aggregate candles
-    const aggregatedCandles: TransformedCandle[] = [];
-    let currentCandle: TransformedCandle | null = null;
-    let currentTimestamp = 0;
-
-    sourceCandles.forEach((candle) => {
-      const candleTime = candle.time.getTime();
-      const intervalMs = intervalMinutes * 60 * 1000;
-      const intervalStart = Math.floor(candleTime / intervalMs) * intervalMs;
-
-      if (intervalStart !== currentTimestamp) {
-        if (currentCandle) {
-          aggregatedCandles.push(currentCandle);
-        }
-
-        currentTimestamp = intervalStart;
-        currentCandle = {
-          time: Math.floor(intervalStart / 1000),
-          open: candle.open,
-          high: candle.high,
-          low: candle.low,
-          close: candle.close,
-          volume: candle.volume,
-        };
-      } else if (currentCandle) {
-        // Update the current candle
-        currentCandle.high = Math.max(currentCandle.high, candle.high);
-        currentCandle.low = Math.min(currentCandle.low, candle.low);
-        currentCandle.close = candle.close;
-        currentCandle.volume += candle.volume;
-      }
-    });
-
-    // Add the last candle
-    if (currentCandle) {
-      aggregatedCandles.push(currentCandle);
-    }
-
-    // Return the last 'limit' candles
-    const result = aggregatedCandles.slice(-limitNum);
-
-    res.json(result);
+    res.json(transformedCandles);
   } catch (error) {
     console.error("Error aggregating candles:", error);
-    res.status(500).json({ error: "Failed to aggregate candles" });
+    res.status(500).json({
+      error: "Failed to aggregate candles",
+      details: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
@@ -446,28 +391,42 @@ export async function getLatestCandle(
     // Map timeframe string to enum
     const tf = mapTimeframe(timeframe as string);
 
-    // Find the symbol ID
-    const symbolRecord = await prisma.symbol.findUnique({
-      where: { name: symbol as string },
-    });
-
-    if (!symbolRecord) {
-      res.status(404).json({ error: "Symbol not found" });
-      return;
-    }
-
-    // Get the latest candle
-    const latestCandle = await prisma.oHLCV.findFirst({
-      where: {
-        symbolId: symbolRecord.id,
-        timeframe: tf,
-      },
-      orderBy: {
-        time: "desc",
-      },
-    });
+    // Use the candle service to get the latest candle
+    const latestCandle = await import("../services/candleService").then(
+      (module) => module.default.getLatestCandle(symbol as string, tf)
+    );
 
     if (!latestCandle) {
+      // If no candle found for the requested timeframe, try to aggregate from 1m
+      if (tf !== Timeframe.ONE_MINUTE) {
+        console.log(`No ${tf} candle found, trying to aggregate from 1m data`);
+
+        const aggregated = await import("../services/candleService").then(
+          (module) =>
+            module.default.aggregateCandles(
+              symbol as string,
+              Timeframe.ONE_MINUTE,
+              tf,
+              1
+            )
+        );
+
+        if (aggregated && aggregated.length > 0) {
+          // Return the aggregated candle
+          const transformedCandle: TransformedCandle = {
+            time: Math.floor(aggregated[0].time.getTime() / 1000),
+            open: aggregated[0].open / 100, // Convert to dollars for display
+            high: aggregated[0].high / 100,
+            low: aggregated[0].low / 100,
+            close: aggregated[0].close / 100,
+            volume: aggregated[0].volume / 100,
+          };
+
+          res.json(transformedCandle);
+          return;
+        }
+      }
+
       res.status(404).json({ error: "No candle data found" });
       return;
     }
@@ -475,16 +434,19 @@ export async function getLatestCandle(
     // Transform data to match expected format
     const transformedCandle: TransformedCandle = {
       time: Math.floor(latestCandle.time.getTime() / 1000),
-      open: latestCandle.open,
-      high: latestCandle.high,
-      low: latestCandle.low,
-      close: latestCandle.close,
-      volume: latestCandle.volume,
+      open: latestCandle.open / 100, // Convert to dollars for display
+      high: latestCandle.high / 100,
+      low: latestCandle.low / 100,
+      close: latestCandle.close / 100,
+      volume: latestCandle.volume / 100,
     };
 
     res.json(transformedCandle);
   } catch (error) {
     console.error("Error fetching latest candle:", error);
-    res.status(500).json({ error: "Failed to fetch latest candle" });
+    res.status(500).json({
+      error: "Failed to fetch latest candle",
+      details: error instanceof Error ? error.message : String(error),
+    });
   }
 }
