@@ -31,6 +31,7 @@ interface WSClient {
   userId?: string;
   isAlive: boolean;
   subscribedSymbols: Set<string>;
+  subscribedTimeframes: Map<string, Set<string>>; // Map of symbol -> Set of timeframes
   isAuthenticated: boolean;
 }
 
@@ -117,6 +118,7 @@ class WebSocketService {
       ws,
       isAlive: true,
       subscribedSymbols: new Set(),
+      subscribedTimeframes: new Map(),
       isAuthenticated: false,
     };
     this.clients.set(ws, client);
@@ -652,7 +654,17 @@ class WebSocketService {
       }
 
       const timeframeEnum = this.mapTimeframeToEnum(timeframe);
+
+      // Add to subscribed symbols
       client.subscribedSymbols.add(symbol);
+
+      // Add to subscribed timeframes
+      if (!client.subscribedTimeframes.has(symbol)) {
+        client.subscribedTimeframes.set(symbol, new Set());
+      }
+      client.subscribedTimeframes.get(symbol)!.add(timeframe);
+
+      // Ensure the symbol is being tracked from Binance
       addSymbolToTracking(symbol);
 
       console.log(
@@ -973,12 +985,17 @@ class WebSocketService {
     // Count how many clients received this update
     let clientCount = 0;
 
-    // Send to all clients subscribed to this symbol
+    // Send to all clients subscribed to this symbol AND timeframe
     this.clients.forEach((client) => {
       if (
         client.ws.readyState === WebSocket.OPEN &&
-        (client.subscribedSymbols.size === 0 ||
-          client.subscribedSymbols.has(symbol))
+        (client.subscribedSymbols.has(symbol) ||
+          client.subscribedSymbols.size === 0) &&
+        // Either client has this specific timeframe for this symbol
+        ((client.subscribedTimeframes.has(symbol) &&
+          client.subscribedTimeframes.get(symbol)!.has(timeframe)) ||
+          // Or client doesn't have any timeframe subscriptions (legacy behavior)
+          client.subscribedTimeframes.size === 0)
       ) {
         try {
           client.ws.send(message);

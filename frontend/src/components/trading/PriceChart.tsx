@@ -80,6 +80,7 @@ export function PriceChart({
 
   const [timeframe, setTimeframe] = useState<Timeframe>(initialTimeframe);
   const [isLoading, setIsLoading] = useState(true);
+  const [isChangingTimeframe, setIsChangingTimeframe] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [historicalDataLoaded, setHistoricalDataLoaded] = useState(false);
   const [currentPrice, setCurrentPrice] = useState<number | null>(null);
@@ -89,6 +90,9 @@ export function PriceChart({
     DEFAULT_ORDER_QUANTITY.toString()
   );
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [lastTimeframeChange, setLastTimeframeChange] = useState<number>(
+    Date.now()
+  );
 
   // Don't destructure symbols from the store as we'll access it directly when needed
   // to ensure we always have the latest data
@@ -101,6 +105,8 @@ export function PriceChart({
     setActiveSymbol,
     setActiveTimeframe,
     subscribeToCandles,
+    unsubscribeFromCandles,
+    isSubscribedToTimeframe,
   } = useWebSocket();
 
   // Normalize symbol to lowercase for consistency
@@ -151,13 +157,22 @@ export function PriceChart({
     };
 
     initSymbols();
-    subscribeToSymbol(normalizedSymbol);
+
+    // Set the active symbol and timeframe first
     setActiveSymbol(normalizedSymbol);
     setActiveTimeframe(timeframe);
+
+    // Then subscribe to both the symbol and the candles
+    subscribeToSymbol(normalizedSymbol);
     subscribeToCandles(normalizedSymbol, timeframe);
 
+    // Clean up subscriptions when component unmounts
     return () => {
-      console.log(`PriceChart: Component unmounting`);
+      console.log(
+        `PriceChart: Component unmounting, unsubscribing from ${normalizedSymbol}:${timeframe}`
+      );
+      // We don't unsubscribe from the symbol as other components might still need it
+      unsubscribeFromCandles(normalizedSymbol, timeframe);
     };
   }, [
     normalizedSymbol,
@@ -166,6 +181,7 @@ export function PriceChart({
     setActiveSymbol,
     setActiveTimeframe,
     subscribeToCandles,
+    unsubscribeFromCandles,
   ]);
 
   // Format price for display
@@ -190,39 +206,15 @@ export function PriceChart({
   }, []);
 
   // Update the normalizePrice function to properly handle different cryptocurrency price scales
-  const normalizePrice = useCallback(
-    (price: number): number => {
-      // If price is already in proper format (floating point), return it
-      if (price < 1_000_000) {
-        return price;
-      }
+  const normalizePrice = useCallback((price: number): number => {
+    // If price is already a normal floating point number (not an integer cents value), return it
+    if (price < 1000) {
+      return price;
+    }
 
-      // Handle different cryptocurrencies with different price scales
-      const symbolLower = normalizedSymbol.toLowerCase();
-
-      // For debugging
-      console.log(`PriceChart: Normalizing price ${price} for ${symbolLower}`);
-
-      // High value coins use 2 decimal places (price in cents)
-      if (symbolLower.includes("btc") || symbolLower.includes("eth")) {
-        return price / 100;
-      }
-
-      // Mid value coins
-      if (symbolLower.includes("bnb") || symbolLower.includes("sol")) {
-        return price / 100;
-      }
-
-      // Lower value coins
-      if (symbolLower.includes("ada") || symbolLower.includes("doge")) {
-        return price / 100;
-      }
-
-      // Default - assume price is in cents (divide by 100)
-      return price / 100;
-    },
-    [normalizedSymbol]
-  );
+    // Otherwise assume it's in cents and convert to dollars
+    return price / 100;
+  }, []);
 
   // Initialize chart
   const initializeChart = useCallback(() => {
@@ -403,6 +395,7 @@ export function PriceChart({
     if (!candleSeries.current || !volumeSeries.current) return;
 
     setIsLoading(true);
+    setIsChangingTimeframe(true);
     setError(null);
 
     try {
@@ -525,6 +518,10 @@ export function PriceChart({
       setError(`Failed to load data for ${normalizedSymbol.toUpperCase()}`);
     } finally {
       setIsLoading(false);
+      // Short delay before removing the timeframe change overlay
+      setTimeout(() => {
+        setIsChangingTimeframe(false);
+      }, 300);
     }
   }, [normalizedSymbol, timeframe, useMockData, chartColors, normalizePrice]);
 
@@ -532,15 +529,31 @@ export function PriceChart({
   useEffect(() => {
     setHistoricalDataLoaded(false);
     loadHistoricalData();
+
+    // Mark the time of the timeframe change to debounce updates
+    setLastTimeframeChange(Date.now());
   }, [normalizedSymbol, timeframe, loadHistoricalData]);
 
   // Update chart with real-time data from WebSocket
   useEffect(() => {
-    if (!candleSeries.current || !volumeSeries.current || !historicalDataLoaded)
+    if (
+      !candleSeries.current ||
+      !volumeSeries.current ||
+      !historicalDataLoaded
+    ) {
       return;
+    }
+
+    // Check if we're subscribed to the current timeframe
+    if (!isSubscribedToTimeframe(normalizedSymbol, timeframe)) {
+      console.log(
+        `PriceChart: Not subscribed to ${normalizedSymbol}:${timeframe}, subscribing now`
+      );
+      subscribeToCandles(normalizedSymbol, timeframe);
+      return;
+    }
 
     const symbolData = candleData[normalizedSymbol];
-
     if (
       !symbolData ||
       !symbolData[timeframe] ||
@@ -555,7 +568,7 @@ export function PriceChart({
 
       if (!latestCandle) {
         console.warn(
-          `PriceChart: No candle data available for ${normalizedSymbol}`
+          `PriceChart: No candle data available for ${normalizedSymbol}:${timeframe}`
         );
         return;
       }
@@ -593,6 +606,13 @@ export function PriceChart({
       const isNewCandle =
         !lastCandleRef.current || lastCandleRef.current.time !== candleTime;
 
+      // If we recently changed timeframes, make sure this update isn't stale
+      const timeSinceLastChange = Date.now() - lastTimeframeChange;
+      if (timeSinceLastChange < 1000 && !isNewCandle) {
+        // Skip updates right after timeframe change to avoid flicker
+        return;
+      }
+
       // Normalize price values
       const normalizedOpen = normalizePrice(latestCandle.open);
       const normalizedHigh = normalizePrice(latestCandle.high);
@@ -600,15 +620,18 @@ export function PriceChart({
       const normalizedClose = normalizePrice(latestCandle.close);
 
       // Log the update for debugging
-      console.log("Updating chart with:", {
-        time: candleTime,
-        lastTime: lastCandleRef.current?.time,
-        open: normalizedOpen,
-        high: normalizedHigh,
-        low: normalizedLow,
-        close: normalizedClose,
-        isNewCandle,
-      });
+      if (isNewCandle) {
+        console.log(
+          `PriceChart: New candle for ${normalizedSymbol}:${timeframe}`,
+          {
+            time: candleTime,
+            open: normalizedOpen,
+            high: normalizedHigh,
+            low: normalizedLow,
+            close: normalizedClose,
+          }
+        );
+      }
 
       try {
         // Update the candle data
@@ -677,18 +700,38 @@ export function PriceChart({
     historicalDataLoaded,
     chartColors,
     normalizePrice,
+    isSubscribedToTimeframe,
+    subscribeToCandles,
+    lastTimeframeChange,
   ]);
 
   // Handle timeframe change
   const handleTimeframeChange = useCallback(
     (value: string) => {
       const newTimeframe = value as Timeframe;
+      if (newTimeframe === timeframe) return; // Skip if same timeframe
+
       console.log(`PriceChart: Changing timeframe to ${newTimeframe}`);
+
+      // Set loading state
+      setIsChangingTimeframe(true);
+
+      // First make sure we're subscribed to the new timeframe
+      if (!isSubscribedToTimeframe(normalizedSymbol, newTimeframe)) {
+        subscribeToCandles(normalizedSymbol, newTimeframe);
+      }
+
+      // Then update UI state
       setTimeframe(newTimeframe);
       setActiveTimeframe(newTimeframe);
-      subscribeToCandles(normalizedSymbol, newTimeframe);
     },
-    [normalizedSymbol, setActiveTimeframe, subscribeToCandles]
+    [
+      normalizedSymbol,
+      timeframe,
+      setActiveTimeframe,
+      subscribeToCandles,
+      isSubscribedToTimeframe,
+    ]
   );
 
   // Handle quick order submission
@@ -838,19 +881,39 @@ export function PriceChart({
               className="h-8"
             >
               <TabsList className="h-8 bg-background/50">
-                <TabsTrigger value="1m" className="h-7 px-2 text-xs">
+                <TabsTrigger
+                  value="1m"
+                  className="h-7 px-2 text-xs"
+                  disabled={isChangingTimeframe}
+                >
                   1m
                 </TabsTrigger>
-                <TabsTrigger value="5m" className="h-7 px-2 text-xs">
+                <TabsTrigger
+                  value="5m"
+                  className="h-7 px-2 text-xs"
+                  disabled={isChangingTimeframe}
+                >
                   5m
                 </TabsTrigger>
-                <TabsTrigger value="15m" className="h-7 px-2 text-xs">
+                <TabsTrigger
+                  value="15m"
+                  className="h-7 px-2 text-xs"
+                  disabled={isChangingTimeframe}
+                >
                   15m
                 </TabsTrigger>
-                <TabsTrigger value="1h" className="h-7 px-2 text-xs">
+                <TabsTrigger
+                  value="1h"
+                  className="h-7 px-2 text-xs"
+                  disabled={isChangingTimeframe}
+                >
                   1h
                 </TabsTrigger>
-                <TabsTrigger value="1d" className="h-7 px-2 text-xs">
+                <TabsTrigger
+                  value="1d"
+                  className="h-7 px-2 text-xs"
+                  disabled={isChangingTimeframe}
+                >
                   1d
                 </TabsTrigger>
               </TabsList>
@@ -911,6 +974,17 @@ export function PriceChart({
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
               <p className="text-sm text-muted-foreground">
                 Loading chart data...
+              </p>
+            </div>
+          </div>
+        )}
+
+        {isChangingTimeframe && !isLoading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-background/30 backdrop-blur-[1px] transition-opacity duration-300">
+            <div className="flex flex-col items-center gap-2">
+              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
+              <p className="text-xs text-muted-foreground">
+                Changing timeframe...
               </p>
             </div>
           </div>

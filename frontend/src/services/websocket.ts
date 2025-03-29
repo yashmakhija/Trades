@@ -124,6 +124,10 @@ interface WebSocketStore {
   updateBalance: (balance: BalanceUpdate) => void;
   updateOrder: (order: OrderUpdate) => void;
   removeOrder: (orderId: string) => void;
+
+  // New helper methods for timeframe subscription tracking
+  isSubscribedToTimeframe: (symbol: string, timeframe: string) => boolean;
+  getSubscribedTimeframes: (symbol: string) => Set<string>;
 }
 
 // Create a singleton instance to control the WebSocket connection
@@ -396,7 +400,7 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
               );
               globalReconnectAttempts = 0;
               reconnect();
-            }, 60000); 
+            }, 60000);
           }
         }
       };
@@ -720,111 +724,81 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
           }
           break;
 
-        case "CANDLE_HISTORY":
-          if (
-            message.symbol &&
-            message.timeframe &&
-            Array.isArray(message.data)
-          ) {
-            const candles: CandleData[] = message.data.map((candle) => {
-              // Ensure time is in seconds for lightweight-charts
-              let normalizedTime: number;
-              const rawTime = candle.time;
-
-              // Convert time to a proper timestamp number in seconds
-              if (typeof rawTime === "number") {
-                // Convert milliseconds to seconds if needed
-                normalizedTime =
-                  rawTime > 10000000000 ? Math.floor(rawTime / 1000) : rawTime;
-              } else if (typeof rawTime === "string") {
-                // Convert string date to seconds
-                normalizedTime = Math.floor(new Date(rawTime).getTime() / 1000);
-              } else {
-                // Default to current time if invalid
-                console.warn("Invalid candle time format:", rawTime);
-                normalizedTime = Math.floor(Date.now() / 1000);
-              }
-
-              return {
-                time: normalizedTime,
-                open: candle.open,
-                high: candle.high,
-                low: candle.low,
-                close: candle.close,
-                volume: candle.volume,
-              };
-            });
-
-            // Sort candles by time to ensure proper order
-            candles.sort((a, b) => {
-              // Both times should already be normalized numbers at this point
-              return (a.time as number) - (b.time as number);
-            });
-
-            set((state) => {
-              const symbolCandles = state.candleData[message.symbol!] || {};
-              return {
-                candleData: {
-                  ...state.candleData,
-                  [message.symbol!]: {
-                    ...symbolCandles,
-                    [message.timeframe!]: candles,
-                  },
-                },
-              };
-            });
-          }
-          break;
-
+        case "CANDLE_UPDATE":
         case "OHLCV_UPDATE":
-          if (
-            message.symbol &&
-            message.timeframe &&
-            message.data &&
-            typeof message.data === "object"
-          ) {
-            console.log(
-              `Received OHLCV_UPDATE for ${message.symbol}/${message.timeframe}:`,
-              message.data
-            );
-
+          if (message.symbol && message.timeframe && message.data) {
             try {
-              // Ensure time is in seconds for lightweight-charts
-              let normalizedTime: number;
+              const symbol = message.symbol.toLowerCase();
 
-              // Check for timestamp in different formats
-              const rawTime = message.data.time || message.data.timestamp;
-
-              // Convert time to a proper timestamp number in seconds
-              if (typeof rawTime === "number") {
-                // Convert milliseconds to seconds if needed (timestamps over 10000000000 are in milliseconds)
-                normalizedTime =
-                  rawTime > 10000000000 ? Math.floor(rawTime / 1000) : rawTime;
-              } else if (typeof rawTime === "string") {
-                // Convert string date to seconds
-                normalizedTime = Math.floor(new Date(rawTime).getTime() / 1000);
-              } else if (rawTime instanceof Date) {
-                // Handle Date object
-                normalizedTime = Math.floor(rawTime.getTime() / 1000);
-              } else {
-                console.warn("Invalid candle time format:", rawTime);
-                break; // Skip this update if time format is invalid
+              // Map backend timeframe format to frontend format if needed
+              let timeframe = message.timeframe.toLowerCase();
+              // Check if the timeframe is using the backend enum format
+              if (timeframe.includes("_")) {
+                switch (timeframe.toUpperCase()) {
+                  case "ONE_MINUTE":
+                    timeframe = "1m";
+                    break;
+                  case "FIVE_MINUTES":
+                    timeframe = "5m";
+                    break;
+                  case "TEN_MINUTES":
+                    timeframe = "10m";
+                    break;
+                  case "FIFTEEN_MINUTES":
+                    timeframe = "15m";
+                    break;
+                  case "THIRTY_MINUTES":
+                    timeframe = "30m";
+                    break;
+                  case "ONE_HOUR":
+                    timeframe = "1h";
+                    break;
+                  case "FOUR_HOURS":
+                    timeframe = "4h";
+                    break;
+                  case "ONE_DAY":
+                    timeframe = "1d";
+                    break;
+                  default:
+                    break;
+                }
               }
 
-              // Verify we have a valid number
-              if (isNaN(normalizedTime) || normalizedTime <= 0) {
-                console.warn(
-                  `Invalid normalized time: ${normalizedTime} from raw time: ${rawTime}`
+              // Check if we're subscribed to this symbol and timeframe
+              const isSubscribed = get().isSubscribedToTimeframe(
+                symbol,
+                timeframe
+              );
+
+              // If we're not subscribed to this timeframe, ignore the update
+              if (!isSubscribed) {
+                console.log(
+                  `Ignoring update for unsubscribed timeframe: ${symbol}:${timeframe}`
                 );
-                break;
+                return;
               }
 
               console.log(
-                `Normalized time: ${normalizedTime}, raw time was:`,
-                rawTime
+                `Processing candle update for ${symbol} (${timeframe})`
               );
 
-              // Normalize numerical values for the candle
+              // Normalize time to Unix timestamp in seconds for chart library
+              let normalizedTime: number;
+              if (typeof message.data.time === "string") {
+                // If time is ISO string, convert to Unix timestamp
+                normalizedTime = Math.floor(
+                  new Date(message.data.time).getTime() / 1000
+                );
+              } else if (typeof message.data.time === "number") {
+                // If time is already numeric, ensure it's in seconds (not milliseconds)
+                normalizedTime =
+                  message.data.time > 10000000000
+                    ? Math.floor(message.data.time / 1000)
+                    : message.data.time;
+              } else {
+                normalizedTime = Math.floor(Date.now() / 1000);
+              }
+
               const normalizeValue = (value: unknown): number => {
                 if (typeof value === "number") {
                   return value;
@@ -845,44 +819,10 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
               };
 
               console.log(
-                "Processed candle data with time",
-                candle.time,
-                "and close",
-                candle.close
+                `Candle data for ${symbol}:${timeframe} - Time: ${normalizedTime}, Close: ${candle.close}`
               );
 
               set((state) => {
-                // Convert timeframe from backend format to frontend format
-                const symbol = message.symbol!.toLowerCase();
-                let timeframe: string;
-
-                // Map backend timeframe enum to frontend timeframe string
-                switch (message.timeframe) {
-                  case "ONE_MINUTE":
-                    timeframe = "1m";
-                    break;
-                  case "FIVE_MINUTES":
-                    timeframe = "5m";
-                    break;
-                  case "FIFTEEN_MINUTES":
-                    timeframe = "15m";
-                    break;
-                  case "THIRTY_MINUTES":
-                    timeframe = "30m";
-                    break;
-                  case "ONE_HOUR":
-                    timeframe = "1h";
-                    break;
-                  case "FOUR_HOURS":
-                    timeframe = "4h";
-                    break;
-                  case "ONE_DAY":
-                    timeframe = "1d";
-                    break;
-                  default:
-                    timeframe = message.timeframe!.toLowerCase();
-                }
-
                 // Get current candles for this symbol+timeframe
                 const symbolCandles = state.candleData[symbol] || {};
                 const timeframeCandles = symbolCandles[timeframe] || [];
@@ -919,6 +859,15 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
                   }
                 }
 
+                // Also update ticker data with latest price
+                const currentTicker = state.tickerData[symbol] || {
+                  symbol,
+                  price: candle.close,
+                  priceChangePercent: 0,
+                  volume: candle.volume,
+                  timestamp: normalizedTime * 1000,
+                };
+
                 return {
                   candleData: {
                     ...state.candleData,
@@ -927,10 +876,23 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
                       [timeframe]: updatedCandles,
                     },
                   },
+                  // Only update ticker if this is the current timeframe
+                  ...(timeframe === state.activeTimeframe
+                    ? {
+                        tickerData: {
+                          ...state.tickerData,
+                          [symbol]: {
+                            ...currentTicker,
+                            price: candle.close,
+                            timestamp: normalizedTime * 1000,
+                          },
+                        },
+                      }
+                    : {}),
                 };
               });
             } catch (error) {
-              console.error("Error processing OHLCV_UPDATE:", error);
+              console.error("Error processing candle update:", error);
             }
           }
           break;
@@ -1084,13 +1046,19 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
     },
 
     subscribeToCandles: (symbol: string, timeframe: string) => {
+      // Normalize symbol to lowercase
+      const normalizedSymbol = symbol.toLowerCase();
+      console.log(
+        `WebSocket: Subscribing to candles for ${normalizedSymbol} (${timeframe})`
+      );
+
       // Add to subscription set
       set((state) => {
         const newSubscribedCandles = new Map(state.subscribedCandles);
         const symbolTimeframes =
-          newSubscribedCandles.get(symbol) || new Set<string>();
+          newSubscribedCandles.get(normalizedSymbol) || new Set<string>();
         symbolTimeframes.add(timeframe);
-        newSubscribedCandles.set(symbol, symbolTimeframes);
+        newSubscribedCandles.set(normalizedSymbol, symbolTimeframes);
         return { subscribedCandles: newSubscribedCandles };
       });
 
@@ -1102,24 +1070,33 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
         globalSocketInstance.send(
           JSON.stringify({
             type: "SUBSCRIBE_CANDLES",
-            symbol,
+            symbol: normalizedSymbol,
             timeframe,
           })
         );
+      } else {
+        // If not connected, try to connect first
+        connect();
       }
     },
 
     unsubscribeFromCandles: (symbol: string, timeframe: string) => {
+      // Normalize symbol to lowercase
+      const normalizedSymbol = symbol.toLowerCase();
+      console.log(
+        `WebSocket: Unsubscribing from candles for ${normalizedSymbol} (${timeframe})`
+      );
+
       // Remove from subscription set
       set((state) => {
         const newSubscribedCandles = new Map(state.subscribedCandles);
-        const symbolTimeframes = newSubscribedCandles.get(symbol);
+        const symbolTimeframes = newSubscribedCandles.get(normalizedSymbol);
         if (symbolTimeframes) {
           symbolTimeframes.delete(timeframe);
           if (symbolTimeframes.size === 0) {
-            newSubscribedCandles.delete(symbol);
+            newSubscribedCandles.delete(normalizedSymbol);
           } else {
-            newSubscribedCandles.set(symbol, symbolTimeframes);
+            newSubscribedCandles.set(normalizedSymbol, symbolTimeframes);
           }
         }
         return { subscribedCandles: newSubscribedCandles };
@@ -1133,7 +1110,7 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
         globalSocketInstance.send(
           JSON.stringify({
             type: "UNSUBSCRIBE_CANDLES",
-            symbol,
+            symbol: normalizedSymbol,
             timeframe,
           })
         );
@@ -1141,14 +1118,15 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
     },
 
     setActiveSymbol: (symbol: string) => {
+      const normalizedSymbol = symbol.toLowerCase();
       const currentActiveSymbol = get().activeSymbol;
 
       // Only update if the symbol has changed
-      if (currentActiveSymbol !== symbol) {
+      if (currentActiveSymbol !== normalizedSymbol) {
         console.log(
-          `WebSocket: Setting active symbol from ${currentActiveSymbol} to ${symbol}`
+          `WebSocket: Setting active symbol from ${currentActiveSymbol} to ${normalizedSymbol}`
         );
-        set({ activeSymbol: symbol });
+        set({ activeSymbol: normalizedSymbol });
 
         // Ensure we're subscribed to this symbol
         if (
@@ -1156,17 +1134,17 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
           globalSocketInstance.readyState === WebSocket.OPEN
         ) {
           // Add to subscription set if not already there
-          if (!get().subscribedSymbols.has(symbol)) {
+          if (!get().subscribedSymbols.has(normalizedSymbol)) {
             set((state) => {
               const newSubscribedSymbols = new Set(state.subscribedSymbols);
-              newSubscribedSymbols.add(symbol);
+              newSubscribedSymbols.add(normalizedSymbol);
               return { subscribedSymbols: newSubscribedSymbols };
             });
 
             globalSocketInstance.send(
               JSON.stringify({
                 type: "SUBSCRIBE",
-                symbol,
+                symbol: normalizedSymbol,
               })
             );
           }
@@ -1175,7 +1153,33 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
     },
 
     setActiveTimeframe: (timeframe: string) => {
-      set({ activeTimeframe: timeframe });
+      const currentTimeframe = get().activeTimeframe;
+      const currentSymbol = get().activeSymbol;
+
+      if (currentTimeframe !== timeframe) {
+        console.log(
+          `WebSocket: Setting active timeframe from ${currentTimeframe} to ${timeframe}`
+        );
+
+        set({ activeTimeframe: timeframe });
+
+        // If we have an active symbol, make sure we're subscribed to the new timeframe
+        if (
+          currentSymbol &&
+          globalSocketInstance?.readyState === WebSocket.OPEN
+        ) {
+          // Check if we're already subscribed to this timeframe
+          const isSubscribed = get().isSubscribedToTimeframe(
+            currentSymbol,
+            timeframe
+          );
+
+          if (!isSubscribed) {
+            // Subscribe to the new timeframe
+            get().subscribeToCandles(currentSymbol, timeframe);
+          }
+        }
+      }
     },
 
     // Internal methods
@@ -1324,6 +1328,20 @@ export const useWebSocketStore = create<WebSocketStore>((set, get) => {
         ),
       }));
     },
+
+    // Add new helper methods
+    isSubscribedToTimeframe: (symbol: string, timeframe: string) => {
+      const normalizedSymbol = symbol.toLowerCase();
+      const subscribedCandles = get().subscribedCandles;
+      const symbolTimeframes = subscribedCandles.get(normalizedSymbol);
+      return symbolTimeframes ? symbolTimeframes.has(timeframe) : false;
+    },
+
+    getSubscribedTimeframes: (symbol: string) => {
+      const normalizedSymbol = symbol.toLowerCase();
+      const subscribedCandles = get().subscribedCandles;
+      return subscribedCandles.get(normalizedSymbol) || new Set<string>();
+    },
   };
 });
 
@@ -1352,6 +1370,8 @@ export function useWebSocket() {
     activeSymbol,
     activeTimeframe,
     lastHeartbeat,
+    isSubscribedToTimeframe,
+    getSubscribedTimeframes,
   } = useWebSocketStore();
 
   // Connect to WebSocket on component mount
@@ -1403,5 +1423,7 @@ export function useWebSocket() {
     activeSymbol,
     activeTimeframe,
     lastHeartbeat,
+    isSubscribedToTimeframe,
+    getSubscribedTimeframes,
   };
 }

@@ -10,6 +10,7 @@ const prisma = new PrismaClient();
  */
 class CandleService {
   private wss: WebSocketServer | null = null;
+  private lastBroadcastTime: Map<string, Date> = new Map();
   private readonly RETENTION_POLICIES = {
     [Timeframe.ONE_MINUTE]: {
       redis: 7 * 24 * 60 * 60, // 7 days in Redis
@@ -659,37 +660,71 @@ class CandleService {
   }
 
   /**
-   * Broadcast a candle update to WebSocket clients
+   * Broadcast a candle update to all connected clients via WebSocket
    */
   private broadcastCandleUpdate(
     symbol: string,
     timeframe: Timeframe,
     candle: OHLCV
-  ) {
+  ): void {
     if (!this.wss) {
+      console.warn("WebSocket server not initialized, can't broadcast updates");
       return;
     }
 
-    const message = JSON.stringify({
-      type: "CANDLE_UPDATE",
-      data: {
-        symbol,
-        timeframe,
-        candle: {
-          time: candle.time.getTime(),
-          open: candle.open / 100, // Convert to dollars for display
-          high: candle.high / 100,
-          low: candle.low / 100,
-          close: candle.close / 100,
-          volume: candle.volume / 100,
-        },
-      },
+    // Map timeframe enum to string for client-friendly format
+    const timeframeMap: Record<Timeframe, string> = {
+      [Timeframe.ONE_MINUTE]: "1m",
+      [Timeframe.FIVE_MINUTES]: "5m",
+      [Timeframe.TEN_MINUTES]: "10m",
+      [Timeframe.FIFTEEN_MINUTES]: "15m",
+      [Timeframe.THIRTY_MINUTES]: "30m",
+      [Timeframe.ONE_HOUR]: "1h",
+      [Timeframe.FOUR_HOURS]: "4h",
+      [Timeframe.ONE_DAY]: "1d",
+    };
+
+    // Get client-friendly timeframe string
+    const timeframeStr = timeframeMap[timeframe];
+
+    console.log(
+      `Broadcasting ${timeframeStr} candle update for ${symbol} at ${candle.time.toISOString()}`
+    );
+
+    // Use the WebSocket service to broadcast the update
+    import("./webSocketService").then((module) => {
+      module.broadcastOHLCVUpdate(symbol, timeframeStr, {
+        time: candle.time,
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        volume: candle.volume,
+      });
     });
+
+    // Save current broadcast time for this symbol+timeframe
+    const key = `${symbol}-${timeframe}`;
+    this.lastBroadcastTime.set(key, new Date());
 
     this.wss.clients.forEach((client) => {
       if (client.readyState === 1) {
         // WebSocket.OPEN
-        client.send(message);
+        client.send(
+          JSON.stringify({
+            type: "CANDLE_UPDATE",
+            symbol,
+            timeframe: timeframeStr,
+            data: {
+              time: Math.floor(candle.time.getTime() / 1000), // Convert to Unix timestamp
+              open: candle.open / 100, // Convert to dollars for frontend display
+              high: candle.high / 100,
+              low: candle.low / 100,
+              close: candle.close / 100,
+              volume: candle.volume / 100,
+            },
+          })
+        );
       }
     });
 
@@ -858,7 +893,7 @@ class CandleService {
       startTime.setMinutes(startTime.getMinutes() - minutesInTimeframe);
 
       console.log(
-        `Updating ${timeframe} for ${symbol}: ${startTime.toISOString()} to ${boundaryTime.toISOString()}`
+        `[UpdateTimeframe] ${timeframe} for ${symbol}: ${startTime.toISOString()} to ${boundaryTime.toISOString()}`
       );
 
       // Get all 1-minute candles in this timeframe period with improved error handling
@@ -881,7 +916,7 @@ class CandleService {
       const actualCandleCount = sourceCandles.length;
 
       console.log(
-        `Found ${actualCandleCount}/${expectedCandleCount} 1-minute candles for ${timeframe} aggregation`
+        `[UpdateTimeframe] Found ${actualCandleCount}/${expectedCandleCount} 1-minute candles for ${timeframe} aggregation`
       );
 
       // For higher timeframes, allow partial aggregation if we have at least 25% of expected candles
@@ -892,10 +927,13 @@ class CandleService {
 
       if (actualCandleCount < minimumRequiredCandles) {
         console.log(
-          `Not enough 1-minute candles for ${timeframe} aggregation (${actualCandleCount}/${minimumRequiredCandles} minimum)`
+          `[UpdateTimeframe] Not enough 1-minute candles for ${timeframe} aggregation (${actualCandleCount}/${minimumRequiredCandles} minimum)`
         );
         return;
       }
+
+      // Ensure candles are sorted by time
+      sourceCandles.sort((a, b) => a.time.getTime() - b.time.getTime());
 
       // Aggregate the candles
       const open = sourceCandles[0].open;
@@ -903,6 +941,10 @@ class CandleService {
       const low = Math.min(...sourceCandles.map((c) => c.low));
       const close = sourceCandles[sourceCandles.length - 1].close;
       const volume = sourceCandles.reduce((sum, c) => sum + c.volume, 0);
+
+      console.log(
+        `[UpdateTimeframe] Aggregated ${timeframe} candle for ${symbol}: O:${open / 100} H:${high / 100} L:${low / 100} C:${close / 100} V:${volume / 100}`
+      );
 
       // Check if we already have a candle for this timeframe and boundary
       const existingCandle = await prisma.oHLCV.findFirst({
@@ -934,7 +976,7 @@ class CandleService {
         });
 
         console.log(
-          `Updated ${timeframe} candle for ${symbol} at ${boundaryTime.toISOString()}`
+          `[UpdateTimeframe] Updated ${timeframe} candle for ${symbol} at ${boundaryTime.toISOString()}`
         );
       } else {
         // Create new candle
@@ -952,7 +994,7 @@ class CandleService {
         });
 
         console.log(
-          `Created new ${timeframe} candle for ${symbol} at ${boundaryTime.toISOString()}`
+          `[UpdateTimeframe] Created new ${timeframe} candle for ${symbol} at ${boundaryTime.toISOString()}`
         );
       }
 
@@ -964,7 +1006,10 @@ class CandleService {
 
       return candle;
     } catch (error) {
-      console.error(`Error updating ${timeframe} for ${symbol}:`, error);
+      console.error(
+        `[UpdateTimeframe] Error updating ${timeframe} for ${symbol}:`,
+        error
+      );
     }
   }
 

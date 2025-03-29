@@ -237,3 +237,42 @@ To learn more about the technologies used in this project:
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+## WebSocket Timeframe Handling
+
+The trading application uses a custom WebSocket implementation to handle real-time market data and candle updates. Here's how the timeframe handling works:
+
+### Symbol + Timeframe Subscriptions
+
+- The WebSocket service tracks both symbols AND timeframes that each client is subscribed to
+- We maintain a `subscribedTimeframes` map that stores which timeframes each client is interested in for each symbol
+- This prevents sending unnecessary updates to clients for timeframes they don't care about
+
+### Timeframe Conversion
+
+- The backend sends timeframes in enum format (`ONE_MINUTE`, `FIVE_MINUTES`, etc.)
+- The frontend uses shorthand format (`1m`, `5m`, `15m`, etc.)
+- The WebSocket service automatically converts between these formats
+
+### Optimized Updates
+
+- The system filters updates based on subscriptions - clients only receive updates for the timeframes they've explicitly subscribed to
+- When switching timeframes in the PriceChart component, we:
+  1. Check if we're already subscribed to the new timeframe
+  2. If not, subscribe to it before changing the UI
+  3. Show a loading state during the transition
+  4. Debounce updates right after a timeframe change to prevent flickering
+
+### Improved Candle Processing
+
+- We normalize all timestamps to Unix timestamp in seconds (required by the chart library)
+- Price normalization automatically converts between backend integer format (cents) and frontend decimal format (dollars)
+- Real-time updates intelligently update both candle data and ticker prices
+
+### Resource Management
+
+- Components properly clean up their subscriptions when unmounting
+- We maintain active subscriptions when components remount to avoid data loss
+- The backend aggregates higher timeframes (5m, 15m, 1h, etc.) from 1-minute data, which is more efficient than subscribing to multiple WebSocket streams
+
+This architecture provides a balance between real-time updates and performance, ensuring that the UI remains responsive while displaying accurate market data across all timeframes.
