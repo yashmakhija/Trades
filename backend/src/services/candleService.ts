@@ -5,45 +5,250 @@ import { config } from "../config";
 
 const prisma = new PrismaClient();
 
+// Helper interface for tiered data access
+interface TierConfig {
+  type: "hot" | "warm" | "cold";
+  maxAge: number; // in days
+  useCompression: boolean;
+  useContinuousAggregate: boolean;
+}
+
 /**
  * Service for handling candle data operations
+ * Implements efficient storage and retrieval of all historical candle data
  */
 class CandleService {
   private wss: WebSocketServer | null = null;
   private lastBroadcastTime: Map<string, Date> = new Map();
+
+  // Modified retention policies to keep all data in TimescaleDB
+  // Redis TTL times remain the same for caching efficiency
   private readonly RETENTION_POLICIES = {
     [Timeframe.ONE_MINUTE]: {
       redis: 7 * 24 * 60 * 60, // 7 days in Redis
-      timescale: 30 * 24 * 60 * 60, // 30 days in TimescaleDB
+      timescale: null, // Keep forever in TimescaleDB (null = no deletion)
+      compression: 7 * 24 * 60 * 60, // Compress data older than 7 days
     },
     [Timeframe.FIVE_MINUTES]: {
       redis: 14 * 24 * 60 * 60,
-      timescale: 90 * 24 * 60 * 60,
+      timescale: null,
+      compression: 14 * 24 * 60 * 60,
     },
     [Timeframe.TEN_MINUTES]: {
       redis: 30 * 24 * 60 * 60,
-      timescale: 180 * 24 * 60 * 60,
+      timescale: null,
+      compression: 30 * 24 * 60 * 60,
     },
     [Timeframe.FIFTEEN_MINUTES]: {
       redis: 30 * 24 * 60 * 60,
-      timescale: 180 * 24 * 60 * 60,
+      timescale: null,
+      compression: 30 * 24 * 60 * 60,
     },
     [Timeframe.THIRTY_MINUTES]: {
       redis: 60 * 24 * 60 * 60,
-      timescale: 365 * 24 * 60 * 60,
+      timescale: null,
+      compression: 60 * 24 * 60 * 60,
     },
     [Timeframe.ONE_HOUR]: {
       redis: 90 * 24 * 60 * 60,
-      timescale: 730 * 24 * 60 * 60,
+      timescale: null,
+      compression: 90 * 24 * 60 * 60,
     },
     [Timeframe.FOUR_HOURS]: {
       redis: 180 * 24 * 60 * 60,
-      timescale: 1460 * 24 * 60 * 60,
+      timescale: null,
+      compression: 180 * 24 * 60 * 60,
     },
     [Timeframe.ONE_DAY]: {
       redis: 365 * 24 * 60 * 60,
-      timescale: 3650 * 24 * 60 * 60,
+      timescale: null,
+      compression: 365 * 24 * 60 * 60,
     },
+  };
+
+  // Chunk size configuration for different timeframes
+  // This optimizes TimescaleDB chunk size based on data frequency
+  private readonly CHUNK_INTERVALS = {
+    [Timeframe.ONE_MINUTE]: "1 day", // 1440 records per chunk
+    [Timeframe.FIVE_MINUTES]: "5 days", // 1440 records per chunk
+    [Timeframe.TEN_MINUTES]: "10 days", // 1440 records per chunk
+    [Timeframe.FIFTEEN_MINUTES]: "15 days", // 1440 records per chunk
+    [Timeframe.THIRTY_MINUTES]: "30 days", // 1440 records per chunk
+    [Timeframe.ONE_HOUR]: "60 days", // 1440 records per chunk
+    [Timeframe.FOUR_HOURS]: "240 days", // 1440 records per chunk
+    [Timeframe.ONE_DAY]: "365 days", // 365 records per chunk
+  };
+
+  // Add tiered storage configuration
+  private readonly STORAGE_TIERS: Record<Timeframe, TierConfig[]> = {
+    [Timeframe.ONE_MINUTE]: [
+      {
+        type: "hot",
+        maxAge: 7,
+        useCompression: false,
+        useContinuousAggregate: false,
+      },
+      {
+        type: "warm",
+        maxAge: 30,
+        useCompression: true,
+        useContinuousAggregate: false,
+      },
+      {
+        type: "cold",
+        maxAge: Number.POSITIVE_INFINITY,
+        useCompression: true,
+        useContinuousAggregate: false,
+      },
+    ],
+    [Timeframe.FIVE_MINUTES]: [
+      {
+        type: "hot",
+        maxAge: 30,
+        useCompression: false,
+        useContinuousAggregate: true,
+      },
+      {
+        type: "warm",
+        maxAge: 90,
+        useCompression: true,
+        useContinuousAggregate: true,
+      },
+      {
+        type: "cold",
+        maxAge: Number.POSITIVE_INFINITY,
+        useCompression: true,
+        useContinuousAggregate: true,
+      },
+    ],
+    [Timeframe.TEN_MINUTES]: [
+      {
+        type: "hot",
+        maxAge: 30,
+        useCompression: false,
+        useContinuousAggregate: false,
+      },
+      {
+        type: "warm",
+        maxAge: 90,
+        useCompression: true,
+        useContinuousAggregate: false,
+      },
+      {
+        type: "cold",
+        maxAge: Number.POSITIVE_INFINITY,
+        useCompression: true,
+        useContinuousAggregate: false,
+      },
+    ],
+    [Timeframe.FIFTEEN_MINUTES]: [
+      {
+        type: "hot",
+        maxAge: 30,
+        useCompression: false,
+        useContinuousAggregate: true,
+      },
+      {
+        type: "warm",
+        maxAge: 180,
+        useCompression: true,
+        useContinuousAggregate: true,
+      },
+      {
+        type: "cold",
+        maxAge: Number.POSITIVE_INFINITY,
+        useCompression: true,
+        useContinuousAggregate: true,
+      },
+    ],
+    [Timeframe.THIRTY_MINUTES]: [
+      {
+        type: "hot",
+        maxAge: 60,
+        useCompression: false,
+        useContinuousAggregate: false,
+      },
+      {
+        type: "warm",
+        maxAge: 180,
+        useCompression: true,
+        useContinuousAggregate: false,
+      },
+      {
+        type: "cold",
+        maxAge: Number.POSITIVE_INFINITY,
+        useCompression: true,
+        useContinuousAggregate: false,
+      },
+    ],
+    [Timeframe.ONE_HOUR]: [
+      {
+        type: "hot",
+        maxAge: 90,
+        useCompression: false,
+        useContinuousAggregate: true,
+      },
+      {
+        type: "warm",
+        maxAge: 365,
+        useCompression: true,
+        useContinuousAggregate: true,
+      },
+      {
+        type: "cold",
+        maxAge: Number.POSITIVE_INFINITY,
+        useCompression: true,
+        useContinuousAggregate: true,
+      },
+    ],
+    [Timeframe.FOUR_HOURS]: [
+      {
+        type: "hot",
+        maxAge: 180,
+        useCompression: false,
+        useContinuousAggregate: false,
+      },
+      {
+        type: "warm",
+        maxAge: 365,
+        useCompression: true,
+        useContinuousAggregate: false,
+      },
+      {
+        type: "cold",
+        maxAge: Number.POSITIVE_INFINITY,
+        useCompression: true,
+        useContinuousAggregate: false,
+      },
+    ],
+    [Timeframe.ONE_DAY]: [
+      {
+        type: "hot",
+        maxAge: 365,
+        useCompression: false,
+        useContinuousAggregate: true,
+      },
+      {
+        type: "warm",
+        maxAge: 730,
+        useCompression: true,
+        useContinuousAggregate: true,
+      },
+      {
+        type: "cold",
+        maxAge: Number.POSITIVE_INFINITY,
+        useCompression: true,
+        useContinuousAggregate: true,
+      },
+    ],
+  };
+
+  // Map of timeframes to continuous aggregate function names
+  private readonly CONTINUOUS_AGGREGATES: Partial<Record<Timeframe, string>> = {
+    [Timeframe.FIVE_MINUTES]: "continuous_aggregate_5m",
+    [Timeframe.FIFTEEN_MINUTES]: "continuous_aggregate_15m",
+    [Timeframe.ONE_HOUR]: "continuous_aggregate_1h",
+    [Timeframe.ONE_DAY]: "continuous_aggregate_1d",
   };
 
   /**
@@ -94,8 +299,8 @@ class CandleService {
       // Update Redis cache
       await this.updateRedisCache(symbol, timeframe, candle);
 
-      // Apply retention policy
-      await this.applyRetentionPolicy(symbolRecord.id, timeframe);
+      // Apply compression policy instead of retention policy
+      await this.applyCompressionPolicy(symbolRecord.id, timeframe);
 
       // Broadcast the update to WebSocket clients
       this.broadcastCandleUpdate(symbol, timeframe, candle);
@@ -108,14 +313,16 @@ class CandleService {
   }
 
   /**
-   * Get historical candles for a symbol and timeframe
+   * Get historical candles for a symbol and timeframe with pagination support
+   * Enhanced with tiered storage access and continuous aggregates
    */
   async getCandles(
     symbol: string,
     timeframe: Timeframe = Timeframe.ONE_MINUTE,
     limit: number = 100,
     startTime?: Date,
-    endTime?: Date
+    endTime?: Date,
+    page: number = 0
   ): Promise<OHLCV[]> {
     try {
       // Check if the symbol exists
@@ -127,57 +334,139 @@ class CandleService {
         throw new Error(`Symbol ${symbol} not found`);
       }
 
-      // Try to get from Redis cache first
-      const cachedCandles = await redisService.getCachedCandles(
-        symbol,
-        timeframe,
-        startTime?.getTime(),
-        endTime?.getTime()
+      // For recent data (no startTime specified or startTime is within Redis cache window)
+      // try Redis cache first
+      const cacheWindowStart = new Date(
+        Date.now() - this.RETENTION_POLICIES[timeframe].redis * 1000
       );
 
-      if (cachedCandles && cachedCandles.length > 0) {
-        console.log(`Using cached candles for ${symbol} (${timeframe})`);
-        return cachedCandles.map((candle) => ({
-          id: `${symbolRecord.id}-${timeframe}-${candle.time}`,
-          symbolId: symbolRecord.id,
-          symbol: symbolRecord,
-          open: candle.open,
-          high: candle.high,
-          low: candle.low,
-          close: candle.close,
-          volume: candle.volume,
+      if (!startTime || startTime >= cacheWindowStart) {
+        // Try to get from Redis cache first
+        const cachedCandles = await redisService.getCachedCandles(
+          symbol,
           timeframe,
-          time: new Date(candle.time),
-        }));
+          startTime?.getTime(),
+          endTime?.getTime()
+        );
+
+        if (cachedCandles && cachedCandles.length > 0) {
+          console.log(`Using cached candles for ${symbol} (${timeframe})`);
+          return cachedCandles.map((candle) => ({
+            id: `${symbolRecord.id}-${timeframe}-${candle.time}`,
+            symbolId: symbolRecord.id,
+            symbol: symbolRecord,
+            open: candle.open,
+            high: candle.high,
+            low: candle.low,
+            close: candle.close,
+            volume: candle.volume,
+            timeframe,
+            time: new Date(candle.time),
+          }));
+        }
       }
 
       console.log(
         `Fetching candles from database for ${symbol} (${timeframe})`
       );
 
-      // If no cache or data too old, query TimescaleDB
+      // Calculate the offset if pagination is used
+      const offset = page * limit;
+
+      // Determine which storage tier to use based on date range
+      const now = new Date();
+      const dataAge = startTime
+        ? Math.floor(
+            (now.getTime() - startTime.getTime()) / (24 * 60 * 60 * 1000)
+          )
+        : 0;
+
+      let selectedTier: TierConfig | undefined;
+      for (const tier of this.STORAGE_TIERS[timeframe]) {
+        if (dataAge <= tier.maxAge) {
+          selectedTier = tier;
+          break;
+        }
+      }
+
+      // If we don't have a tier (shouldn't happen) or date is very old, use cold storage
+      if (!selectedTier) {
+        selectedTier =
+          this.STORAGE_TIERS[timeframe][
+            this.STORAGE_TIERS[timeframe].length - 1
+          ];
+      }
+
+      console.log(
+        `Using ${selectedTier.type} storage tier for ${timeframe} data`
+      );
+
+      // Check if we can use continuous aggregates for this query
+      const canUseContAgg =
+        selectedTier.useContinuousAggregate &&
+        this.CONTINUOUS_AGGREGATES[timeframe] !== undefined;
+
       let dbCandles;
 
-      // First try to get the candles directly from the database (native timeframe)
-      dbCandles = await prisma.oHLCV.findMany({
-        where: {
-          symbolId: symbolRecord.id,
-          timeframe,
-          ...(startTime && { time: { gte: startTime } }),
-          ...(endTime && { time: { lte: endTime } }),
-        },
-        orderBy: {
-          time: "asc",
-        },
-        take: Math.min(limit, 1000),
-        include: {
-          symbol: true,
-        },
-      });
+      if (canUseContAgg) {
+        // Use continuous aggregate function for optimized data retrieval
+        console.log(`Using continuous aggregate for ${timeframe}`);
 
-      // If we don't have enough data for the requested timeframe,
+        const timeframeStr = this.mapTimeframeToString(timeframe);
+
+        // Use raw SQL with the prebuilt function to get data from continuous aggregates
+        dbCandles = await prisma.$queryRaw`
+          SELECT * FROM get_aggregate_candles(
+            ${symbolRecord.id}::TEXT, 
+            ${timeframeStr}::TEXT, 
+            ${startTime || new Date(0)}::TIMESTAMPTZ, 
+            ${endTime || new Date()}::TIMESTAMPTZ
+          )
+          ORDER BY time DESC
+          LIMIT ${limit}
+          OFFSET ${offset}
+        `;
+
+        // Transform the raw results to match our OHLCV structure
+        dbCandles = (dbCandles as any[]).map((row) => ({
+          id: `${symbolRecord.id}-${timeframe}-${row.time.getTime()}`,
+          symbolId: symbolRecord.id,
+          symbol: symbolRecord,
+          open: Number(row.open),
+          high: Number(row.high),
+          low: Number(row.low),
+          close: Number(row.close),
+          volume: Number(row.volume),
+          timeframe,
+          time: new Date(row.time),
+        }));
+      } else {
+        // Fall back to standard query if continuous aggregates not available
+        dbCandles = await prisma.oHLCV.findMany({
+          where: {
+            symbolId: symbolRecord.id,
+            timeframe,
+            ...(startTime && { time: { gte: startTime } }),
+            ...(endTime && { time: { lte: endTime } }),
+          },
+          orderBy: {
+            time: "desc", // Latest candles first for pagination efficiency
+          },
+          skip: offset,
+          take: limit,
+          include: {
+            symbol: true,
+          },
+        });
+      }
+
+      // If we don't have enough data for the requested timeframe in storage,
       // try to aggregate from a smaller timeframe
-      if (dbCandles.length < limit && timeframe !== Timeframe.ONE_MINUTE) {
+      if (
+        dbCandles.length < limit &&
+        timeframe !== Timeframe.ONE_MINUTE &&
+        page === 0
+      ) {
         console.log(
           `Not enough ${timeframe} candles, aggregating from smaller timeframe`
         );
@@ -191,60 +480,78 @@ class CandleService {
           symbol,
           sourceTimeframe,
           timeframe,
-          extendedLimit
+          extendedLimit,
+          startTime,
+          endTime
         );
 
         if (aggregatedCandles.length > 0) {
-          // Filter by time range if specified
-          const filteredCandles = aggregatedCandles.filter((candle) => {
-            if (startTime && candle.time < startTime) return false;
-            if (endTime && candle.time > endTime) return false;
-            return true;
-          });
-
-          // Combine with any existing candles in the DB, removing duplicates
-          const existingTimeMap = new Map(
-            dbCandles.map((c) => [c.time.getTime(), c])
-          );
-
-          for (const candle of filteredCandles) {
-            const timeKey = candle.time.getTime();
-            if (!existingTimeMap.has(timeKey)) {
-              // Make sure to include the symbol property
-              dbCandles.push({
-                ...candle,
-                symbol: symbolRecord,
-              });
-            }
+          // Cache these aggregated candles for future use if they're recent
+          if (!startTime || startTime >= cacheWindowStart) {
+            await redisService.cacheAggregatedCandles(
+              symbol,
+              sourceTimeframe,
+              timeframe,
+              aggregatedCandles.map((c) => ({
+                time: c.time.getTime(),
+                open: c.open,
+                high: c.high,
+                low: c.low,
+                close: c.close,
+                volume: c.volume,
+              }))
+            );
           }
 
-          // Sort by time
-          dbCandles.sort((a, b) => a.time.getTime() - b.time.getTime());
-
-          // Limit to requested amount
-          dbCandles = dbCandles.slice(0, limit);
+          // Sort in descending order for consistency
+          return aggregatedCandles.sort(
+            (a, b) => b.time.getTime() - a.time.getTime()
+          );
         }
       }
 
-      // Cache recent candles
-      if (dbCandles.length > 0) {
-        await redisService.cacheCandles(
-          symbol,
-          timeframe,
-          dbCandles.map((candle) => ({
-            time: candle.time.getTime(),
-            open: candle.open,
-            high: candle.high,
-            low: candle.low,
-            close: candle.close,
-            volume: candle.volume,
-          }))
-        );
+      // If requested in ascending order (for charts), reverse the results
+      if (page === 0) {
+        return dbCandles.reverse(); // Reverse to get ascending order for charts
       }
 
       return dbCandles;
     } catch (error) {
       console.error("Error getting candles:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get count of available candles for pagination
+   */
+  async getCandleCount(
+    symbol: string,
+    timeframe: Timeframe,
+    startTime?: Date,
+    endTime?: Date
+  ): Promise<number> {
+    try {
+      const symbolRecord = await prisma.symbol.findUnique({
+        where: { name: symbol },
+      });
+
+      if (!symbolRecord) {
+        throw new Error(`Symbol ${symbol} not found`);
+      }
+
+      const count = await prisma.oHLCV.count({
+        where: {
+          symbolId: symbolRecord.id,
+          timeframe,
+          ...(startTime && { time: { gte: startTime } }),
+          ...(endTime && { time: { lte: endTime } }),
+        },
+      });
+
+      return count;
+    } catch (error) {
+      console.error("Error getting candle count:", error);
       throw error;
     }
   }
@@ -325,7 +632,9 @@ class CandleService {
     symbol: string,
     sourceTimeframe: Timeframe = Timeframe.ONE_MINUTE,
     targetTimeframe: Timeframe,
-    limit: number = 100
+    limit: number = 100,
+    startTime?: Date,
+    endTime?: Date
   ): Promise<OHLCV[]> {
     try {
       // Check if the symbol exists
@@ -401,7 +710,7 @@ class CandleService {
           symbolId: symbolRecord.id,
           timeframe: sourceTimeframe,
           time: {
-            gte: startDate,
+            gte: startTime || startDate,
           },
         },
         orderBy: {
@@ -634,28 +943,25 @@ class CandleService {
   }
 
   /**
-   * Apply retention policy for a symbol and timeframe
+   * Apply compression policy for a symbol and timeframe
+   * Instead of deleting old data, we compress it for storage efficiency
    */
-  private async applyRetentionPolicy(
+  private async applyCompressionPolicy(
     symbolId: string,
     timeframe: Timeframe
   ): Promise<void> {
     try {
       const policy = this.RETENTION_POLICIES[timeframe];
-      const cutoffDate = new Date(Date.now() - policy.timescale * 1000);
 
-      // Delete candles older than retention period from TimescaleDB
-      await prisma.oHLCV.deleteMany({
-        where: {
-          symbolId,
-          timeframe,
-          time: {
-            lt: cutoffDate,
-          },
-        },
-      });
+      // Skip if no compression policy
+      if (!policy.compression) return;
+
+      // TimescaleDB compression is implemented at the database level
+      // Here we're just logging the action - actual compression is handled by
+      // TimescaleDB's policies configured in init-timescaledb.sql
+      console.log(`Compression policy applied for ${symbolId} (${timeframe})`);
     } catch (error) {
-      console.error("Error applying retention policy:", error);
+      console.error("Error applying compression policy:", error);
     }
   }
 
@@ -1054,7 +1360,70 @@ class CandleService {
 
     return timeframeToMinutes[larger] / timeframeToMinutes[smaller];
   }
+
+  /**
+   * Initialize TimescaleDB chunk sizes and compression policies
+   * This should be called at application startup
+   */
+  async initializeTimescaleDBPolicies(): Promise<void> {
+    try {
+      console.log("Initializing TimescaleDB policies for candle data storage");
+
+      // This method delegates to a SQL script that will
+      // be executed separately via scripts/init-timescaledb.sql
+
+      // Log potential chunks and compression settings for monitoring
+      for (const timeframe of Object.keys(this.CHUNK_INTERVALS)) {
+        console.log(
+          `TimescaleDB ${timeframe} chunk interval: ${
+            this.CHUNK_INTERVALS[timeframe as Timeframe]
+          }`
+        );
+      }
+    } catch (error) {
+      console.error("Error initializing TimescaleDB policies:", error);
+    }
+  }
+
+  /**
+   * Map timeframe enum to string representation for SQL functions
+   */
+  private mapTimeframeToString(timeframe: Timeframe): string {
+    switch (timeframe) {
+      case Timeframe.FIVE_MINUTES:
+        return "5m";
+      case Timeframe.FIFTEEN_MINUTES:
+        return "15m";
+      case Timeframe.ONE_HOUR:
+        return "1h";
+      case Timeframe.ONE_DAY:
+        return "1d";
+      default:
+        return "1m";
+    }
+  }
+
+  /**
+   * Initialize continuous aggregates and initial data
+   * This should be called during system startup to populate continuous aggregates
+   */
+  async initializeContinuousAggregates(): Promise<void> {
+    try {
+      console.log("Initializing continuous aggregates for OHLCV data");
+
+      // Execute raw SQL to refresh continuous aggregates
+      await prisma.$executeRaw`CALL refresh_continuous_aggregate('continuous_aggregate_5m', NULL, NULL)`;
+      await prisma.$executeRaw`CALL refresh_continuous_aggregate('continuous_aggregate_15m', NULL, NULL)`;
+      await prisma.$executeRaw`CALL refresh_continuous_aggregate('continuous_aggregate_1h', NULL, NULL)`;
+      await prisma.$executeRaw`CALL refresh_continuous_aggregate('continuous_aggregate_1d', NULL, NULL)`;
+
+      console.log("Continuous aggregates refreshed successfully");
+    } catch (error) {
+      console.error("Error initializing continuous aggregates:", error);
+    }
+  }
 }
 
+// Export singleton instance
 export const candleService = new CandleService();
 export default candleService;

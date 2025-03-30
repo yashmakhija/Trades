@@ -58,6 +58,219 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -p $VPS_PORT $VPS_HOST >> ~/.ssh/known_hosts
 
+          # Create TimescaleDB initialization script
+          cat > init-timescaledb.sql << EOF
+          -- Create TimescaleDB extension
+          CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
+
+          -- After Prisma has created the tables, convert OHLCV to a hypertable
+          SELECT create_hypertable('"OHLCV"', 'time', if_not_exists => TRUE, migrate_data => TRUE);
+
+          -- Create appropriate indexes for TimescaleDB to work efficiently
+          CREATE INDEX IF NOT EXISTS "idx_ohlcv_symbol_time" ON "OHLCV" ("symbolId", "time" DESC);
+          CREATE INDEX IF NOT EXISTS "idx_ohlcv_timeframe_time" ON "OHLCV" ("timeframe", "time" DESC);
+          CREATE INDEX IF NOT EXISTS "idx_ohlcv_time" ON "OHLCV" ("time" DESC);
+
+          -- Configure optimized chunk sizes based on timeframe
+          -- For 1-minute data, we use 1-day chunks (1440 records per chunk)
+          SELECT set_chunk_time_interval('"OHLCV"', INTERVAL '1 day');
+
+          -- Add compression policy to automatically compress older data
+          -- This dramatically reduces storage requirements while maintaining query performance
+          SELECT add_compression_policy('"OHLCV"', INTERVAL '7 days');
+
+          -- Configure compression settings to optimize compression ratio
+          ALTER TABLE "OHLCV" SET (
+            timescaledb.compress,
+            timescaledb.compress_segmentby = '"symbolId", "timeframe"',
+            timescaledb.compress_orderby = 'time DESC'
+          );
+
+          -- Create continuous aggregates for common timeframes
+          -- These automatically pre-compute aggregated views to dramatically speed up queries
+          -- 5-minute continuous aggregate
+          CREATE MATERIALIZED VIEW continuous_aggregate_5m
+          WITH (timescaledb.continuous) AS
+          SELECT
+            time_bucket('5 minutes', time) AS bucket,
+            "symbolId",
+            first(open, time) AS open,
+            max(high) AS high,
+            min(low) AS low,
+            last(close, time) AS close,
+            sum(volume) AS volume
+          FROM "OHLCV"
+          WHERE timeframe = 'ONE_MINUTE'
+          GROUP BY bucket, "symbolId"
+          WITH NO DATA;
+
+          -- 15-minute continuous aggregate
+          CREATE MATERIALIZED VIEW continuous_aggregate_15m
+          WITH (timescaledb.continuous) AS
+          SELECT
+            time_bucket('15 minutes', time) AS bucket,
+            "symbolId",
+            first(open, time) AS open,
+            max(high) AS high,
+            min(low) AS low,
+            last(close, time) AS close,
+            sum(volume) AS volume
+          FROM "OHLCV"
+          WHERE timeframe = 'ONE_MINUTE'
+          GROUP BY bucket, "symbolId"
+          WITH NO DATA;
+
+          -- 1-hour continuous aggregate
+          CREATE MATERIALIZED VIEW continuous_aggregate_1h
+          WITH (timescaledb.continuous) AS
+          SELECT
+            time_bucket('1 hour', time) AS bucket,
+            "symbolId",
+            first(open, time) AS open,
+            max(high) AS high,
+            min(low) AS low,
+            last(close, time) AS close,
+            sum(volume) AS volume
+          FROM "OHLCV"
+          WHERE timeframe = 'ONE_MINUTE'
+          GROUP BY bucket, "symbolId"
+          WITH NO DATA;
+
+          -- 1-day continuous aggregate
+          CREATE MATERIALIZED VIEW continuous_aggregate_1d
+          WITH (timescaledb.continuous) AS
+          SELECT
+            time_bucket('1 day', time) AS bucket,
+            "symbolId",
+            first(open, time) AS open,
+            max(high) AS high,
+            min(low) AS low,
+            last(close, time) AS close,
+            sum(volume) AS volume
+          FROM "OHLCV"
+          WHERE timeframe = 'ONE_MINUTE'
+          GROUP BY bucket, "symbolId"
+          WITH NO DATA;
+
+          -- Create refresh policies for continuous aggregates
+          SELECT add_continuous_aggregate_policy('continuous_aggregate_5m',
+            start_offset => INTERVAL '1 month',
+            end_offset => INTERVAL '5 minutes',
+            schedule_interval => INTERVAL '5 minutes');
+
+          SELECT add_continuous_aggregate_policy('continuous_aggregate_15m',
+            start_offset => INTERVAL '3 months',
+            end_offset => INTERVAL '15 minutes',
+            schedule_interval => INTERVAL '15 minutes');
+
+          SELECT add_continuous_aggregate_policy('continuous_aggregate_1h',
+            start_offset => INTERVAL '6 months',
+            end_offset => INTERVAL '1 hour',
+            schedule_interval => INTERVAL '1 hour');
+
+          SELECT add_continuous_aggregate_policy('continuous_aggregate_1d',
+            start_offset => INTERVAL '5 years',
+            end_offset => INTERVAL '1 day',
+            schedule_interval => INTERVAL '1 day');
+
+          -- Create indexes on continuous aggregates for faster queries
+          CREATE INDEX IF NOT EXISTS "idx_5m_symbol_bucket" 
+          ON continuous_aggregate_5m ("symbolId", bucket DESC);
+
+          CREATE INDEX IF NOT EXISTS "idx_15m_symbol_bucket" 
+          ON continuous_aggregate_15m ("symbolId", bucket DESC);
+
+          CREATE INDEX IF NOT EXISTS "idx_1h_symbol_bucket" 
+          ON continuous_aggregate_1h ("symbolId", bucket DESC);
+
+          CREATE INDEX IF NOT EXISTS "idx_1d_symbol_bucket" 
+          ON continuous_aggregate_1d ("symbolId", bucket DESC);
+
+          -- Create a function to handle candle aggregation using continuous aggregates
+          CREATE OR REPLACE FUNCTION get_aggregate_candles(
+            symbol_id TEXT,
+            timeframe TEXT,
+            start_time TIMESTAMPTZ,
+            end_time TIMESTAMPTZ
+          ) RETURNS TABLE (
+            time TIMESTAMPTZ,
+            open BIGINT,
+            high BIGINT,
+            low BIGINT,
+            close BIGINT,
+            volume BIGINT
+          ) AS $$
+          BEGIN
+            CASE timeframe
+              WHEN '5m' THEN
+                RETURN QUERY
+                SELECT 
+                  bucket as time, 
+                  open::BIGINT, 
+                  high::BIGINT, 
+                  low::BIGINT, 
+                  close::BIGINT, 
+                  volume::BIGINT
+                FROM continuous_aggregate_5m
+                WHERE "symbolId" = symbol_id
+                  AND bucket BETWEEN start_time AND end_time
+                ORDER BY bucket ASC;
+              
+              WHEN '15m' THEN
+                RETURN QUERY
+                SELECT 
+                  bucket as time, 
+                  open::BIGINT, 
+                  high::BIGINT, 
+                  low::BIGINT, 
+                  close::BIGINT, 
+                  volume::BIGINT
+                FROM continuous_aggregate_15m
+                WHERE "symbolId" = symbol_id
+                  AND bucket BETWEEN start_time AND end_time
+                ORDER BY bucket ASC;
+              
+              WHEN '1h' THEN
+                RETURN QUERY
+                SELECT 
+                  bucket as time, 
+                  open::BIGINT, 
+                  high::BIGINT, 
+                  low::BIGINT, 
+                  close::BIGINT, 
+                  volume::BIGINT
+                FROM continuous_aggregate_1h
+                WHERE "symbolId" = symbol_id
+                  AND bucket BETWEEN start_time AND end_time
+                ORDER BY bucket ASC;
+              
+              WHEN '1d' THEN
+                RETURN QUERY
+                SELECT 
+                  bucket as time, 
+                  open::BIGINT, 
+                  high::BIGINT, 
+                  low::BIGINT, 
+                  close::BIGINT, 
+                  volume::BIGINT
+                FROM continuous_aggregate_1d
+                WHERE "symbolId" = symbol_id
+                  AND bucket BETWEEN start_time AND end_time
+                ORDER BY bucket ASC;
+              
+              ELSE
+                RETURN QUERY
+                SELECT o.time, o.open, o.high, o.low, o.close, o.volume
+                FROM "OHLCV" o
+                WHERE o."symbolId" = symbol_id
+                  AND o.timeframe = timeframe
+                  AND o.time BETWEEN start_time AND end_time
+                ORDER BY o.time ASC;
+            END CASE;
+          END;
+          $$ LANGUAGE plpgsql;
+          EOF
+
           # Create deployment script
           cat > deploy_script.sh << EOF
           #!/bin/bash
@@ -219,6 +432,26 @@ jobs:
             -e REDIS_DB="0" \\
             ${DOCKER_USERNAME}/trading-app-backend:latest
 
+          # Run initial database migrations and setup
+          echo "Running database migrations..."
+          sudo docker exec trading-backend-2 bun db:generate
+          sudo docker exec trading-backend-2 bun db:push
+
+          # Apply TimescaleDB initialization script
+          echo "Initializing TimescaleDB with advanced features..."
+          sudo docker cp /tmp/init-timescaledb.sql timescaledb:/tmp/init-timescaledb.sql
+          sudo docker exec timescaledb psql -U postgres -d trading_app -f /tmp/init-timescaledb.sql || {
+            echo "Failed to initialize TimescaleDB features"
+            sudo docker logs timescaledb
+            # Don't exit here, as it's not critical for basic functionality
+          }
+
+          # Initialize sample data
+          echo "Initializing sample data..."
+          sudo docker exec trading-backend-2 bun db:init || {
+            echo "Sample data initialization failed, but continuing..."
+          }
+
           # Verify deployment
           echo "Verifying containers are running:"
           sudo docker ps
@@ -239,9 +472,10 @@ jobs:
           echo "Deployment complete!"
           EOF
 
-          # Transfer script to VPS
-          echo "Transferring deployment script to VPS..."
+          # Transfer files to VPS
+          echo "Transferring files to VPS..."
           scp -P $VPS_PORT deploy_script.sh $VPS_USERNAME@$VPS_HOST:/tmp/deploy_script.sh
+          scp -P $VPS_PORT init-timescaledb.sql $VPS_USERNAME@$VPS_HOST:/tmp/init-timescaledb.sql
 
           # Execute script on VPS
           echo "Executing deployment script on VPS..."

@@ -51,12 +51,12 @@ interface TransformedCandle {
 }
 
 /**
- * Get historical candle data
+ * Get historical candle data with pagination support
  * @route GET /api/candles
  */
 export async function getCandles(req: Request, res: Response): Promise<void> {
   try {
-    const { symbol, timeframe = "1m", limit = "100" } = req.query;
+    const { symbol, timeframe = "1m", limit = "100", page = "0" } = req.query;
     let { startTime, endTime } = req.query;
 
     // Validate inputs
@@ -68,12 +68,15 @@ export async function getCandles(req: Request, res: Response): Promise<void> {
     // Convert limit to number with a maximum value
     const limitNum = Math.min(parseInt(limit as string) || 100, 1000);
 
+    // Convert page to number
+    const pageNum = Math.max(parseInt(page as string) || 0, 0);
+
     // Parse timeframe
     const timeframeEnum = mapTimeframe(timeframe as string);
 
     // Log the request for debugging
     console.log(
-      `API request for candles: ${symbol}/${timeframe} (limit: ${limitNum})`
+      `API request for candles: ${symbol}/${timeframe} (limit: ${limitNum}, page: ${pageNum})`
     );
 
     // Parse start and end times if provided
@@ -103,7 +106,7 @@ export async function getCandles(req: Request, res: Response): Promise<void> {
     }
 
     // If no valid date range is provided, use a reasonable default based on timeframe
-    if (!startDate) {
+    if (!startDate && pageNum === 0) {
       const now = new Date();
       const defaultRanges: Record<string, number> = {
         "1m": 24 * 60 * 60 * 1000, // 1 day for 1m
@@ -122,21 +125,27 @@ export async function getCandles(req: Request, res: Response): Promise<void> {
     }
 
     console.log(
-      `Fetching ${timeframe} candles for ${symbol} from ${startDate?.toISOString() || "unknown"} to ${endDate?.toISOString() || "now"}`
+      `Fetching ${timeframe} candles for ${symbol} from ${startDate?.toISOString() || "all time"} to ${endDate?.toISOString() || "now"} (page ${pageNum})`
     );
 
-    // Get candles from service
+    // Get candles from service with pagination
     const candles = await import("../services/candleService").then((module) =>
       module.default.getCandles(
         symbol as string,
         timeframeEnum,
         limitNum,
         startDate,
-        endDate
+        endDate,
+        pageNum
       )
     );
 
-    if (candles.length === 0 && timeframeEnum !== Timeframe.ONE_MINUTE) {
+    // For the first page with no data, try direct aggregation from smaller timeframe
+    if (
+      candles.length === 0 &&
+      timeframeEnum !== Timeframe.ONE_MINUTE &&
+      pageNum === 0
+    ) {
       console.log(
         `No ${timeframe} candles found, attempting direct aggregation from 1m candles`
       );
@@ -148,7 +157,9 @@ export async function getCandles(req: Request, res: Response): Promise<void> {
             symbol as string,
             Timeframe.ONE_MINUTE,
             timeframeEnum,
-            limitNum * 2 // Request more candles to ensure we have enough for aggregation
+            limitNum * 2, // Request more candles to ensure we have enough for aggregation
+            startDate,
+            endDate
           )
       );
 
@@ -167,7 +178,18 @@ export async function getCandles(req: Request, res: Response): Promise<void> {
           volume: candle.volume / 100,
         }));
 
-        res.json(formattedCandles);
+        // Add pagination metadata
+        const response = {
+          candles: formattedCandles,
+          pagination: {
+            page: pageNum,
+            limit: limitNum,
+            totalCount: formattedCandles.length,
+            hasMore: false,
+          },
+        };
+
+        res.json(response);
         return;
       }
 
@@ -184,14 +206,110 @@ export async function getCandles(req: Request, res: Response): Promise<void> {
       volume: candle.volume / 100,
     }));
 
+    // Get total count for pagination if this is the first page
+    let totalCount = 0;
+    let hasMore = false;
+
+    if (pageNum === 0 || formattedCandles.length === limitNum) {
+      totalCount = await import("../services/candleService").then((module) =>
+        module.default.getCandleCount(
+          symbol as string,
+          timeframeEnum,
+          startDate,
+          endDate
+        )
+      );
+
+      hasMore = (pageNum + 1) * limitNum < totalCount;
+    } else {
+      // If we got fewer results than the limit, we've reached the end
+      hasMore = false;
+      totalCount = pageNum * limitNum + formattedCandles.length;
+    }
+
     console.log(
-      `Returning ${formattedCandles.length} ${timeframe} candles for ${symbol}`
+      `Returning ${formattedCandles.length} ${timeframe} candles for ${symbol} (page ${pageNum}, total: ${totalCount})`
     );
-    res.json(formattedCandles);
+
+    // Add pagination metadata to response
+    const response = {
+      candles: formattedCandles,
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        totalCount,
+        hasMore,
+      },
+    };
+
+    res.json(response);
   } catch (error) {
     console.error("Error getting candles:", error);
     res.status(500).json({
       error: "Failed to get candles",
+      details: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/**
+ * Get count of available candles for pagination
+ * @route GET /api/candles/count
+ */
+export async function getCandlesCount(
+  req: Request,
+  res: Response
+): Promise<void> {
+  try {
+    const { symbol, timeframe = "1m" } = req.query;
+    let { startTime, endTime } = req.query;
+
+    // Validate inputs
+    if (!symbol) {
+      res.status(400).json({ error: "Symbol is required" });
+      return;
+    }
+
+    // Parse timeframe
+    const timeframeEnum = mapTimeframe(timeframe as string);
+
+    // Parse start and end times if provided
+    let startDate: Date | undefined;
+    let endDate: Date | undefined;
+
+    if (startTime) {
+      const timestamp = parseInt(startTime as string);
+      if (!isNaN(timestamp)) {
+        startDate = new Date(timestamp * 1000);
+      } else {
+        startDate = new Date(startTime as string);
+      }
+    }
+
+    if (endTime) {
+      const timestamp = parseInt(endTime as string);
+      if (!isNaN(timestamp)) {
+        endDate = new Date(timestamp * 1000);
+      } else {
+        endDate = new Date(endTime as string);
+      }
+    }
+
+    // Get count from service
+    const count = await import("../services/candleService").then((module) =>
+      module.default.getCandleCount(
+        symbol as string,
+        timeframeEnum,
+        startDate,
+        endDate
+      )
+    );
+
+    res.json({ count });
+  } catch (error) {
+    console.error("Error getting candle count:", error);
+    res.status(500).json({
+      error: "Failed to get candle count",
       details: error instanceof Error ? error.message : String(error),
     });
   }

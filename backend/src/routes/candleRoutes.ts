@@ -4,6 +4,7 @@ import {
   storeCandle,
   aggregateCandles,
   getLatestCandle,
+  getCandlesCount,
 } from "../controllers/candleController";
 
 const router = Router();
@@ -19,5 +20,8 @@ router.get("/aggregate", aggregateCandles);
 
 // Get the latest candle
 router.get("/latest", getLatestCandle);
+
+// Get count of available candles for pagination
+router.get("/count", getCandlesCount);
 
 export default router;
