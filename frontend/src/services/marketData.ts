@@ -13,6 +13,27 @@ export interface SymbolData {
   currentPrice: number | null;
 }
 
+// Response structure for paginated candle data
+export interface PaginatedCandleResponse {
+  candles: CandleData[];
+  pagination: {
+    page: number;
+    limit: number;
+    totalCount: number;
+    hasMore: boolean;
+  };
+}
+
+// Add proper types for the legacy endpoints
+interface LegacyCandleData {
+  timestamp: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
 /**
  * Fetch all available trading symbols
  */
@@ -54,58 +75,105 @@ export async function fetchLatestPrices(): Promise<Record<string, number>> {
 }
 
 /**
- * Fetch historical candle data for a symbol
+ * Fetch historical candle data for a symbol with support for pagination
  */
 export async function fetchHistoricalData(
   symbol: string,
   timeframe: Timeframe = DEFAULT_TIMEFRAME as Timeframe,
-  limit: number = 100
+  limit: number = 1000,
+  startTime?: Date | number,
+  endTime?: Date | number,
+  page: number = 0,
+  loadAllAvailable: boolean = false
 ): Promise<CandleData[]> {
   try {
     console.log(
-      `MarketData: Fetching historical data for ${symbol} with timeframe ${timeframe}`
+      `MarketData: Fetching historical data for ${symbol} with timeframe ${timeframe} (page ${page}, limit ${limit})`
     );
 
-    // Try to fetch from the new candles API endpoint first
+    // Convert startTime and endTime to proper format if provided
+    const formattedStartTime = startTime
+      ? typeof startTime === "number"
+        ? Math.floor(startTime / 1000).toString() // Convert to string for API
+        : Math.floor(startTime.getTime() / 1000).toString()
+      : undefined;
+
+    const formattedEndTime = endTime
+      ? typeof endTime === "number"
+        ? Math.floor(endTime / 1000).toString() // Convert to string for API
+        : Math.floor(endTime.getTime() / 1000).toString()
+      : undefined;
+
     try {
-      const data = await apiClient.get<any[]>("/candles", {
-        params: {
-          symbol: symbol.toLowerCase(),
-          timeframe,
-          limit: limit.toString(),
-        },
-      });
+      // Update the params object to only include defined values
+      const params: Record<string, string> = {
+        symbol: symbol.toLowerCase(),
+        timeframe,
+        limit: limit.toString(),
+        page: page.toString(),
+      };
 
-      console.log(`MarketData: Received ${data.length} candles for ${symbol}`);
+      // Only add startTime and endTime if they are defined
+      if (formattedStartTime) {
+        params.startTime = formattedStartTime;
+      }
+      if (formattedEndTime) {
+        params.endTime = formattedEndTime;
+      }
 
-      // Transform data to match CandleData interface
-      const transformedData = data.map(
-        (item: {
-          time: string | number;
-          open: number;
-          high: number;
-          low: number;
-          close: number;
-          volume: number;
-        }) => ({
-          // Handle both timestamp formats (string ISO date or number)
-          time:
-            typeof item.time === "string"
-              ? Math.floor(new Date(item.time).getTime() / 1000)
-              : typeof item.time === "number" && item.time > 10000000000
-              ? Math.floor(item.time / 1000) // Convert ms to seconds if needed
-              : (item.time as number),
-          open: item.open,
-          high: item.high,
-          low: item.low,
-          close: item.close,
-          volume: item.volume,
-        })
+      // Use the params object in the API call
+      const response = await apiClient.get<PaginatedCandleResponse>(
+        "/candles",
+        { params }
       );
+
+      let candles = response.candles || [];
 
       console.log(
-        `MarketData: Transformed ${transformedData.length} candles for ${symbol}`
+        `MarketData: Received ${candles.length} candles for ${symbol} (page ${page})`
       );
+
+      // If loadAllAvailable is true and there are more pages, fetch them all
+      if (loadAllAvailable && response.pagination?.hasMore) {
+        console.log(`MarketData: Loading all available candles for ${symbol}`);
+
+        const totalPages = Math.ceil(response.pagination.totalCount / limit);
+        const remainingPages = [];
+
+        // Load all remaining pages in parallel (up to a reasonable maximum)
+        const maxPagesToLoad = Math.min(totalPages - page - 1, 10); // Limit to 10 more pages max
+
+        for (let i = page + 1; i <= page + maxPagesToLoad; i++) {
+          remainingPages.push(
+            fetchHistoricalData(symbol, timeframe, limit, startTime, endTime, i)
+          );
+        }
+
+        const additionalData = await Promise.all(remainingPages);
+        additionalData.forEach((pageCandleData) => {
+          candles = [...candles, ...pageCandleData];
+        });
+
+        console.log(
+          `MarketData: Loaded total ${candles.length} candles across multiple pages`
+        );
+      }
+
+      // Transform the data to ensure proper time formatting
+      const transformedData = candles.map((item) => ({
+        // Handle both timestamp formats (string ISO date or number)
+        time:
+          typeof item.time === "string"
+            ? Math.floor(new Date(item.time).getTime() / 1000)
+            : typeof item.time === "number" && item.time > 10000000000
+            ? Math.floor(item.time / 1000) // Convert ms to seconds if needed
+            : (item.time as number),
+        open: item.open,
+        high: item.high,
+        low: item.low,
+        close: item.close,
+        volume: item.volume,
+      }));
 
       // Sort by time to ensure proper ordering
       transformedData.sort((a, b) => a.time - b.time);
@@ -119,36 +187,40 @@ export async function fetchHistoricalData(
 
       // Try legacy market/candles endpoint
       try {
-        const data = await apiClient.get<any[]>("/market/candles", {
-          params: {
-            symbol: symbol.toLowerCase(),
-            timeframe,
-            limit: limit.toString(),
-          },
-        });
+        // Update the legacy endpoint calls similarly
+        const legacyParams: Record<string, string> = {
+          symbol: symbol.toLowerCase(),
+          timeframe,
+          limit: limit.toString(),
+        };
+
+        if (formattedStartTime) {
+          legacyParams.startTime = formattedStartTime;
+        }
+        if (formattedEndTime) {
+          legacyParams.endTime = formattedEndTime;
+        }
+
+        const data = await apiClient.get<LegacyCandleData[]>(
+          "/market/candles",
+          {
+            params: legacyParams,
+          }
+        );
 
         console.log(
           `MarketData: Received ${data.length} candles from legacy endpoint for ${symbol}`
         );
 
         // Transform data to match CandleData interface
-        const transformedData = data.map(
-          (item: {
-            timestamp: number;
-            open: number;
-            high: number;
-            low: number;
-            close: number;
-            volume: number;
-          }) => ({
-            time: item.timestamp / 1000, // Convert to seconds for TradingView
-            open: item.open,
-            high: item.high,
-            low: item.low,
-            close: item.close,
-            volume: item.volume,
-          })
-        );
+        const transformedData = data.map((item) => ({
+          time: item.timestamp / 1000, // Convert to seconds for TradingView
+          open: item.open,
+          high: item.high,
+          low: item.low,
+          close: item.close,
+          volume: item.volume,
+        }));
 
         // Sort by time to ensure proper ordering
         transformedData.sort((a, b) => a.time - b.time);
@@ -162,36 +234,30 @@ export async function fetchHistoricalData(
 
         // Try alternative endpoint as last resort
         try {
-          const data = await apiClient.get<any[]>("/market/history", {
-            params: {
-              symbol: symbol.toLowerCase(),
-              timeframe,
-              limit: limit.toString(),
-            },
-          });
+          const data = await apiClient.get<LegacyCandleData[]>(
+            "/market/history",
+            {
+              params: {
+                symbol: symbol.toLowerCase(),
+                timeframe,
+                limit: limit.toString(),
+              },
+            }
+          );
 
           console.log(
             `MarketData: Received ${data.length} candles from alternative endpoint for ${symbol}`
           );
 
           // Transform data to match CandleData interface
-          const transformedData = data.map(
-            (item: {
-              timestamp: number;
-              open: number;
-              high: number;
-              low: number;
-              close: number;
-              volume: number;
-            }) => ({
-              time: item.timestamp / 1000, // Convert to seconds for TradingView
-              open: item.open,
-              high: item.high,
-              low: item.low,
-              close: item.close,
-              volume: item.volume,
-            })
-          );
+          const transformedData = data.map((item) => ({
+            time: item.timestamp / 1000, // Convert to seconds for TradingView
+            open: item.open,
+            high: item.high,
+            low: item.low,
+            close: item.close,
+            volume: item.volume,
+          }));
 
           // Sort by time to ensure proper ordering
           transformedData.sort((a, b) => a.time - b.time);
@@ -229,6 +295,52 @@ export async function fetchHistoricalData(
 }
 
 /**
+ * Get total count of available candles for a symbol and timeframe
+ */
+export async function getCandleCount(
+  symbol: string,
+  timeframe: Timeframe = DEFAULT_TIMEFRAME as Timeframe,
+  startTime?: Date | number,
+  endTime?: Date | number
+): Promise<number> {
+  try {
+    const formattedStartTime = startTime
+      ? typeof startTime === "number"
+        ? Math.floor(startTime / 1000).toString() // Convert to string for API
+        : Math.floor(startTime.getTime() / 1000).toString()
+      : undefined;
+
+    const formattedEndTime = endTime
+      ? typeof endTime === "number"
+        ? Math.floor(endTime / 1000).toString() // Convert to string for API
+        : Math.floor(endTime.getTime() / 1000).toString()
+      : undefined;
+
+    // Update the getCandleCount function similarly
+    const countParams: Record<string, string> = {
+      symbol: symbol.toLowerCase(),
+      timeframe,
+    };
+
+    if (formattedStartTime) {
+      countParams.startTime = formattedStartTime;
+    }
+    if (formattedEndTime) {
+      countParams.endTime = formattedEndTime;
+    }
+
+    const response = await apiClient.get<{ count: number }>("/candles/count", {
+      params: countParams,
+    });
+
+    return response.count;
+  } catch (error) {
+    console.error(`Error getting candle count for ${symbol}:`, error);
+    return 0;
+  }
+}
+
+/**
  * Generate mock historical data for development
  * This is used when the backend is not available
  */
@@ -255,11 +367,11 @@ export function generateMockHistoricalData(
     const open = low + Math.random() * (high - low);
 
     // Generate random volume
-    const volume = Math.random() * 100 + 50;
+    const volume = Math.random() * 100 + 10;
 
-    // Add candle
+    // Add candle to the data array (1-minute intervals)
     data.push({
-      time: now - (count - i) * 3600, // 1 hour intervals
+      time: now - (count - i) * 60, // Using seconds as timestamp (for lightweight-charts)
       open,
       high,
       low,

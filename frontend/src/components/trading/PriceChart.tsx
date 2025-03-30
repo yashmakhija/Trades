@@ -15,14 +15,16 @@ import {
   LineStyle,
   PriceScaleMode,
   HistogramSeriesOptions,
+  CandlestickData,
 } from "lightweight-charts";
 import { useWebSocket, CandleData } from "@/services/websocket";
 import {
   fetchHistoricalData,
   generateMockHistoricalData,
   Timeframe,
+  getCandleCount,
 } from "@/services/marketData";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AlertCircle } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -90,9 +92,11 @@ export function PriceChart({
     DEFAULT_ORDER_QUANTITY.toString()
   );
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
-  const [lastTimeframeChange, setLastTimeframeChange] = useState<number>(
-    Date.now()
-  );
+
+  // State for historical data loading
+  const [dataPageCount, setDataPageCount] = useState<number>(0);
+  const [totalCandleCount, setTotalCandleCount] = useState<number>(0);
+  const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
 
   // Don't destructure symbols from the store as we'll access it directly when needed
   // to ensure we always have the latest data
@@ -390,149 +394,250 @@ export function PriceChart({
     };
   }, [initializeChart]);
 
-  // Load historical data
-  const loadHistoricalData = useCallback(async () => {
-    if (!candleSeries.current || !volumeSeries.current) return;
+  // Load initial historical data
+  useEffect(() => {
+    if (!chartRef.current || !candleSeries.current || !normalizedSymbol) {
+      return;
+    }
 
-    setIsLoading(true);
-    setIsChangingTimeframe(true);
-    setError(null);
+    const loadData = async () => {
+      setIsLoading(true);
+      setError(null);
+      setDataPageCount(0);
+
+      try {
+        console.log(
+          `PriceChart: Fetching historical candles for ${normalizedSymbol}:${timeframe}`
+        );
+
+        let data: CandleData[];
+        if (useMockData) {
+          console.log("PriceChart: Using mock data...");
+          data = generateMockHistoricalData(
+            normalizedSymbol.includes("btc") ? 45000 : 2000,
+            100
+          );
+        } else {
+          // Get count first to know how much data is available
+          const count = await getCandleCount(normalizedSymbol, timeframe);
+          setTotalCandleCount(count);
+          console.log(`PriceChart: Total available candles: ${count}`);
+
+          // Determine how much data to load initially (always load first page)
+          const initialLimit = Math.min(1000, count);
+
+          // Load the data with pagination
+          data = await fetchHistoricalData(
+            normalizedSymbol,
+            timeframe,
+            initialLimit,
+            undefined,
+            undefined,
+            0,
+            false // Don't load all available data yet
+          );
+
+          setDataPageCount(1); // We've loaded the first page
+        }
+
+        if (data && data.length > 0) {
+          console.log(
+            `PriceChart: Loaded ${data.length} historical candles for ${normalizedSymbol}:${timeframe}`
+          );
+
+          // Convert to the correct type for the chart library
+          const chartData = data.map((candle) => ({
+            time: candle.time as UTCTimestamp,
+            open: candle.open,
+            high: candle.high,
+            low: candle.low,
+            close: candle.close,
+            volume: candle.volume,
+          }));
+
+          if (candleSeries.current) {
+            candleSeries.current.setData(chartData);
+          }
+
+          // Update volume series if it exists
+          if (volumeSeries.current) {
+            const volumeData = chartData.map((item) => ({
+              time: item.time,
+              value: (item as unknown as { volume: number }).volume,
+              color:
+                item.close >= item.open
+                  ? chartColors.volumeUp
+                  : chartColors.volumeDown,
+            }));
+            volumeSeries.current.setData(volumeData);
+          }
+
+          // Set the last candle reference
+          lastCandleRef.current = {
+            time: chartData[chartData.length - 1].time,
+            data: {
+              open: chartData[chartData.length - 1].open,
+              high: chartData[chartData.length - 1].high,
+              low: chartData[chartData.length - 1].low,
+              close: chartData[chartData.length - 1].close,
+            },
+          };
+
+          // Set current price display
+          setCurrentPrice(data[data.length - 1].close);
+
+          // Calculate price change
+          if (data.length > 1) {
+            const first = data[0].open;
+            const last = data[data.length - 1].close;
+            const change = ((last - first) / first) * 100;
+            setPriceChange(change);
+          }
+
+          setHistoricalDataLoaded(true);
+        } else {
+          console.warn(
+            `PriceChart: No historical candles received for ${normalizedSymbol}:${timeframe}`
+          );
+          setError("No historical data available");
+        }
+      } catch (err) {
+        console.error(
+          `PriceChart: Error loading historical data for ${normalizedSymbol}:${timeframe}:`,
+          err
+        );
+        setError("Failed to load historical data");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadData();
+  }, [normalizedSymbol, timeframe, chartColors, useMockData]);
+
+  /**
+   * Load more historical data when requested
+   */
+  const loadMoreHistoricalData = async () => {
+    if (!chartRef.current || !candleSeries.current || isLoadingMore) return;
+
+    setIsLoadingMore(true);
 
     try {
       console.log(
-        `PriceChart: Loading historical data for ${normalizedSymbol} with timeframe ${timeframe}`
+        `PriceChart: Loading more historical data (page ${dataPageCount})`
       );
 
-      let historicalData: CandleData[];
+      // Get the current data from the chart
+      const currentData =
+        candleSeries.current.data() as CandlestickData<UTCTimestamp>[];
 
-      if (useMockData) {
-        historicalData = generateMockHistoricalData(
-          normalizedSymbol.includes("btc") ? 83000 : 2000,
-          100
-        );
-        console.log(
-          `PriceChart: Generated mock data for ${normalizedSymbol}:`,
-          historicalData.length,
-          "candles"
-        );
-      } else {
-        historicalData = await fetchHistoricalData(
-          normalizedSymbol,
-          timeframe,
-          100
-        );
-        console.log(
-          `PriceChart: Fetched historical data for ${normalizedSymbol}:`,
-          historicalData.length,
-          "candles"
-        );
-      }
-
-      if (historicalData.length === 0) {
-        console.warn(
-          `PriceChart: No historical data available for ${normalizedSymbol}`
-        );
-        setError(
-          `No historical data available for ${normalizedSymbol.toUpperCase()}`
-        );
+      if (!currentData || currentData.length === 0) {
+        toast.error("No current data available to extend");
         return;
       }
 
-      // Process data for display
-      const candleStickData = historicalData.map((candle) => {
-        // Normalize price values if needed
-        const open = normalizePrice(candle.open);
-        const high = normalizePrice(candle.high);
-        const low = normalizePrice(candle.low);
-        const close = normalizePrice(candle.close);
+      // Find the earliest timestamp to use as the end time for the next page
+      const earliestTime = Math.min(
+        ...currentData.map((candle) =>
+          typeof candle.time === "number"
+            ? candle.time
+            : (candle.time as UTCTimestamp).valueOf()
+        )
+      );
+      const endTime = new Date(earliestTime * 1000); // Convert to milliseconds
 
-        return {
+      // Load the next page of data
+      const moreData = await fetchHistoricalData(
+        normalizedSymbol,
+        timeframe,
+        1000, // Standard limit per page
+        undefined, // No start time (get earliest data)
+        endTime, // End time is the earliest we have
+        dataPageCount // Use current page count
+      );
+
+      console.log(`PriceChart: Loaded ${moreData.length} additional candles`);
+
+      // Add new data to the chart
+      if (moreData.length > 0) {
+        // Convert to the correct type for chart library
+        const chartData = moreData.map((candle) => ({
           time: candle.time as UTCTimestamp,
-          open,
-          high,
-          low,
-          close,
-        };
-      });
+          open: candle.open,
+          high: candle.high,
+          low: candle.low,
+          close: candle.close,
+          volume: candle.volume,
+        }));
 
-      const volumeData = historicalData.map((candle) => ({
-        time: candle.time as UTCTimestamp,
-        value: candle.volume,
-        color:
-          normalizePrice(candle.close) >= normalizePrice(candle.open)
-            ? chartColors.volumeUp
-            : chartColors.volumeDown,
-      }));
+        // Get existing times for duplicate detection
+        const existingTimestamps = new Set(
+          currentData.map((candle) =>
+            typeof candle.time === "number"
+              ? candle.time
+              : (candle.time as UTCTimestamp).valueOf()
+          )
+        );
 
-      // Reset data before setting new data to avoid visual glitches
-      candleSeries.current.setData([]);
-      volumeSeries.current.setData([]);
+        // Filter out any duplicates
+        const newCandles = chartData.filter(
+          (candle) =>
+            !existingTimestamps.has(
+              typeof candle.time === "number"
+                ? candle.time
+                : (candle.time as UTCTimestamp).valueOf()
+            )
+        );
 
-      // Set new data
-      candleSeries.current.setData(candleStickData);
-      volumeSeries.current.setData(volumeData);
+        if (newCandles.length > 0) {
+          // Update the chart with all data (LightweightCharts requires setting all data at once)
+          const combinedData = [...currentData, ...newCandles].sort((a, b) => {
+            const timeA =
+              typeof a.time === "number"
+                ? a.time
+                : (a.time as UTCTimestamp).valueOf();
+            const timeB =
+              typeof b.time === "number"
+                ? b.time
+                : (b.time as UTCTimestamp).valueOf();
+            return timeA - timeB;
+          });
 
-      // Store the last candle for reference
-      if (candleStickData.length > 0) {
-        const lastCandle = candleStickData[candleStickData.length - 1];
-        lastCandleRef.current = {
-          time: lastCandle.time,
-          data: {
-            open: lastCandle.open,
-            high: lastCandle.high,
-            low: lastCandle.low,
-            close: lastCandle.close,
-          },
-        };
+          if (candleSeries.current) {
+            candleSeries.current.setData(combinedData);
+          }
+
+          // Update volume series if it exists
+          if (volumeSeries.current) {
+            const volumeData = combinedData.map((item) => ({
+              time: item.time,
+              value: (item as unknown as { volume: number }).volume,
+              color:
+                item.close >= item.open
+                  ? chartColors.volumeUp
+                  : chartColors.volumeDown,
+            }));
+            volumeSeries.current.setData(volumeData);
+          }
+
+          // Increment the page count
+          setDataPageCount((prev) => prev + 1);
+
+          toast.success(`Loaded ${newCandles.length} more historical candles`);
+        } else {
+          toast.info("No more historical data available");
+        }
+      } else {
+        toast.info("No more historical data available");
       }
-
-      // Update current price and price change
-      if (historicalData.length > 0) {
-        const lastCandle = historicalData[historicalData.length - 1];
-        const firstCandle = historicalData[0];
-        const normalizedLastClose = normalizePrice(lastCandle.close);
-        setCurrentPrice(normalizedLastClose);
-
-        // Calculate price change percentage
-        const normalizedFirstOpen = normalizePrice(firstCandle.open);
-        const priceChange =
-          ((normalizedLastClose - normalizedFirstOpen) / normalizedFirstOpen) *
-          100;
-        setPriceChange(priceChange);
-      }
-
-      // Fit content to view
-      if (chartRef.current) {
-        chartRef.current.timeScale().fitContent();
-      }
-
-      setHistoricalDataLoaded(true);
-      console.log(
-        `PriceChart: Chart updated with historical data for ${normalizedSymbol}`
-      );
-    } catch (err) {
-      console.error(
-        `PriceChart: Error loading historical data for ${normalizedSymbol}:`,
-        err
-      );
-      setError(`Failed to load data for ${normalizedSymbol.toUpperCase()}`);
+    } catch (error) {
+      console.error("Error loading more historical data:", error);
+      toast.error("Failed to load more historical data");
     } finally {
-      setIsLoading(false);
-      // Short delay before removing the timeframe change overlay
-      setTimeout(() => {
-        setIsChangingTimeframe(false);
-      }, 300);
+      setIsLoadingMore(false);
     }
-  }, [normalizedSymbol, timeframe, useMockData, chartColors, normalizePrice]);
-
-  // Load historical data when symbol or timeframe changes
-  useEffect(() => {
-    setHistoricalDataLoaded(false);
-    loadHistoricalData();
-
-    // Mark the time of the timeframe change to debounce updates
-    setLastTimeframeChange(Date.now());
-  }, [normalizedSymbol, timeframe, loadHistoricalData]);
+  };
 
   // Update chart with real-time data from WebSocket
   useEffect(() => {
@@ -605,13 +710,6 @@ export function PriceChart({
       // Check if this is a new candle or an update to the current one
       const isNewCandle =
         !lastCandleRef.current || lastCandleRef.current.time !== candleTime;
-
-      // If we recently changed timeframes, make sure this update isn't stale
-      const timeSinceLastChange = Date.now() - lastTimeframeChange;
-      if (timeSinceLastChange < 1000 && !isNewCandle) {
-        // Skip updates right after timeframe change to avoid flicker
-        return;
-      }
 
       // Normalize price values
       const normalizedOpen = normalizePrice(latestCandle.open);
@@ -702,7 +800,6 @@ export function PriceChart({
     normalizePrice,
     isSubscribedToTimeframe,
     subscribeToCandles,
-    lastTimeframeChange,
   ]);
 
   // Handle timeframe change
@@ -851,78 +948,92 @@ export function PriceChart({
 
   return (
     <Card className={`overflow-hidden ${className}`}>
-      <CardHeader className="p-4 pb-0">
-        <div className="flex flex-col space-y-2">
-          <div className="flex justify-between items-center">
-            <div className="flex flex-col">
-              <CardTitle className="text-lg font-semibold">
+      <CardHeader className="p-0">
+        <div className="flex flex-col">
+          <div className="grid grid-cols-1 sm:grid-cols-3 items-center px-4 py-2 gap-2 border-b">
+            <div className="flex gap-2 items-center">
+              <h2 className="text-lg font-semibold whitespace-nowrap truncate">
                 {normalizedSymbol.toUpperCase()} Chart
-              </CardTitle>
-              {currentPrice !== null && (
-                <div className="flex items-center gap-2 mt-1">
-                  <span className="text-lg font-bold">
-                    {formatPrice(currentPrice)}
-                  </span>
-                  <span
-                    className={`text-xs font-medium ${
-                      priceChange >= 0 ? "text-green-500" : "text-red-500"
-                    }`}
-                  >
-                    {priceChange >= 0 ? "+" : ""}
-                    {priceChange.toFixed(2)}%
-                  </span>
-                </div>
+              </h2>
+              {isLoading && (
+                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
               )}
             </div>
+
             <Tabs
-              defaultValue={timeframe}
               value={timeframe}
+              defaultValue={timeframe}
+              className="w-full sm:w-auto justify-self-start sm:justify-self-center"
               onValueChange={handleTimeframeChange}
-              className="h-8"
             >
-              <TabsList className="h-8 bg-background/50">
-                <TabsTrigger
-                  value="1m"
-                  className="h-7 px-2 text-xs"
-                  disabled={isChangingTimeframe}
-                >
+              <TabsList className="grid grid-cols-7 max-w-xs h-8">
+                <TabsTrigger value="1m" className="text-xs h-6">
                   1m
                 </TabsTrigger>
-                <TabsTrigger
-                  value="5m"
-                  className="h-7 px-2 text-xs"
-                  disabled={isChangingTimeframe}
-                >
+                <TabsTrigger value="5m" className="text-xs h-6">
                   5m
                 </TabsTrigger>
-                <TabsTrigger
-                  value="15m"
-                  className="h-7 px-2 text-xs"
-                  disabled={isChangingTimeframe}
-                >
+                <TabsTrigger value="15m" className="text-xs h-6">
                   15m
                 </TabsTrigger>
-                <TabsTrigger
-                  value="1h"
-                  className="h-7 px-2 text-xs"
-                  disabled={isChangingTimeframe}
-                >
+                <TabsTrigger value="30m" className="text-xs h-6">
+                  30m
+                </TabsTrigger>
+                <TabsTrigger value="1h" className="text-xs h-6">
                   1h
                 </TabsTrigger>
-                <TabsTrigger
-                  value="1d"
-                  className="h-7 px-2 text-xs"
-                  disabled={isChangingTimeframe}
-                >
+                <TabsTrigger value="4h" className="text-xs h-6">
+                  4h
+                </TabsTrigger>
+                <TabsTrigger value="1d" className="text-xs h-6">
                   1d
                 </TabsTrigger>
               </TabsList>
             </Tabs>
+
+            <div className="flex flex-row-reverse justify-between sm:justify-end gap-4 text-xs text-muted-foreground items-center">
+              <div className="flex items-center gap-1">
+                <span>{currentPrice ? formatPrice(currentPrice) : "-"}</span>
+                <span
+                  className={`flex items-center ${
+                    priceChange >= 0 ? "text-green-500" : "text-red-500"
+                  }`}
+                >
+                  {priceChange >= 0 ? "+" : ""}
+                  {priceChange.toFixed(2)}%
+                </span>
+              </div>
+
+              {/* Add historical data stats and load more button */}
+              <div className="flex items-center gap-2">
+                {totalCandleCount > 0 && candleSeries.current && (
+                  <span className="text-xs text-muted-foreground whitespace-nowrap">
+                    {(
+                      candleSeries.current.data() as CandlestickData<UTCTimestamp>[]
+                    )?.length || 0}
+                    /{totalCandleCount} candles
+                  </span>
+                )}
+                {!isLoading && dataPageCount > 0 && !useMockData && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-6 text-xs px-2"
+                    onClick={loadMoreHistoricalData}
+                    disabled={isLoadingMore}
+                  >
+                    {isLoadingMore ? (
+                      <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                    ) : null}
+                    Load More
+                  </Button>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       </CardHeader>
-
-      <CardContent className="p-0 pt-0 relative">
+      <CardContent className="p-0">
         {/* Floating Buy/Sell bar */}
         <div className="absolute top-4 left-4 z-10 flex rounded-md overflow-hidden border border-border shadow-md">
           <Button
@@ -996,7 +1107,7 @@ export function PriceChart({
               <AlertCircle className="h-8 w-8 text-destructive" />
               <p className="text-sm text-destructive">{error}</p>
               <button
-                onClick={() => loadHistoricalData()}
+                onClick={() => loadMoreHistoricalData()}
                 className="text-xs text-primary hover:underline mt-2"
               >
                 Retry
