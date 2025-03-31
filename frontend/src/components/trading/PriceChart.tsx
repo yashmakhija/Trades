@@ -394,123 +394,165 @@ export function PriceChart({
     };
   }, [initializeChart]);
 
+  // Add this helper function at the top level of the component
+  const deduplicateCandles = (candles: CandleData[]): CandleData[] => {
+    // Create a map to store the latest candle for each timestamp
+    const candleMap = new Map<number, CandleData>();
+
+    candles.forEach((candle) => {
+      const timestamp =
+        typeof candle.time === "string"
+          ? Math.floor(new Date(candle.time).getTime() / 1000)
+          : candle.time;
+
+      // Only keep the latest candle for each timestamp
+      candleMap.set(timestamp, candle);
+    });
+
+    // Convert map values back to array and sort by timestamp
+    return Array.from(candleMap.values()).sort((a, b) => {
+      const timeA =
+        typeof a.time === "string"
+          ? Math.floor(new Date(a.time).getTime() / 1000)
+          : a.time;
+      const timeB =
+        typeof b.time === "string"
+          ? Math.floor(new Date(b.time).getTime() / 1000)
+          : b.time;
+      return timeA - timeB;
+    });
+  };
+
+  // Update the loadData function
+  const loadData = async () => {
+    setIsLoading(true);
+    setError(null);
+    setDataPageCount(0);
+
+    try {
+      console.log(
+        `PriceChart: Fetching historical candles for ${normalizedSymbol}:${timeframe}`
+      );
+
+      let data: CandleData[];
+      if (useMockData) {
+        console.log("PriceChart: Using mock data...");
+        data = generateMockHistoricalData(
+          normalizedSymbol.includes("btc") ? 45000 : 2000,
+          100
+        );
+      } else {
+        // Get count first to know how much data is available
+        const count = await getCandleCount(normalizedSymbol, timeframe);
+        setTotalCandleCount(count);
+        console.log(`PriceChart: Total available candles: ${count}`);
+
+        // Load initial data with a reasonable limit
+        const initialLimit = Math.min(1000, count);
+        data = await fetchHistoricalData(
+          normalizedSymbol,
+          timeframe,
+          initialLimit,
+          undefined,
+          undefined,
+          0,
+          false
+        );
+
+        setDataPageCount(1);
+      }
+
+      if (data && data.length > 0) {
+        console.log(
+          `PriceChart: Loaded ${data.length} historical candles for ${normalizedSymbol}:${timeframe}`
+        );
+
+        // Deduplicate candles with the same timestamp
+        const uniqueData = deduplicateCandles(data);
+        console.log(
+          `PriceChart: Deduplicated to ${uniqueData.length} unique candles`
+        );
+
+        // Convert to the correct type for the chart library
+        const chartData = uniqueData.map((candle) => ({
+          time: (typeof candle.time === "string"
+            ? Math.floor(new Date(candle.time).getTime() / 1000)
+            : candle.time) as UTCTimestamp,
+          open: candle.open,
+          high: candle.high,
+          low: candle.low,
+          close: candle.close,
+          volume: candle.volume,
+        }));
+
+        // Sort data by timestamp to ensure correct order
+        chartData.sort((a, b) => (a.time as number) - (b.time as number));
+
+        if (candleSeries.current) {
+          candleSeries.current.setData(chartData);
+        }
+
+        // Update volume series
+        if (volumeSeries.current) {
+          const volumeData = chartData.map((item) => ({
+            time: item.time,
+            value: item.volume,
+            color:
+              item.close >= item.open
+                ? chartColors.volumeUp
+                : chartColors.volumeDown,
+          }));
+          volumeSeries.current.setData(volumeData);
+        }
+
+        // Set the last candle reference
+        lastCandleRef.current = {
+          time: chartData[chartData.length - 1].time,
+          data: {
+            open: chartData[chartData.length - 1].open,
+            high: chartData[chartData.length - 1].high,
+            low: chartData[chartData.length - 1].low,
+            close: chartData[chartData.length - 1].close,
+          },
+        };
+
+        // Update current price and price change
+        setCurrentPrice(uniqueData[uniqueData.length - 1].close);
+        if (uniqueData.length > 1) {
+          const first = uniqueData[0].open;
+          const last = uniqueData[uniqueData.length - 1].close;
+          const change = ((last - first) / first) * 100;
+          setPriceChange(change);
+        }
+
+        setHistoricalDataLoaded(true);
+
+        // Fit content to view after data is loaded
+        if (chartRef.current) {
+          chartRef.current.timeScale().fitContent();
+        }
+      } else {
+        console.warn(
+          `PriceChart: No historical candles received for ${normalizedSymbol}:${timeframe}`
+        );
+        setError("No historical data available");
+      }
+    } catch (err) {
+      console.error(
+        `PriceChart: Error loading historical data for ${normalizedSymbol}:${timeframe}:`,
+        err
+      );
+      setError("Failed to load historical data");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // Load initial historical data
   useEffect(() => {
     if (!chartRef.current || !candleSeries.current || !normalizedSymbol) {
       return;
     }
-
-    const loadData = async () => {
-      setIsLoading(true);
-      setError(null);
-      setDataPageCount(0);
-
-      try {
-        console.log(
-          `PriceChart: Fetching historical candles for ${normalizedSymbol}:${timeframe}`
-        );
-
-        let data: CandleData[];
-        if (useMockData) {
-          console.log("PriceChart: Using mock data...");
-          data = generateMockHistoricalData(
-            normalizedSymbol.includes("btc") ? 45000 : 2000,
-            100
-          );
-        } else {
-          // Get count first to know how much data is available
-          const count = await getCandleCount(normalizedSymbol, timeframe);
-          setTotalCandleCount(count);
-          console.log(`PriceChart: Total available candles: ${count}`);
-
-          // Determine how much data to load initially (always load first page)
-          const initialLimit = Math.min(1000, count);
-
-          // Load the data with pagination
-          data = await fetchHistoricalData(
-            normalizedSymbol,
-            timeframe,
-            initialLimit,
-            undefined,
-            undefined,
-            0,
-            false // Don't load all available data yet
-          );
-
-          setDataPageCount(1); // We've loaded the first page
-        }
-
-        if (data && data.length > 0) {
-          console.log(
-            `PriceChart: Loaded ${data.length} historical candles for ${normalizedSymbol}:${timeframe}`
-          );
-
-          // Convert to the correct type for the chart library
-          const chartData = data.map((candle) => ({
-            time: candle.time as UTCTimestamp,
-            open: candle.open,
-            high: candle.high,
-            low: candle.low,
-            close: candle.close,
-            volume: candle.volume,
-          }));
-
-          if (candleSeries.current) {
-            candleSeries.current.setData(chartData);
-          }
-
-          // Update volume series if it exists
-          if (volumeSeries.current) {
-            const volumeData = chartData.map((item) => ({
-              time: item.time,
-              value: (item as unknown as { volume: number }).volume,
-              color:
-                item.close >= item.open
-                  ? chartColors.volumeUp
-                  : chartColors.volumeDown,
-            }));
-            volumeSeries.current.setData(volumeData);
-          }
-
-          // Set the last candle reference
-          lastCandleRef.current = {
-            time: chartData[chartData.length - 1].time,
-            data: {
-              open: chartData[chartData.length - 1].open,
-              high: chartData[chartData.length - 1].high,
-              low: chartData[chartData.length - 1].low,
-              close: chartData[chartData.length - 1].close,
-            },
-          };
-
-          // Set current price display
-          setCurrentPrice(data[data.length - 1].close);
-
-          // Calculate price change
-          if (data.length > 1) {
-            const first = data[0].open;
-            const last = data[data.length - 1].close;
-            const change = ((last - first) / first) * 100;
-            setPriceChange(change);
-          }
-
-          setHistoricalDataLoaded(true);
-        } else {
-          console.warn(
-            `PriceChart: No historical candles received for ${normalizedSymbol}:${timeframe}`
-          );
-          setError("No historical data available");
-        }
-      } catch (err) {
-        console.error(
-          `PriceChart: Error loading historical data for ${normalizedSymbol}:${timeframe}:`,
-          err
-        );
-        setError("Failed to load historical data");
-      } finally {
-        setIsLoading(false);
-      }
-    };
 
     loadData();
   }, [normalizedSymbol, timeframe, chartColors, useMockData]);
@@ -528,7 +570,6 @@ export function PriceChart({
         `PriceChart: Loading more historical data (page ${dataPageCount})`
       );
 
-      // Get the current data from the chart
       const currentData =
         candleSeries.current.data() as CandlestickData<UTCTimestamp>[];
 
@@ -537,7 +578,7 @@ export function PriceChart({
         return;
       }
 
-      // Find the earliest timestamp to use as the end time for the next page
+      // Find the earliest timestamp
       const earliestTime = Math.min(
         ...currentData.map((candle) =>
           typeof candle.time === "number"
@@ -545,25 +586,30 @@ export function PriceChart({
             : (candle.time as UTCTimestamp).valueOf()
         )
       );
-      const endTime = new Date(earliestTime * 1000); // Convert to milliseconds
+      const endTime = new Date(earliestTime * 1000);
 
       // Load the next page of data
       const moreData = await fetchHistoricalData(
         normalizedSymbol,
         timeframe,
-        1000, // Standard limit per page
-        undefined, // No start time (get earliest data)
-        endTime, // End time is the earliest we have
-        dataPageCount // Use current page count
+        1000,
+        undefined,
+        endTime,
+        dataPageCount
       );
 
-      console.log(`PriceChart: Loaded ${moreData.length} additional candles`);
-
-      // Add new data to the chart
       if (moreData.length > 0) {
-        // Convert to the correct type for chart library
-        const chartData = moreData.map((candle) => ({
-          time: candle.time as UTCTimestamp,
+        // Deduplicate new data
+        const uniqueMoreData = deduplicateCandles(moreData);
+        console.log(
+          `PriceChart: Deduplicated to ${uniqueMoreData.length} unique candles`
+        );
+
+        // Convert to chart data format
+        const chartData = uniqueMoreData.map((candle) => ({
+          time: (typeof candle.time === "string"
+            ? Math.floor(new Date(candle.time).getTime() / 1000)
+            : candle.time) as UTCTimestamp,
           open: candle.open,
           high: candle.high,
           low: candle.low,
@@ -571,7 +617,10 @@ export function PriceChart({
           volume: candle.volume,
         }));
 
-        // Get existing times for duplicate detection
+        // Sort data by timestamp
+        chartData.sort((a, b) => (a.time as number) - (b.time as number));
+
+        // Get existing timestamps for duplicate detection
         const existingTimestamps = new Set(
           currentData.map((candle) =>
             typeof candle.time === "number"
@@ -580,7 +629,7 @@ export function PriceChart({
           )
         );
 
-        // Filter out any duplicates
+        // Filter out duplicates
         const newCandles = chartData.filter(
           (candle) =>
             !existingTimestamps.has(
@@ -591,7 +640,7 @@ export function PriceChart({
         );
 
         if (newCandles.length > 0) {
-          // Update the chart with all data (LightweightCharts requires setting all data at once)
+          // Combine and sort all data
           const combinedData = [...currentData, ...newCandles].sort((a, b) => {
             const timeA =
               typeof a.time === "number"
@@ -604,11 +653,12 @@ export function PriceChart({
             return timeA - timeB;
           });
 
+          // Update chart data
           if (candleSeries.current) {
             candleSeries.current.setData(combinedData);
           }
 
-          // Update volume series if it exists
+          // Update volume data
           if (volumeSeries.current) {
             const volumeData = combinedData.map((item) => ({
               time: item.time,
@@ -621,9 +671,7 @@ export function PriceChart({
             volumeSeries.current.setData(volumeData);
           }
 
-          // Increment the page count
           setDataPageCount((prev) => prev + 1);
-
           toast.success(`Loaded ${newCandles.length} more historical candles`);
         } else {
           toast.info("No more historical data available");
@@ -649,7 +697,6 @@ export function PriceChart({
       return;
     }
 
-    // Check if we're subscribed to the current timeframe
     if (!isSubscribedToTimeframe(normalizedSymbol, timeframe)) {
       console.log(
         `PriceChart: Not subscribed to ${normalizedSymbol}:${timeframe}, subscribing now`
@@ -678,28 +725,13 @@ export function PriceChart({
         return;
       }
 
-      // Ensure time is in the correct format (seconds since epoch)
-      let candleTime: UTCTimestamp;
+      // Convert time to UTC timestamp
+      const candleTime = (
+        typeof latestCandle.time === "string"
+          ? Math.floor(new Date(latestCandle.time).getTime() / 1000)
+          : latestCandle.time
+      ) as UTCTimestamp;
 
-      // Convert time to a proper timestamp number
-      if (typeof latestCandle.time === "string") {
-        candleTime = Math.floor(
-          new Date(latestCandle.time).getTime() / 1000
-        ) as UTCTimestamp;
-      } else if (
-        typeof latestCandle.time === "number" &&
-        latestCandle.time > 10000000000
-      ) {
-        // If timestamp is in milliseconds, convert to seconds
-        candleTime = Math.floor(latestCandle.time / 1000) as UTCTimestamp;
-      } else if (typeof latestCandle.time === "number") {
-        candleTime = latestCandle.time as UTCTimestamp;
-      } else {
-        console.warn("Invalid time format:", latestCandle.time);
-        return;
-      }
-
-      // Make sure we have valid data before updating
       if (typeof candleTime !== "number" || isNaN(candleTime)) {
         console.warn(
           `PriceChart: Invalid candle time: ${candleTime}, skipping update`
@@ -711,79 +743,52 @@ export function PriceChart({
       const isNewCandle =
         !lastCandleRef.current || lastCandleRef.current.time !== candleTime;
 
-      // Normalize price values
-      const normalizedOpen = normalizePrice(latestCandle.open);
-      const normalizedHigh = normalizePrice(latestCandle.high);
-      const normalizedLow = normalizePrice(latestCandle.low);
-      const normalizedClose = normalizePrice(latestCandle.close);
-
-      // Log the update for debugging
-      if (isNewCandle) {
-        console.log(
-          `PriceChart: New candle for ${normalizedSymbol}:${timeframe}`,
-          {
-            time: candleTime,
-            open: normalizedOpen,
-            high: normalizedHigh,
-            low: normalizedLow,
-            close: normalizedClose,
-          }
-        );
-      }
-
-      try {
-        // Update the candle data
+      // Update the candle data
+      if (candleSeries.current) {
         candleSeries.current.update({
           time: candleTime,
-          open: normalizedOpen,
-          high: normalizedHigh,
-          low: normalizedLow,
-          close: normalizedClose,
+          open: latestCandle.open,
+          high: latestCandle.high,
+          low: latestCandle.low,
+          close: latestCandle.close,
         });
+      }
 
-        // Update the volume data
+      // Update the volume data
+      if (volumeSeries.current) {
         volumeSeries.current.update({
           time: candleTime,
           value: latestCandle.volume,
           color:
-            normalizedClose >= normalizedOpen
+            latestCandle.close >= latestCandle.open
               ? chartColors.volumeUp
               : chartColors.volumeDown,
         });
+      }
 
-        // Store the last candle for reference
-        lastCandleRef.current = {
-          time: candleTime,
-          data: {
-            open: normalizedOpen,
-            high: normalizedHigh,
-            low: normalizedLow,
-            close: normalizedClose,
-          },
-        };
+      // Store the last candle reference
+      lastCandleRef.current = {
+        time: candleTime,
+        data: {
+          open: latestCandle.open,
+          high: latestCandle.high,
+          low: latestCandle.low,
+          close: latestCandle.close,
+        },
+      };
 
-        // Update current price
-        setCurrentPrice(normalizedClose);
+      // Update current price and price change
+      setCurrentPrice(latestCandle.close);
+      if (timeframeData.length > 1) {
+        const firstCandle = timeframeData[0];
+        const priceChange =
+          ((latestCandle.close - firstCandle.open) / firstCandle.open) * 100;
+        setPriceChange(priceChange);
+      }
 
-        // Update price change if we have historical data
-        if (timeframeData.length > 1) {
-          const firstCandle = timeframeData[0];
-          const normalizedFirstOpen = normalizePrice(firstCandle.open);
-          const priceChange =
-            ((normalizedClose - normalizedFirstOpen) / normalizedFirstOpen) *
-            100;
-          setPriceChange(priceChange);
-        }
-
-        // If it's a new candle, fit content to view
-        if (isNewCandle && chartRef.current) {
-          chartRef.current.timeScale().scrollToRealTime();
-        }
-      } catch (error) {
-        console.error(
-          `PriceChart: Error updating chart with real-time data:`,
-          error
-        );
+      // If it's a new candle, scroll to real-time
+      if (isNewCandle && chartRef.current) {
+        chartRef.current.timeScale().scrollToRealTime();
       }
     } catch (error) {
       console.error(
@@ -797,7 +802,6 @@ export function PriceChart({
     timeframe,
     historicalDataLoaded,
     chartColors,
-    normalizePrice,
     isSubscribedToTimeframe,
     subscribeToCandles,
   ]);
