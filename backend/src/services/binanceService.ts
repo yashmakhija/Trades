@@ -15,6 +15,7 @@ import {
 import axios from "axios";
 import { orderManager } from "./orderManager";
 import { Timeframe } from "@prisma/client";
+import { redisService } from "./redisService";
 
 const tickerCache: Record<string, ProcessedTickerData> = {};
 
@@ -164,7 +165,6 @@ async function processKlineData(data: BinanceKlineMessage): Promise<void> {
     const symbolName = data.s.toLowerCase();
 
     // Extract the timeframe from the Binance kline data
-    // Format is like "1m", "5m", etc.
     const binanceTimeframe = kline.i;
     const timeframe = mapBinanceTimeframeToEnum(binanceTimeframe);
 
@@ -181,26 +181,46 @@ async function processKlineData(data: BinanceKlineMessage): Promise<void> {
     const close = Math.round(parseFloat(kline.c) * 100);
     const volume = Math.round(parseFloat(kline.v) * 100);
 
-    if (kline.x) {
-      const ohlcvData = await prisma.oHLCV.create({
-        data: {
-          symbolId: symbol.id,
-          open,
-          high,
-          low,
-          close,
-          volume,
-          time: new Date(kline.T),
-          timeframe: timeframe as Timeframe,
-        },
-      });
+    // Store the candle data
+    const ohlcvData = await prisma.oHLCV.create({
+      data: {
+        symbolId: symbol.id,
+        open,
+        high,
+        low,
+        close,
+        volume,
+        time: new Date(kline.T),
+        timeframe: timeframe as Timeframe,
+      },
+    });
 
+    // Update Redis cache
+    const candleData = {
+      time: new Date(kline.T).getTime(),
+      open,
+      high,
+      low,
+      close,
+      volume,
+    };
+
+    // Update latest candle in Redis
+    await redisService.updateLatestCandle(
+      symbolName,
+      timeframe as Timeframe,
+      candleData
+    );
+
+    // If this is a completed candle (kline.x is true), update the historical cache
+    if (kline.x) {
       console.log(
-        `Stored OHLCV data for ${symbolName} (${timeframe}) at ${new Date(
+        `Stored completed OHLCV data for ${symbolName} (${timeframe}) at ${new Date(
           kline.T
         ).toISOString()}`
       );
 
+      // Broadcast the completed candle
       broadcastOHLCVUpdate(symbolName, timeframe, {
         id: ohlcvData.id,
         symbol: symbolName,
@@ -211,6 +231,50 @@ async function processKlineData(data: BinanceKlineMessage): Promise<void> {
         volume: volume / 100,
         timestamp: new Date(kline.T).toISOString(),
       });
+
+      // Fetch and update historical data in Redis
+      const historicalCandles = await prisma.oHLCV.findMany({
+        where: {
+          symbolId: symbol.id,
+          timeframe: timeframe as Timeframe,
+          time: {
+            lte: new Date(kline.T),
+          },
+        },
+        orderBy: {
+          time: "asc",
+        },
+        select: {
+          time: true,
+          open: true,
+          high: true,
+          low: true,
+          close: true,
+          volume: true,
+        },
+      });
+
+      const formattedCandles = historicalCandles.map((candle) => ({
+        time: candle.time.getTime(),
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        volume: candle.volume,
+      }));
+
+      await redisService.cacheCandles(
+        symbolName,
+        timeframe as Timeframe,
+        formattedCandles
+      );
+    } else {
+      // For in-progress candles, just update the latest candle
+      console.log(
+        `Updated in-progress OHLCV data for ${symbolName} (${timeframe}) at ${new Date(
+          kline.T
+        ).toISOString()}`
+      );
     }
   } catch (error) {
     console.error("Error processing kline data:", error);

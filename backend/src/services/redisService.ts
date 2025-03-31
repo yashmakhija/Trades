@@ -1,6 +1,7 @@
 import Redis from "ioredis";
 import { Timeframe, OHLCV } from "@prisma/client";
 import { config } from "../config";
+import { prisma } from "../lib/prisma";
 
 interface CandleData {
   time: number;
@@ -14,6 +15,7 @@ interface CandleData {
 interface CacheStrategy {
   cacheTTL: number;
   maxCachedCandles: number;
+  historicalTTL: number; // TTL for historical data
 }
 
 class RedisService {
@@ -22,40 +24,49 @@ class RedisService {
     [Timeframe.ONE_MINUTE]: {
       cacheTTL: 60,
       maxCachedCandles: 1000,
+      historicalTTL: 86400 * 30, // 30 days
     },
     [Timeframe.FIVE_MINUTES]: {
       cacheTTL: 300,
       maxCachedCandles: 800,
+      historicalTTL: 86400 * 90, // 90 days
     },
     [Timeframe.TEN_MINUTES]: {
       cacheTTL: 600,
       maxCachedCandles: 700,
+      historicalTTL: 86400 * 180, // 180 days
     },
     [Timeframe.FIFTEEN_MINUTES]: {
       cacheTTL: 900,
       maxCachedCandles: 600,
+      historicalTTL: 86400 * 365, // 1 year
     },
     [Timeframe.THIRTY_MINUTES]: {
       cacheTTL: 1800,
       maxCachedCandles: 500,
+      historicalTTL: 86400 * 365 * 2, // 2 years
     },
     [Timeframe.ONE_HOUR]: {
       cacheTTL: 3600,
       maxCachedCandles: 400,
+      historicalTTL: 86400 * 365 * 5, // 5 years
     },
     [Timeframe.FOUR_HOURS]: {
       cacheTTL: 14400,
       maxCachedCandles: 300,
+      historicalTTL: 86400 * 365 * 10, // 10 years
     },
     [Timeframe.ONE_DAY]: {
       cacheTTL: 86400,
       maxCachedCandles: 200,
+      historicalTTL: 86400 * 365 * 20, // 20 years
     },
   };
 
   private readonly CANDLE_PREFIX = "candle:";
   private readonly AGGREGATE_PREFIX = "aggregate:";
   private readonly LATEST_PREFIX = "latest:";
+  private readonly HISTORICAL_PREFIX = "historical:";
 
   constructor() {
     this.redis = new Redis({
@@ -82,24 +93,84 @@ class RedisService {
     endTime?: number
   ): Promise<CandleData[] | null> {
     try {
+      const strategy = this.CACHE_STRATEGIES[timeframe];
       const key = this.getCandleKey(symbol, timeframe);
+      const historicalKey = this.getHistoricalKey(symbol, timeframe);
+
+      // Try to get from cache first
       const cached = await this.redis.get(key);
-
-      if (!cached) return null;
-
-      const candles: CandleData[] = JSON.parse(cached);
-
-      if (startTime || endTime) {
-        return candles.filter((candle) => {
-          if (startTime && candle.time < startTime) return false;
-          if (endTime && candle.time > endTime) return false;
-          return true;
-        });
+      if (cached) {
+        const candles: CandleData[] = JSON.parse(cached);
+        return this.filterCandlesByTimeRange(candles, startTime, endTime);
       }
 
-      return candles;
+      // If not in cache, try to get from historical data
+      const historical = await this.redis.get(historicalKey);
+      if (historical) {
+        const candles: CandleData[] = JSON.parse(historical);
+        return this.filterCandlesByTimeRange(candles, startTime, endTime);
+      }
+
+      // If not in Redis, fetch from database
+      const dbCandles = await this.fetchCandlesFromDB(
+        symbol,
+        timeframe,
+        startTime,
+        endTime
+      );
+      if (dbCandles) {
+        await this.cacheCandles(symbol, timeframe, dbCandles);
+      }
+
+      return dbCandles;
     } catch (error) {
       console.error("Error getting cached candles:", error);
+      return null;
+    }
+  }
+
+  private async fetchCandlesFromDB(
+    symbol: string,
+    timeframe: Timeframe,
+    startTime?: number,
+    endTime?: number
+  ): Promise<CandleData[] | null> {
+    try {
+      const where: any = {
+        symbol: { name: symbol.toLowerCase() },
+        timeframe,
+      };
+
+      if (startTime) {
+        where.time = { gte: new Date(startTime) };
+      }
+      if (endTime) {
+        where.time = { ...where.time, lte: new Date(endTime) };
+      }
+
+      const candles = await prisma.oHLCV.findMany({
+        where,
+        orderBy: { time: "asc" },
+        select: {
+          time: true,
+          open: true,
+          high: true,
+          low: true,
+          close: true,
+          volume: true,
+        },
+      });
+
+      return candles.map((candle) => ({
+        time: candle.time.getTime(),
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        volume: candle.volume,
+      }));
+    } catch (error) {
+      console.error("Error fetching candles from DB:", error);
       return null;
     }
   }
@@ -112,14 +183,34 @@ class RedisService {
     try {
       const strategy = this.CACHE_STRATEGIES[timeframe];
       const key = this.getCandleKey(symbol, timeframe);
+      const historicalKey = this.getHistoricalKey(symbol, timeframe);
 
-      const limitedCandles = candles.slice(-strategy.maxCachedCandles);
-
-      await this.redis.setex(
-        key,
-        strategy.cacheTTL,
-        JSON.stringify(limitedCandles)
+      // Split candles into recent and historical
+      const now = Date.now();
+      const recentCandles = candles.filter(
+        (c) => c.time > now - strategy.cacheTTL * 1000
       );
+      const historicalCandles = candles.filter(
+        (c) => c.time <= now - strategy.cacheTTL * 1000
+      );
+
+      // Cache recent candles with short TTL
+      if (recentCandles.length > 0) {
+        await this.redis.setex(
+          key,
+          strategy.cacheTTL,
+          JSON.stringify(recentCandles.slice(-strategy.maxCachedCandles))
+        );
+      }
+
+      // Cache historical candles with longer TTL
+      if (historicalCandles.length > 0) {
+        await this.redis.setex(
+          historicalKey,
+          strategy.historicalTTL,
+          JSON.stringify(historicalCandles)
+        );
+      }
     } catch (error) {
       console.error("Error caching candles:", error);
     }
@@ -236,8 +327,24 @@ class RedisService {
     }
   }
 
+  private filterCandlesByTimeRange(
+    candles: CandleData[],
+    startTime?: number,
+    endTime?: number
+  ): CandleData[] {
+    return candles.filter((candle) => {
+      if (startTime && candle.time < startTime) return false;
+      if (endTime && candle.time > endTime) return false;
+      return true;
+    });
+  }
+
   private getCandleKey(symbol: string, timeframe: Timeframe): string {
     return `${this.CANDLE_PREFIX}${symbol}:${timeframe}`;
+  }
+
+  private getHistoricalKey(symbol: string, timeframe: Timeframe): string {
+    return `${this.HISTORICAL_PREFIX}${symbol}:${timeframe}`;
   }
 
   private getLatestKey(symbol: string, timeframe: Timeframe): string {
