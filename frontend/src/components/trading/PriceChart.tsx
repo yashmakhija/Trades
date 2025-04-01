@@ -396,7 +396,7 @@ export function PriceChart({
 
   // Add this helper function at the top level of the component
   const deduplicateCandles = (candles: CandleData[]): CandleData[] => {
-    // Create a map to store the latest candle for each timestamp
+    // Create a map to store aggregated candles for each timestamp
     const candleMap = new Map<number, CandleData>();
 
     candles.forEach((candle) => {
@@ -405,8 +405,21 @@ export function PriceChart({
           ? Math.floor(new Date(candle.time).getTime() / 1000)
           : candle.time;
 
-      // Only keep the latest candle for each timestamp
-      candleMap.set(timestamp, candle);
+      const existingCandle = candleMap.get(timestamp);
+
+      if (existingCandle) {
+        // Aggregate candles with the same timestamp
+        existingCandle.high = Math.max(existingCandle.high, candle.high);
+        existingCandle.low = Math.min(existingCandle.low, candle.low);
+        existingCandle.close = candle.close; // Use the latest close price
+        existingCandle.volume += candle.volume; // Sum the volumes
+      } else {
+        // Create a new candle entry
+        candleMap.set(timestamp, {
+          ...candle,
+          time: timestamp,
+        });
+      }
     });
 
     // Convert map values back to array and sort by timestamp

@@ -282,19 +282,50 @@ class CandleService {
         throw new Error(`Symbol ${symbol} not found`);
       }
 
-      // Store the candle in TimescaleDB
-      const candle = await prisma.oHLCV.create({
-        data: {
+      // Check for existing candle with the same timestamp
+      const existingCandle = await prisma.oHLCV.findFirst({
+        where: {
           symbolId: symbolRecord.id,
-          open,
-          high,
-          low,
-          close,
-          volume,
           timeframe,
-          time,
+          time: {
+            gte: new Date(time.getTime() - 1000), // Within 1 second
+            lte: new Date(time.getTime() + 1000),
+          },
         },
       });
+
+      let candle: OHLCV;
+      if (existingCandle) {
+        // Update existing candle with aggregated values
+        candle = await prisma.oHLCV.update({
+          where: {
+            id_time: {
+              id: existingCandle.id,
+              time: existingCandle.time,
+            },
+          },
+          data: {
+            high: Math.max(existingCandle.high, high),
+            low: Math.min(existingCandle.low, low),
+            close: close,
+            volume: existingCandle.volume + volume,
+          },
+        });
+      } else {
+        // Create new candle
+        candle = await prisma.oHLCV.create({
+          data: {
+            symbolId: symbolRecord.id,
+            open,
+            high,
+            low,
+            close,
+            volume,
+            timeframe,
+            time,
+          },
+        });
+      }
 
       // Update Redis cache
       await this.updateRedisCache(symbol, timeframe, candle);
