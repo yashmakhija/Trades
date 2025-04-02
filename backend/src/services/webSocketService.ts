@@ -952,6 +952,48 @@ class WebSocketService {
 
     console.log(`Broadcasting ${timeframe} candle update for ${symbol}`);
 
+    // Round timestamp based on timeframe
+    const time = new Date(data.timestamp || data.time);
+    const minutes = time.getMinutes();
+    const hours = time.getHours();
+    const days = time.getDate();
+
+    switch (timeframe) {
+      case "1m":
+        time.setSeconds(0, 0);
+        break;
+      case "5m":
+        time.setMinutes(Math.floor(minutes / 5) * 5);
+        time.setSeconds(0, 0);
+        break;
+      case "10m":
+        time.setMinutes(Math.floor(minutes / 10) * 10);
+        time.setSeconds(0, 0);
+        break;
+      case "15m":
+        time.setMinutes(Math.floor(minutes / 15) * 15);
+        time.setSeconds(0, 0);
+        break;
+      case "30m":
+        time.setMinutes(Math.floor(minutes / 30) * 30);
+        time.setSeconds(0, 0);
+        break;
+      case "1h":
+        time.setMinutes(0);
+        time.setSeconds(0, 0);
+        break;
+      case "4h":
+        time.setHours(Math.floor(hours / 4) * 4);
+        time.setMinutes(0);
+        time.setSeconds(0, 0);
+        break;
+      case "1d":
+        time.setHours(0);
+        time.setMinutes(0);
+        time.setSeconds(0, 0);
+        break;
+    }
+
     // Format candle data for client consumption if needed
     const formattedData = {
       ...data,
@@ -961,11 +1003,8 @@ class WebSocketService {
       ...(data.low && { low: data.low / 100 }),
       ...(data.close && { close: data.close / 100 }),
       ...(data.volume && { volume: data.volume / 100 }),
-      // Convert timestamp to Unix timestamp in seconds if it's a Date
-      ...(data.time &&
-        data.time instanceof Date && {
-          time: Math.floor(data.time.getTime() / 1000),
-        }),
+      // Convert timestamp to Unix timestamp in seconds
+      time: Math.floor(time.getTime() / 1000),
     };
 
     // Update balance manager with new price if it's the latest candle

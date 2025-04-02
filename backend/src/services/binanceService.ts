@@ -16,6 +16,7 @@ import axios from "axios";
 import { orderManager } from "./orderManager";
 import { Timeframe } from "@prisma/client";
 import { redisService } from "./redisService";
+import { candleService } from "./candleService";
 
 const tickerCache: Record<string, ProcessedTickerData> = {};
 
@@ -181,19 +182,17 @@ async function processKlineData(data: BinanceKlineMessage): Promise<void> {
     const close = Math.round(parseFloat(kline.c) * 100);
     const volume = Math.round(parseFloat(kline.v) * 100);
 
-    // Store the candle data
-    const ohlcvData = await prisma.oHLCV.create({
-      data: {
-        symbolId: symbol.id,
-        open,
-        high,
-        low,
-        close,
-        volume,
-        time: new Date(kline.T),
-        timeframe: timeframe as Timeframe,
-      },
-    });
+    // Store the candle data using CandleService
+    const ohlcvData = await candleService.storeCandle(
+      symbolName,
+      open,
+      high,
+      low,
+      close,
+      volume,
+      timeframe as Timeframe,
+      new Date(kline.T)
+    );
 
     // Update Redis cache
     const candleData = {

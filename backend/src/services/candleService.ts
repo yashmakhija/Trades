@@ -282,15 +282,55 @@ class CandleService {
         throw new Error(`Symbol ${symbol} not found`);
       }
 
-      // Check for existing candle with the same timestamp
+      // Round the time to the nearest minute for 1m timeframe
+      // For other timeframes, round to the appropriate interval
+      const roundedTime = new Date(time);
+      const minutes = roundedTime.getMinutes();
+      const hours = roundedTime.getHours();
+      const days = roundedTime.getDate();
+
+      switch (timeframe) {
+        case Timeframe.ONE_MINUTE:
+          roundedTime.setSeconds(0, 0);
+          break;
+        case Timeframe.FIVE_MINUTES:
+          roundedTime.setMinutes(Math.floor(minutes / 5) * 5);
+          roundedTime.setSeconds(0, 0);
+          break;
+        case Timeframe.TEN_MINUTES:
+          roundedTime.setMinutes(Math.floor(minutes / 10) * 10);
+          roundedTime.setSeconds(0, 0);
+          break;
+        case Timeframe.FIFTEEN_MINUTES:
+          roundedTime.setMinutes(Math.floor(minutes / 15) * 15);
+          roundedTime.setSeconds(0, 0);
+          break;
+        case Timeframe.THIRTY_MINUTES:
+          roundedTime.setMinutes(Math.floor(minutes / 30) * 30);
+          roundedTime.setSeconds(0, 0);
+          break;
+        case Timeframe.ONE_HOUR:
+          roundedTime.setMinutes(0);
+          roundedTime.setSeconds(0, 0);
+          break;
+        case Timeframe.FOUR_HOURS:
+          roundedTime.setHours(Math.floor(hours / 4) * 4);
+          roundedTime.setMinutes(0);
+          roundedTime.setSeconds(0, 0);
+          break;
+        case Timeframe.ONE_DAY:
+          roundedTime.setHours(0);
+          roundedTime.setMinutes(0);
+          roundedTime.setSeconds(0, 0);
+          break;
+      }
+
+      // Check for existing candle with the same rounded timestamp
       const existingCandle = await prisma.oHLCV.findFirst({
         where: {
           symbolId: symbolRecord.id,
           timeframe,
-          time: {
-            gte: new Date(time.getTime() - 1000), // Within 1 second
-            lte: new Date(time.getTime() + 1000),
-          },
+          time: roundedTime,
         },
       });
 
@@ -312,7 +352,7 @@ class CandleService {
           },
         });
       } else {
-        // Create new candle
+        // Create new candle with rounded time
         candle = await prisma.oHLCV.create({
           data: {
             symbolId: symbolRecord.id,
@@ -322,7 +362,7 @@ class CandleService {
             close,
             volume,
             timeframe,
-            time,
+            time: roundedTime,
           },
         });
       }

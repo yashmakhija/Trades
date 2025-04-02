@@ -185,12 +185,82 @@ class RedisService {
       const key = this.getCandleKey(symbol, timeframe);
       const historicalKey = this.getHistoricalKey(symbol, timeframe);
 
+      // Round timestamps based on timeframe
+      const roundedCandles = candles.map((candle) => {
+        const time = new Date(candle.time);
+        const minutes = time.getMinutes();
+        const hours = time.getHours();
+        const days = time.getDate();
+
+        switch (timeframe) {
+          case Timeframe.ONE_MINUTE:
+            time.setSeconds(0, 0);
+            break;
+          case Timeframe.FIVE_MINUTES:
+            time.setMinutes(Math.floor(minutes / 5) * 5);
+            time.setSeconds(0, 0);
+            break;
+          case Timeframe.TEN_MINUTES:
+            time.setMinutes(Math.floor(minutes / 10) * 10);
+            time.setSeconds(0, 0);
+            break;
+          case Timeframe.FIFTEEN_MINUTES:
+            time.setMinutes(Math.floor(minutes / 15) * 15);
+            time.setSeconds(0, 0);
+            break;
+          case Timeframe.THIRTY_MINUTES:
+            time.setMinutes(Math.floor(minutes / 30) * 30);
+            time.setSeconds(0, 0);
+            break;
+          case Timeframe.ONE_HOUR:
+            time.setMinutes(0);
+            time.setSeconds(0, 0);
+            break;
+          case Timeframe.FOUR_HOURS:
+            time.setHours(Math.floor(hours / 4) * 4);
+            time.setMinutes(0);
+            time.setSeconds(0, 0);
+            break;
+          case Timeframe.ONE_DAY:
+            time.setHours(0);
+            time.setMinutes(0);
+            time.setSeconds(0, 0);
+            break;
+        }
+
+        return {
+          ...candle,
+          time: time.getTime(),
+        };
+      });
+
+      // Remove duplicates based on rounded timestamps
+      const uniqueCandles = roundedCandles.reduce((acc, candle) => {
+        const existingIndex = acc.findIndex((c) => c.time === candle.time);
+        if (existingIndex === -1) {
+          acc.push(candle);
+        } else {
+          // Update existing candle with aggregated values
+          acc[existingIndex] = {
+            ...acc[existingIndex],
+            high: Math.max(acc[existingIndex].high, candle.high),
+            low: Math.min(acc[existingIndex].low, candle.low),
+            close: candle.close,
+            volume: acc[existingIndex].volume + candle.volume,
+          };
+        }
+        return acc;
+      }, [] as CandleData[]);
+
+      // Sort by time
+      uniqueCandles.sort((a, b) => a.time - b.time);
+
       // Split candles into recent and historical
       const now = Date.now();
-      const recentCandles = candles.filter(
+      const recentCandles = uniqueCandles.filter(
         (c) => c.time > now - strategy.cacheTTL * 1000
       );
-      const historicalCandles = candles.filter(
+      const historicalCandles = uniqueCandles.filter(
         (c) => c.time <= now - strategy.cacheTTL * 1000
       );
 
