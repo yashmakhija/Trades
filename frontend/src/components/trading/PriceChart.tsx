@@ -214,12 +214,6 @@ export function PriceChart({
     }
   }, []);
 
-  // Update the normalizePrice function to properly handle different cryptocurrency price scales
-  const normalizePrice = useCallback((price: number): number => {
-    // Just return the original price without any conversion
-    return price;
-  }, []);
-
   // Initialize chart
   const initializeChart = useCallback(() => {
     if (!chartContainerRef.current) return;
@@ -965,48 +959,42 @@ export function PriceChart({
 
   return (
     <Card className={`overflow-hidden ${className}`}>
-      <CardHeader className="p-0">
-        <div className="flex flex-col">
-          <div className="grid grid-cols-1 sm:grid-cols-3 items-center px-4 py-2 gap-2 border-b">
-            <div className="flex gap-2 items-center">
-              <h2 className="text-lg font-semibold whitespace-nowrap truncate">
-                {normalizedSymbol.toUpperCase()} Chart
+      <CardHeader className="p-4 pb-0">
+        <div className="flex flex-col space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <h2 className="text-lg font-semibold">
+                {normalizedSymbol.toUpperCase()}
               </h2>
-              {isLoading && (
-                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-              )}
+              <Tabs
+                value={timeframe}
+                onValueChange={(value) =>
+                  handleTimeframeChange(value as Timeframe)
+                }
+                className="w-auto"
+              >
+                <TabsList className="h-8">
+                  <TabsTrigger value="1m" className="px-2 text-xs">
+                    1m
+                  </TabsTrigger>
+                  <TabsTrigger value="5m" className="px-2 text-xs">
+                    5m
+                  </TabsTrigger>
+                  <TabsTrigger value="15m" className="px-2 text-xs">
+                    15m
+                  </TabsTrigger>
+                  <TabsTrigger value="1h" className="px-2 text-xs">
+                    1h
+                  </TabsTrigger>
+                  <TabsTrigger value="4h" className="px-2 text-xs">
+                    4h
+                  </TabsTrigger>
+                  <TabsTrigger value="1d" className="px-2 text-xs">
+                    1d
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
             </div>
-
-            <Tabs
-              value={timeframe}
-              defaultValue={timeframe}
-              className="w-full sm:w-auto justify-self-start sm:justify-self-center"
-              onValueChange={handleTimeframeChange}
-            >
-              <TabsList className="grid grid-cols-7 max-w-xs h-8">
-                <TabsTrigger value="1m" className="text-xs h-6">
-                  1m
-                </TabsTrigger>
-                <TabsTrigger value="5m" className="text-xs h-6">
-                  5m
-                </TabsTrigger>
-                <TabsTrigger value="15m" className="text-xs h-6">
-                  15m
-                </TabsTrigger>
-                <TabsTrigger value="30m" className="text-xs h-6">
-                  30m
-                </TabsTrigger>
-                <TabsTrigger value="1h" className="text-xs h-6">
-                  1h
-                </TabsTrigger>
-                <TabsTrigger value="4h" className="text-xs h-6">
-                  4h
-                </TabsTrigger>
-                <TabsTrigger value="1d" className="text-xs h-6">
-                  1d
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
 
             <div className="flex flex-row-reverse justify-between sm:justify-end gap-4 text-xs text-muted-foreground items-center">
               <div className="flex items-center gap-1">
@@ -1021,7 +1009,7 @@ export function PriceChart({
                 </span>
               </div>
 
-              {/* Add historical data stats and load more button */}
+              {/* Add historical data stats */}
               <div className="flex items-center gap-2">
                 {totalCandleCount > 0 && candleSeries.current && (
                   <span className="text-xs text-muted-foreground whitespace-nowrap">
@@ -1048,48 +1036,45 @@ export function PriceChart({
               </div>
             </div>
           </div>
+
+          {/* Add buy/sell buttons */}
+          {isAuthenticated && (
+            <div className="flex items-center space-x-2">
+              <Input
+                type="number"
+                value={quantity}
+                onChange={(e) => setQuantity(e.target.value)}
+                className="w-24 h-8 text-xs"
+                min="0.00001"
+                step="0.00001"
+              />
+              <Button
+                size="sm"
+                className="h-8 text-xs bg-green-600 hover:bg-green-700"
+                onClick={() => handleQuickOrder("BUY")}
+                disabled={isSubmitting || !currentPrice}
+              >
+                {isSubmitting ? (
+                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                ) : null}
+                Buy
+              </Button>
+              <Button
+                size="sm"
+                className="h-8 text-xs bg-red-600 hover:bg-red-700"
+                onClick={() => handleQuickOrder("SELL")}
+                disabled={isSubmitting || !currentPrice}
+              >
+                {isSubmitting ? (
+                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                ) : null}
+                Sell
+              </Button>
+            </div>
+          )}
         </div>
       </CardHeader>
       <CardContent className="p-0">
-        {/* Floating Buy/Sell bar */}
-        <div className="absolute top-4 left-4 z-10 flex rounded-md overflow-hidden border border-border shadow-md">
-          <Button
-            variant="default"
-            size="sm"
-            className="bg-blue-600 hover:bg-blue-700 text-white px-5 h-8 text-sm font-bold rounded-none border-0"
-            disabled={isSubmitting || !isAuthenticated}
-            onClick={() => handleQuickOrder("BUY")}
-          >
-            {isSubmitting ? (
-              <Loader2 className="h-3 w-3 animate-spin mr-1" />
-            ) : null}
-            BUY
-          </Button>
-
-          <Input
-            type="number"
-            value={quantity}
-            onChange={(e) => setQuantity(e.target.value)}
-            className="w-16 text-center font-mono text-sm border-0 h-8 rounded-none bg-card"
-            min="0.001"
-            step="0.001"
-            disabled={isSubmitting}
-          />
-
-          <Button
-            variant="destructive"
-            size="sm"
-            className="bg-red-600 hover:bg-red-700 text-white px-5 h-8 text-sm font-bold rounded-none border-0"
-            disabled={isSubmitting || !isAuthenticated}
-            onClick={() => handleQuickOrder("SELL")}
-          >
-            {isSubmitting ? (
-              <Loader2 className="h-3 w-3 animate-spin mr-1" />
-            ) : null}
-            SELL
-          </Button>
-        </div>
-
         <div
           ref={chartContainerRef}
           className="w-full"
