@@ -1,19 +1,21 @@
 # FIX Protocol Implementation
 
+This document outlines the FIX protocol implementation for the trading application.
+
 ## Overview
 
-This document outlines the implementation of FIX protocol for our trading application, replacing the current Binance API integration.
+The Financial Information eXchange (FIX) protocol is implemented to handle both market data and trading operations. The implementation uses QuickFIX/J for Node.js to manage FIX connections and message handling.
 
 ## Connection Details
 
-### Market Data (Pricing) Connection
+### Pricing Connection
 
 - **IP/DNS**: cntuk.centroidsol.com
 - **Port**: 43510
-- **Login Username**: xyz
-- **Login Password**: xyz
-- **SenderCompID**: xyz
-- **TargetCompID**: xyz
+- **Login Username**: xxx
+- **Login Password**: xxx
+- **SenderCompID**: MD_FX_Squad
+- **TargetCompID**: CENTROID_SOL
 - **SSL**: No
 - **ResetOnLogon**: Yes
 - **Session**: Friday:00:00:00-Friday:00:00:00
@@ -22,163 +24,213 @@ This document outlines the implementation of FIX protocol for our trading applic
 
 - **IP/DNS**: cntuk.centroidsol.com
 - **Port**: 43511
-- **Login Username**: xyz
-- **Login Password**: xyz
-- **SenderCompID**: xyz
-- **TargetCompID**: xyz
+- **Login Username**: xxx
+- **Login Password**: xxx
+- **SenderCompID**: TD_FX_Squad
+- **TargetCompID**: CENTROID_SOL
 - **SSL**: Yes
 - **ResetOnLogon**: No
 - **Session**: Friday:00:00:00-Friday:00:00:00
 
-## Implementation Phases
+## Directory Structure
 
-### Phase 1: Infrastructure Setup
+```
+src/
+├── services/
+│   └── fix/
+│       ├── config/
+│       │   └── fix.config.ts
+│       ├── handlers/
+│       │   ├── MarketDataHandler.ts
+│       │   └── TradingHandler.ts
+│       ├── utils/
+│       │   ├── FixMessageUtils.ts
+│       │   └── FixLogger.ts
+│       └── FixService.ts
+└── types/
+    └── fix/
+        └── config.ts
+```
 
-1. FIX Engine Integration
+## Components
 
-   - QuickFIX/n Implementation
-   - Connection Management
-   - Session Handling
-   - Logging and Monitoring
+### 1. FixService
 
-2. Security Implementation
-   - SSL/TLS Configuration
-   - Authentication
-   - Encryption
-   - Access Control
+The main service class that manages FIX connections and message routing.
 
-### Phase 2: Market Data Integration
+### 2. MarketDataHandler
 
-1. Market Data Messages
+Handles market data messages and updates.
 
-   - Level 1 Data (Quotes)
-   - Level 2 Data (Order Book)
-   - Trade Data
-   - Market Status
+### 3. TradingHandler
 
-2. Data Processing
-   - Message Parsing
-   - Data Normalization
-   - Caching Strategy
-   - Real-time Updates
+Manages order-related messages and execution reports.
 
-### Phase 3: Trading Integration
+### 4. FixMessageUtils
 
-1. Order Management
+Utility functions for FIX message formatting and parsing.
 
-   - Order Types Support
-   - Order Status Updates
-   - Position Management
-   - Risk Controls
+### 5. FixLogger
 
-2. Execution Management
-   - Order Execution
-   - Trade Confirmation
-   - Position Updates
-   - Settlement Information
+Specialized logging for FIX-related events and messages.
 
-### Phase 4: System Integration
+## Implementation Notes
 
-1. Database Integration
+### Connection Management
 
-   - Schema Updates
-   - Data Migration
-   - Performance Optimization
-   - Backup Strategy
+- Automatic reconnection with configurable attempts and intervals
+- Session management for both pricing and trading connections
+- Heartbeat monitoring and connection health checks
 
-2. API Layer
-   - REST API Updates
-   - WebSocket Updates
-   - Rate Limiting
-   - Error Handling
+### Message Handling
 
-### Phase 5: Testing & Validation
+- Support for market data requests and responses
+- Order management (New Order Single, Order Cancel Request)
+- Execution reports and order status updates
 
-1. Testing Environment
+### Error Handling
 
-   - Unit Tests
-   - Integration Tests
-   - Performance Tests
-   - Load Tests
+- Comprehensive error logging
+- Connection failure recovery
+- Message validation and error reporting
 
-2. Validation
-   - Message Validation
-   - Data Accuracy
-   - Latency Testing
-   - Error Recovery
+### Performance Considerations
 
-## Technical Requirements
+- Message batching for high-volume scenarios
+- Efficient message parsing and formatting
+- Optimized logging with rotation
 
-### Dependencies
+## Usage
 
-- QuickFIX/n
-- SSL Libraries
-- Logging Framework
-- Monitoring Tools
+### Initialize FIX Service
 
-### Infrastructure
+```typescript
+import { FixService } from "./services/fix/FixService";
 
-- Dedicated FIX Servers
-- Load Balancers
-- Monitoring System
-- Backup System
+const fixService = new FixService();
+await fixService.initialize();
+```
 
-### Security
+### Subscribe to Market Data
 
-- SSL Certificates
-- Firewall Rules
-- Access Controls
-- Audit Logging
+```typescript
+const marketDataHandler = new MarketDataHandler();
+marketDataHandler.on("marketDataUpdate", (data) => {
+  console.log("Market data update:", data);
+});
+```
 
-## Monitoring & Maintenance
+### Place Orders
 
-### Monitoring
+```typescript
+const tradingHandler = new TradingHandler();
+tradingHandler.on("orderUpdate", (order) => {
+  console.log("Order update:", order);
+});
 
-- Connection Status
-- Message Flow
-- Latency Metrics
-- Error Rates
+const order = {
+  symbol: "EURUSD",
+  side: "BUY",
+  type: "LIMIT",
+  quantity: 100000,
+  price: 1.1,
+};
 
-### Maintenance
+await fixService.sendMessage(
+  "trading",
+  FixMessageUtils.createNewOrderSingle(order)
+);
+```
 
-- Session Management
-- Log Rotation
-- Performance Tuning
-- Backup Procedures
+## Configuration
 
-## Rollback Plan
+### Environment Variables
 
-1. Keep Binance Integration
-2. Gradual Feature Migration
-3. Parallel Testing
-4. Feature Flags
-5. Rollback Procedures
+```env
+FIX_PRICING_USERNAME=xxx
+FIX_PRICING_PASSWORD=xxx
+FIX_TRADING_USERNAME=xxx
+FIX_TRADING_PASSWORD=xxx
+FIX_LOG_LEVEL=info
+```
 
-## Timeline
+### Logging
 
-- Phase 1: 2 weeks
-- Phase 2: 3 weeks
-- Phase 3: 3 weeks
-- Phase 4: 2 weeks
-- Phase 5: 2 weeks
+Logs are stored in the `logs/fix` directory with the following files:
 
-Total Estimated Time: 12 weeks
+- `error.log`: Error-level messages
+- `combined.log`: All log messages
+- `messages.log`: Detailed FIX message logs
 
-## Success Criteria
+## Troubleshooting
 
-1. Successful FIX Connection
-2. Accurate Market Data
-3. Reliable Order Execution
-4. Performance Metrics
-5. Error Handling
-6. Monitoring System
-7. Documentation
-8. Testing Coverage
+### Common Issues
 
-## Next Steps
+1. Connection Refused
 
-1. Review and approve implementation plan
-2. Set up development environment
-3. Begin Phase 1 implementation
-4. Schedule regular progress reviews
-5. Plan testing strategy
+   - Verify server status and port availability
+   - Check firewall settings
+   - Ensure correct IP whitelisting
+
+2. High Latency
+
+   - Use UK-based LD4 server
+   - Monitor network performance
+   - Implement connection pooling
+
+3. Message Processing Errors
+   - Check message format
+   - Verify sequence numbers
+   - Monitor message validation
+
+## Testing
+
+### Unit Tests
+
+```bash
+npm run test
+```
+
+### Integration Tests
+
+```bash
+npm run test:integration
+```
+
+## Monitoring
+
+### Health Checks
+
+```typescript
+const isPricingConnected = fixService.isConnected("pricing");
+const isTradingConnected = fixService.isConnected("trading");
+```
+
+### Metrics
+
+- Connection status
+- Message counts
+- Error rates
+- Latency measurements
+
+## Security
+
+### SSL/TLS
+
+- Trading connection uses SSL
+- Certificate management
+- Secure key exchange
+
+### Authentication
+
+- Username/password authentication
+- Session management
+- Access control
+
+## Future Improvements
+
+1. Message Compression
+2. Advanced Order Types
+3. Position Management
+4. Risk Controls
+5. Performance Optimization

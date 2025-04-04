@@ -9,6 +9,8 @@ import candleRoutes from "./candleRoutes";
 import analyticsRoutes from "./analyticsRoutes";
 import { orderManager } from "../services/orderManager";
 import balanceRoutes from "./balanceRoutes";
+import forexRoutes from "./forex.routes";
+
 export function initRoutes(app: Express): void {
   // Serve Swagger UI
   app.use("/api-docs", swaggerUi.serve, swaggerUiSetup);
@@ -31,6 +33,7 @@ export function initRoutes(app: Express): void {
   app.use("/api/candles", candleRoutes);
   app.use("/api/analytics", analyticsRoutes);
   app.use("/api/balance", balanceRoutes);
+  app.use("/api/forex", forexRoutes);
 
   // Health Check
   app.get("/health", (req: Request, res: Response) => {
