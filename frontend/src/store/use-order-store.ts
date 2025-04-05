@@ -29,6 +29,17 @@ interface OrderState {
   orders: Order[];
   openOrders: Order[];
   balance: Balance;
+  isLoading: boolean;
+  error: string | null;
+  createOrder: (orderData: {
+    symbolId: string;
+    type: "BUY" | "SELL";
+    price: number;
+    quantity: number;
+    isShort: boolean;
+    stopLoss?: number;
+    takeProfit?: number;
+  }) => Promise<Order | null>;
   setOrders: (orders: Order[]) => void;
   setOpenOrders: (openOrders: Order[]) => void;
   setBalance: (balance: Balance) => void;
@@ -46,6 +57,8 @@ const initialState = {
     available: 0,
     reserved: 0,
   },
+  isLoading: false,
+  error: null,
 };
 
 export const useOrderStore = create<OrderState>()(
@@ -106,6 +119,39 @@ export const useOrderStore = create<OrderState>()(
           })),
 
         reset: () => set(initialState),
+
+        createOrder: async (orderData) => {
+          set({ isLoading: true, error: null });
+          try {
+            const response = await fetch("/api/orders", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(orderData),
+            });
+
+            if (!response.ok) {
+              throw new Error("Failed to create order");
+            }
+
+            const newOrder = await response.json();
+            set((state) => ({
+              orders: [...state.orders, newOrder],
+              isLoading: false,
+            }));
+            return newOrder;
+          } catch (error) {
+            set({
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to create order",
+              isLoading: false,
+            });
+            return null;
+          }
+        },
       }),
       {
         name: "order-storage",

@@ -17,6 +17,9 @@ import {
   Euro,
   CandlestickChart,
   GripVertical,
+  Plus,
+  Minus,
+  Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useWebSocketStore } from "@/services/websocket";
@@ -41,6 +44,21 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { useOrderStore } from "@/store/use-order-store";
+import { useAuthStore } from "@/store/use-auth-store";
+import { toast } from "sonner";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Separator } from "@/components/ui/separator";
 
 interface MarketSidebarProps {
   className?: string;
@@ -91,20 +109,26 @@ interface SortableMarketItemProps {
     type: "bid" | "ask",
     currentPrice: number
   ) => string;
+  attributes?: any;
+  listeners?: any;
+  isDragging?: boolean;
 }
 
 function SortableMarketItem({
   symbol,
   currentSymbol,
-  ...props
+  onClick,
+  getPriceChangeClass,
+  attributes,
+  listeners,
+  isDragging,
 }: SortableMarketItemProps) {
   const {
-    attributes,
-    listeners,
+    attributes: sortableAttributes,
+    listeners: sortableListeners,
     setNodeRef,
     transform,
     transition,
-    isDragging,
   } = useSortable({ id: symbol.name });
 
   const style = {
@@ -143,107 +167,313 @@ function SortableMarketItem({
     }
   };
 
+  // Add state for quick trading dialog
+  const [showQuickTrade, setShowQuickTrade] = useState(false);
+  const [tradeType, setTradeType] = useState<"BUY" | "SELL">("BUY");
+  const [quantity, setQuantity] = useState("1");
+  const [stopLoss, setStopLoss] = useState("");
+  const [takeProfit, setTakeProfit] = useState("");
+  const [isProfessional, setIsProfessional] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const { isAuthenticated } = useAuthStore();
+  const { createOrder } = useOrderStore();
+
+  // Handle quick trade button click
+  const handleQuickTradeClick = (e: React.MouseEvent, type: "BUY" | "SELL") => {
+    e.stopPropagation();
+    if (!isAuthenticated) {
+      toast.error("Authentication required", {
+        description: "Please log in to place orders",
+      });
+      return;
+    }
+    setTradeType(type);
+    setShowQuickTrade(true);
+  };
+
+  // Handle order submission
+  const handleSubmitOrder = async () => {
+    if (!isAuthenticated || !symbol) {
+      toast.error("Authentication required");
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      const orderData = {
+        symbolId: symbol.id,
+        type: tradeType,
+        price:
+          tradeType === "BUY" ? symbol.askPrice || 0 : symbol.bidPrice || 0,
+        quantity: parseFloat(quantity),
+        isShort: tradeType === "SELL",
+        stopLoss: stopLoss ? parseFloat(stopLoss) : undefined,
+        takeProfit: takeProfit ? parseFloat(takeProfit) : undefined,
+      };
+
+      const newOrder = await createOrder(orderData);
+
+      if (newOrder) {
+        toast.success(`${tradeType} order placed successfully`);
+        setShowQuickTrade(false);
+      }
+    } catch (error) {
+      console.error("Error placing order:", error);
+      toast.error("Failed to place order", {
+        description: error instanceof Error ? error.message : "Unknown error",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      {...props}
-      className={cn(
-        "hover:bg-muted/30 cursor-pointer transition-colors border-b border-border/40 favorite-item-highlight",
-        symbol.name === currentSymbol && "bg-muted/60 font-medium",
-        isDragging ? "sortable-item-dragging" : "sortable-item-transition",
-        favoriteSymbols.includes(symbol.name) && "favorite-item-highlight"
-      )}
-    >
-      <div className="px-3 py-2.5">
-        <div className="flex items-center gap-1.5 mb-1">
-          <button
-            onClick={(e) => toggleFavorite(e, symbol.name)}
-            className="text-muted-foreground hover:text-foreground focus:outline-none transition-colors"
-          >
-            {favoriteSymbols.includes(symbol.name) ? (
-              <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
-            ) : (
-              <StarOff className="h-3.5 w-3.5" />
-            )}
-          </button>
-          <div className="flex items-center gap-1.5 flex-1">
-            {getSymbolIcon(symbol.name)}
-            <span className="uppercase font-medium text-sm">{symbol.name}</span>
-          </div>
-          {favoriteSymbols.includes(symbol.name) && (
-            <div
-              className="cursor-grab active:cursor-grabbing text-muted-foreground/50 hover:text-muted-foreground transition-colors"
-              {...attributes}
-              {...listeners}
+    <>
+      <div
+        ref={setNodeRef}
+        style={style}
+        onClick={onClick}
+        className={cn(
+          "hover:bg-muted/30 cursor-pointer transition-colors border-b border-border/40 favorite-item-highlight group",
+          symbol.name === currentSymbol && "bg-muted/60 font-medium",
+          isDragging ? "sortable-item-dragging" : "sortable-item-transition",
+          favoriteSymbols.includes(symbol.name) && "favorite-item-highlight"
+        )}
+      >
+        <div className="px-3 py-2.5">
+          <div className="flex items-center gap-1.5 mb-1">
+            <button
+              onClick={(e) => toggleFavorite(e, symbol.name)}
+              className="text-muted-foreground hover:text-foreground focus:outline-none transition-colors"
             >
-              <GripVertical className="h-4 w-4" />
-            </div>
-          )}
-        </div>
-
-        <div className="grid grid-cols-3 gap-2">
-          <div className="flex flex-col items-center">
-            <div
-              className={cn(
-                "w-full text-center font-mono text-xs font-medium rounded px-1 py-0.5 transition-colors",
-                props.getPriceChangeClass(
-                  symbol.name,
-                  "bid",
-                  symbol.bidPrice || 0
-                )
-              )}
-            >
-              {formatPrice(symbol.bidPrice || 0)}
-            </div>
-            <span className="text-[10px] text-muted-foreground mt-0.5">
-              BID
-            </span>
-          </div>
-
-          <div className="flex flex-col items-center">
-            <div
-              className={cn(
-                "w-full text-center font-mono text-xs font-medium rounded px-1 py-0.5 transition-colors",
-                props.getPriceChangeClass(
-                  symbol.name,
-                  "ask",
-                  symbol.askPrice || 0
-                )
-              )}
-            >
-              {formatPrice(symbol.askPrice || 0)}
-            </div>
-            <span className="text-[10px] text-muted-foreground mt-0.5">
-              ASK
-            </span>
-          </div>
-
-          <div className="flex flex-col items-center">
-            <div
-              className={cn(
-                "w-full flex items-center justify-center gap-0.5 rounded px-1 py-0.5",
-                symbol.priceChangePercent >= 0
-                  ? "bg-green-500/10 text-green-500"
-                  : "bg-red-500/10 text-red-500"
-              )}
-            >
-              {symbol.priceChangePercent >= 0 ? (
-                <TrendingUp className="h-3 w-3 flex-shrink-0" />
+              {favoriteSymbols.includes(symbol.name) ? (
+                <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
               ) : (
-                <TrendingDown className="h-3 w-3 flex-shrink-0" />
+                <StarOff className="h-3.5 w-3.5" />
               )}
-              <span className="tabular-nums text-xs font-medium">
-                {formatPercentChange(symbol.priceChangePercent)}
+            </button>
+            <div className="flex items-center gap-1.5 flex-1">
+              {getSymbolIcon(symbol.name)}
+              <span className="uppercase font-medium text-sm">
+                {symbol.name}
               </span>
             </div>
-            <span className="text-[10px] text-muted-foreground mt-0.5">
-              24H
-            </span>
+            {favoriteSymbols.includes(symbol.name) && (
+              <div
+                className="cursor-grab active:cursor-grabbing text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+                {...(attributes || sortableAttributes)}
+                {...(listeners || sortableListeners)}
+              >
+                <GripVertical className="h-4 w-4" />
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-3 gap-2">
+            <div className="flex flex-col items-center">
+              <div
+                className={cn(
+                  "w-full text-center font-mono text-xs font-medium rounded px-1 py-0.5 transition-colors",
+                  getPriceChangeClass(symbol.name, "bid", symbol.bidPrice || 0)
+                )}
+              >
+                {formatPrice(symbol.bidPrice || 0)}
+              </div>
+              <span className="text-[10px] text-muted-foreground mt-0.5">
+                BID
+              </span>
+            </div>
+
+            <div className="flex flex-col items-center">
+              <div
+                className={cn(
+                  "w-full text-center font-mono text-xs font-medium rounded px-1 py-0.5 transition-colors",
+                  getPriceChangeClass(symbol.name, "ask", symbol.askPrice || 0)
+                )}
+              >
+                {formatPrice(symbol.askPrice || 0)}
+              </div>
+              <span className="text-[10px] text-muted-foreground mt-0.5">
+                ASK
+              </span>
+            </div>
+
+            <div className="flex flex-col items-center">
+              <div
+                className={cn(
+                  "w-full flex items-center justify-center gap-0.5 rounded px-1 py-0.5",
+                  symbol.priceChangePercent >= 0
+                    ? "bg-green-500/10 text-green-500"
+                    : "bg-red-500/10 text-red-500"
+                )}
+              >
+                {symbol.priceChangePercent >= 0 ? (
+                  <TrendingUp className="h-3 w-3 flex-shrink-0" />
+                ) : (
+                  <TrendingDown className="h-3 w-3 flex-shrink-0" />
+                )}
+                <span className="tabular-nums text-xs font-medium">
+                  {formatPercentChange(symbol.priceChangePercent)}
+                </span>
+              </div>
+              <span className="text-[10px] text-muted-foreground mt-0.5">
+                24H
+              </span>
+            </div>
+          </div>
+
+          {/* Quick trade buttons - visible on hover */}
+          <div className="flex justify-center gap-2 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button
+              onClick={(e) => handleQuickTradeClick(e, "BUY")}
+              className="bg-green-500/10 text-green-500 hover:bg-green-500/20 px-2 py-1 rounded text-xs font-medium flex items-center gap-1"
+            >
+              <Plus className="h-3 w-3" /> Buy
+            </button>
+            <button
+              onClick={(e) => handleQuickTradeClick(e, "SELL")}
+              className="bg-red-500/10 text-red-500 hover:bg-red-500/20 px-2 py-1 rounded text-xs font-medium flex items-center gap-1"
+            >
+              <Minus className="h-3 w-3" /> Sell
+            </button>
           </div>
         </div>
       </div>
-    </div>
+
+      {/* Quick Trade Dialog */}
+      <Dialog open={showQuickTrade} onOpenChange={setShowQuickTrade}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {getSymbolIcon(symbol.name)}
+              <span className="uppercase">{symbol.name}</span>
+              <Badge
+                variant={tradeType === "BUY" ? "default" : "destructive"}
+                className={cn(
+                  "ml-2",
+                  tradeType === "BUY"
+                    ? "bg-green-500/10 text-green-500 border-green-500/20"
+                    : "bg-red-500/10 text-red-500 border-red-500/20"
+                )}
+              >
+                {tradeType}
+              </Badge>
+            </DialogTitle>
+            <DialogDescription>
+              Place a {tradeType.toLowerCase()} order for {symbol.name}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="price" className="text-right">
+                Price
+              </Label>
+              <div className="col-span-3">
+                <Input
+                  id="price"
+                  value={formatPrice(
+                    tradeType === "BUY"
+                      ? symbol.askPrice || 0
+                      : symbol.bidPrice || 0
+                  )}
+                  disabled
+                  className="bg-muted"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="quantity" className="text-right">
+                Quantity
+              </Label>
+              <div className="col-span-3">
+                <Input
+                  id="quantity"
+                  type="number"
+                  value={quantity}
+                  onChange={(e) => setQuantity(e.target.value)}
+                  min="0.00001"
+                  step="0.00001"
+                />
+              </div>
+            </div>
+
+            {isProfessional && (
+              <>
+                <Separator />
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="stopLoss" className="text-right">
+                    Stop Loss
+                  </Label>
+                  <div className="col-span-3">
+                    <Input
+                      id="stopLoss"
+                      type="number"
+                      value={stopLoss}
+                      onChange={(e) => setStopLoss(e.target.value)}
+                      placeholder="Optional"
+                      min="0"
+                      step="0.00001"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="takeProfit" className="text-right">
+                    Take Profit
+                  </Label>
+                  <div className="col-span-3">
+                    <Input
+                      id="takeProfit"
+                      type="number"
+                      value={takeProfit}
+                      onChange={(e) => setTakeProfit(e.target.value)}
+                      placeholder="Optional"
+                      min="0"
+                      step="0.00001"
+                    />
+                  </div>
+                </div>
+              </>
+            )}
+
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Settings className="h-4 w-4 text-muted-foreground" />
+                <Label htmlFor="professional">Professional Trading</Label>
+              </div>
+              <Switch
+                id="professional"
+                checked={isProfessional}
+                onCheckedChange={setIsProfessional}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowQuickTrade(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSubmitOrder}
+              disabled={isSubmitting}
+              className={cn(
+                tradeType === "BUY"
+                  ? "bg-green-600 hover:bg-green-700"
+                  : "bg-red-600 hover:bg-red-700"
+              )}
+            >
+              {isSubmitting ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : null}
+              {tradeType} {symbol.name}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -259,6 +489,20 @@ export function MarketSidebar({ className }: MarketSidebarProps) {
   const [activeTab, setActiveTab] = useState<"all" | "favorites">("all");
   const [, setActiveId] = useState<string | null>(null);
   const [favoriteOrder, setFavoriteOrder] = useState<string[]>([]);
+
+  // Add state for quick trading dialog
+  const [showQuickTrade, setShowQuickTrade] = useState(false);
+  const [tradeType, setTradeType] = useState<"BUY" | "SELL">("BUY");
+  const [quantity, setQuantity] = useState("1");
+  const [stopLoss, setStopLoss] = useState("");
+  const [takeProfit, setTakeProfit] = useState("");
+  const [isProfessional, setIsProfessional] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [selectedSymbol, setSelectedSymbol] = useState<MarketSymbol | null>(
+    null
+  );
+  const { isAuthenticated } = useAuthStore();
+  const { createOrder } = useOrderStore();
 
   const { tickerData, connectionState } = useWebSocketStore();
   const {
@@ -399,6 +643,45 @@ export function MarketSidebar({ className }: MarketSidebarProps) {
     return "";
   };
 
+  // Handle order submission
+  const handleSubmitOrder = async () => {
+    if (!isAuthenticated || !selectedSymbol) {
+      toast.error("Authentication required");
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      const orderData = {
+        symbolId: selectedSymbol.name.toLowerCase(),
+        type: tradeType,
+        price:
+          tradeType === "BUY"
+            ? selectedSymbol.askPrice || 0
+            : selectedSymbol.bidPrice || 0,
+        quantity: parseFloat(quantity),
+        isShort: tradeType === "SELL",
+        stopLoss: stopLoss ? parseFloat(stopLoss) : undefined,
+        takeProfit: takeProfit ? parseFloat(takeProfit) : undefined,
+      };
+
+      const newOrder = await createOrder(orderData);
+
+      if (newOrder) {
+        toast.success(`${tradeType} order placed successfully`);
+        setShowQuickTrade(false);
+      }
+    } catch (error) {
+      console.error("Error placing order:", error);
+      toast.error("Failed to place order", {
+        description: error instanceof Error ? error.message : "Unknown error",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   return (
     <Card
       className={cn(
@@ -528,7 +811,7 @@ export function MarketSidebar({ className }: MarketSidebarProps) {
                     key={symbol.name}
                     onClick={() => handleSelectSymbol(symbol.name)}
                     className={cn(
-                      "hover:bg-muted/30 cursor-pointer transition-colors border-b border-border/40",
+                      "hover:bg-muted/30 cursor-pointer transition-colors border-b border-border/40 group",
                       symbol.name === currentSymbol &&
                         "bg-muted/60 font-medium",
                       favoriteSymbols.includes(symbol.name) &&
@@ -620,6 +903,44 @@ export function MarketSidebar({ className }: MarketSidebarProps) {
                           </span>
                         </div>
                       </div>
+
+                      {/* Quick trade buttons - visible on hover */}
+                      <div className="flex justify-center gap-2 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (!isAuthenticated) {
+                              toast.error("Authentication required", {
+                                description: "Please log in to place orders",
+                              });
+                              return;
+                            }
+                            setTradeType("BUY");
+                            setShowQuickTrade(true);
+                            setSelectedSymbol(symbol);
+                          }}
+                          className="bg-green-500/10 text-green-500 hover:bg-green-500/20 px-2 py-1 rounded text-xs font-medium flex items-center gap-1"
+                        >
+                          <Plus className="h-3 w-3" /> Buy
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (!isAuthenticated) {
+                              toast.error("Authentication required", {
+                                description: "Please log in to place orders",
+                              });
+                              return;
+                            }
+                            setTradeType("SELL");
+                            setShowQuickTrade(true);
+                            setSelectedSymbol(symbol);
+                          }}
+                          className="bg-red-500/10 text-red-500 hover:bg-red-500/20 px-2 py-1 rounded text-xs font-medium flex items-center gap-1"
+                        >
+                          <Minus className="h-3 w-3" /> Sell
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))
@@ -628,6 +949,141 @@ export function MarketSidebar({ className }: MarketSidebarProps) {
           </div>
         )}
       </div>
+
+      {/* Quick Trade Dialog for non-sortable items */}
+      <Dialog open={showQuickTrade} onOpenChange={setShowQuickTrade}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {selectedSymbol && getSymbolIcon(selectedSymbol.name)}
+              <span className="uppercase">{selectedSymbol?.name}</span>
+              <Badge
+                variant={tradeType === "BUY" ? "default" : "destructive"}
+                className={cn(
+                  "ml-2",
+                  tradeType === "BUY"
+                    ? "bg-green-500/10 text-green-500 border-green-500/20"
+                    : "bg-red-500/10 text-red-500 border-red-500/20"
+                )}
+              >
+                {tradeType}
+              </Badge>
+            </DialogTitle>
+            <DialogDescription>
+              Place a {tradeType.toLowerCase()} order for {selectedSymbol?.name}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="price" className="text-right">
+                Price
+              </Label>
+              <div className="col-span-3">
+                <Input
+                  id="price"
+                  value={formatPrice(
+                    selectedSymbol
+                      ? tradeType === "BUY"
+                        ? selectedSymbol.askPrice || 0
+                        : selectedSymbol.bidPrice || 0
+                      : 0
+                  )}
+                  disabled
+                  className="bg-muted"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="quantity" className="text-right">
+                Quantity
+              </Label>
+              <div className="col-span-3">
+                <Input
+                  id="quantity"
+                  type="number"
+                  value={quantity}
+                  onChange={(e) => setQuantity(e.target.value)}
+                  min="0.00001"
+                  step="0.00001"
+                />
+              </div>
+            </div>
+
+            {isProfessional && (
+              <>
+                <Separator />
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="stopLoss" className="text-right">
+                    Stop Loss
+                  </Label>
+                  <div className="col-span-3">
+                    <Input
+                      id="stopLoss"
+                      type="number"
+                      value={stopLoss}
+                      onChange={(e) => setStopLoss(e.target.value)}
+                      placeholder="Optional"
+                      min="0"
+                      step="0.00001"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="takeProfit" className="text-right">
+                    Take Profit
+                  </Label>
+                  <div className="col-span-3">
+                    <Input
+                      id="takeProfit"
+                      type="number"
+                      value={takeProfit}
+                      onChange={(e) => setTakeProfit(e.target.value)}
+                      placeholder="Optional"
+                      min="0"
+                      step="0.00001"
+                    />
+                  </div>
+                </div>
+              </>
+            )}
+
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Settings className="h-4 w-4 text-muted-foreground" />
+                <Label htmlFor="professional">Professional Trading</Label>
+              </div>
+              <Switch
+                id="professional"
+                checked={isProfessional}
+                onCheckedChange={setIsProfessional}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowQuickTrade(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSubmitOrder}
+              disabled={isSubmitting}
+              className={cn(
+                tradeType === "BUY"
+                  ? "bg-green-600 hover:bg-green-700"
+                  : "bg-red-600 hover:bg-red-700"
+              )}
+            >
+              {isSubmitting ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : null}
+              {tradeType} {selectedSymbol?.name}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
