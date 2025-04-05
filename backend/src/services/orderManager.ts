@@ -107,7 +107,7 @@ class OrderManager extends EventEmitter {
       return orderObj;
     } catch (error) {
       console.error("Error adding order:", error);
-      throw new Error("Failed to add order");
+      throw error;
     }
   }
 

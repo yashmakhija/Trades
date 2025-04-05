@@ -146,23 +146,18 @@ export async function createOrder(
   params: CreateOrderParams
 ): Promise<Order | null> {
   try {
-    console.log("Creating order with params (before conversion):", params);
-
     // Verify symbol ID exists and is in the correct format
     if (
       !params.symbolId ||
       typeof params.symbolId !== "string" ||
       params.symbolId.length < 10
     ) {
-      console.error("Invalid symbol ID provided:", params.symbolId);
       throw new Error("Invalid symbol ID. Please refresh and try again.");
     }
 
     // The backend expects prices in cents without decimal points
-    // Convert the full price (e.g. 87580.24) to cents (8758024)
     const convertedParams = {
       ...params,
-      // Multiply by 100 to convert to cents (removing decimal point)
       price: Math.round(Number(params.price) * 100),
       stopLoss:
         params.stopLoss !== undefined
@@ -174,84 +169,56 @@ export async function createOrder(
           : undefined,
     };
 
-    console.log("Params for backend (converted to cents):", convertedParams);
+    console.log("Sending order request:", convertedParams);
 
-    // Use the correct API endpoint with /api prefix
-    const endpoint = "/orders";
-    console.log(`Sending order to API endpoint: ${endpoint}`);
-
-    try {
-      // Make the API request with credentials
-      const response = await apiClient.post<OrderCreateResponse>(
-        endpoint,
-        convertedParams,
-        {
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Credentials": "true",
-            "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-            "Access-Control-Allow-Headers":
-              "Content-Type, Authorization, X-Requested-With, Accept, Origin",
-          },
-        }
-      );
-
-      // Check for empty response
-      if (!response) {
-        console.error("Received empty response from server");
-        throw new Error("Server returned an empty response");
+    // Make the API request with credentials
+    const response = await apiClient.post<OrderCreateResponse>(
+      "/orders",
+      convertedParams,
+      {
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
       }
+    );
 
-      // Check for response structure
-      if (!response.order && !response.message) {
-        console.warn("Unexpected response format:", response);
-      }
+    // Check for empty response
+    if (!response) {
+      throw new Error("Server returned an empty response");
+    }
 
-      // Extract the order from the response
-      const order = response.order || (response as unknown as Order);
-      console.log("Order created successfully:", order);
+    // Extract the order from the response
+    const order = response.order || (response as unknown as Order);
 
-      return order;
-    } catch (apiError: unknown) {
-      console.error("API error details:", apiError);
+    if (!order || !order.id) {
+      throw new Error("Invalid order response from server");
+    }
 
-      // Enhanced error handling for CORS and network issues
-      if (
-        apiError instanceof TypeError &&
-        apiError.message === "Failed to fetch"
-      ) {
-        console.error("Network error - possible CORS issue");
+    console.log("Order created successfully:", order);
+    return order;
+  } catch (error) {
+    // Enhanced error handling
+    if (error instanceof Error) {
+      if (error.message.includes("Failed to fetch")) {
         throw new Error(
           "Unable to connect to the trading server. Please check your connection and try again."
         );
       }
-
-      // Get more information about the API base URL
-      console.log("API configuration:", {
-        apiEndpoint: endpoint,
-        symbolId: params.symbolId,
-        baseUrl: process.env.NEXT_PUBLIC_API_BASE_URL,
-      });
-
-      // Log the most likely causes of 404 errors
-      console.error("Possible causes of error:");
-      console.error(
-        "1. Backend API route not found - verify the endpoint path"
-      );
-      console.error("2. Backend server not running or unreachable");
-      console.error(
-        "3. CORS issues preventing the request from reaching the server"
-      );
-      console.error("4. Environment configuration issue (API_BASE_URL)");
-      console.error("5. Authentication token missing or invalid");
-
-      throw apiError;
+      if (error.message.includes("401")) {
+        throw new Error("Authentication required. Please log in again.");
+      }
+      if (error.message.includes("403")) {
+        throw new Error("You don't have permission to place orders.");
+      }
+      if (error.message.includes("429")) {
+        throw new Error(
+          "Too many requests. Please wait a moment and try again."
+        );
+      }
+      throw error;
     }
-  } catch (error) {
-    console.error("Error creating order:", error);
-    throw error;
+    throw new Error("An unexpected error occurred while placing the order");
   }
 }
 

@@ -53,22 +53,15 @@ export async function placeOrder(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    // The frontend is sending integers with decimal point removed (e.g., 8325632 for $83,256.32)
-    // We need to convert to our internal representation (cents) by dividing by 100
-    const normalizedPrice = Math.round(price / 100);
-    const normalizedStopLoss = stopLoss
-      ? Math.round(stopLoss / 100)
-      : undefined;
-    const normalizedTakeProfit = takeProfit
-      ? Math.round(takeProfit / 100)
-      : undefined;
+    // The frontend is sending prices in cents, so we don't need to divide by 100
+    const normalizedPrice = price;
+    const normalizedStopLoss = stopLoss;
+    const normalizedTakeProfit = takeProfit;
 
     console.log("Normalized price values:", {
-      price: `${price} → ${normalizedPrice}`,
-      stopLoss: stopLoss ? `${stopLoss} → ${normalizedStopLoss}` : undefined,
-      takeProfit: takeProfit
-        ? `${takeProfit} → ${normalizedTakeProfit}`
-        : undefined,
+      price: normalizedPrice,
+      stopLoss: normalizedStopLoss,
+      takeProfit: normalizedTakeProfit,
     });
 
     // Calculate order cost in cents
@@ -80,8 +73,6 @@ export async function placeOrder(req: Request, res: Response): Promise<void> {
       res.status(400).json({ error: "Insufficient balance" });
       return;
     }
-
-    balanceManager.reserveBalance(userId, `pending_${Date.now()}`, orderCost);
 
     try {
       const order = await orderManager.addOrder({
@@ -96,41 +87,30 @@ export async function placeOrder(req: Request, res: Response): Promise<void> {
         takeProfit: normalizedTakeProfit,
       });
 
-      balanceManager.releaseReservedBalance(userId, `pending_${Date.now()}`);
-      balanceManager.reserveBalance(userId, order.id, orderCost);
+      // Broadcast updates
+      broadcastOrderUpdate(userId, order);
+      broadcastBalanceUpdate(
+        userId,
+        await balanceManager.getUserBalance(userId)
+      );
 
-      const updatedBalance = await balanceManager.getUserBalance(userId);
-
-      broadcastOrderUpdate(userId, {
-        id: order.id,
-        status: order.status,
-        type: order.type,
-        symbolName: order.symbolName,
-        price: order.price,
-        quantity: order.quantity,
-        isShort: order.isShort,
-      });
-
-      if (updatedBalance) {
-        broadcastBalanceUpdate(userId, updatedBalance);
-      }
-
-      res.status(201).json({
+      res.status(200).json({
         message: "Order placed successfully",
-        order: {
-          ...order,
-          price: order.price / 100, // Convert to dollars for display
-          stopLoss: order.stopLoss ? order.stopLoss / 100 : null,
-          takeProfit: order.takeProfit ? order.takeProfit / 100 : null,
-        },
+        order,
       });
-    } catch (orderError) {
-      balanceManager.releaseReservedBalance(userId, `pending_${Date.now()}`);
-      throw orderError;
+    } catch (error) {
+      console.error("Error placing order:", error);
+      res.status(500).json({
+        error: "Failed to place order",
+        details: error instanceof Error ? error.message : "Unknown error",
+      });
     }
   } catch (error) {
-    console.error("Error placing order:", error);
-    res.status(500).json({ error: "Failed to place order" });
+    console.error("Error in placeOrder:", error);
+    res.status(500).json({
+      error: "Internal server error",
+      details: error instanceof Error ? error.message : "Unknown error",
+    });
   }
 }
 

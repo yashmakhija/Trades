@@ -145,17 +145,25 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
         return;
       }
 
-      // Use the currently available symbols data
-      if (!symbolData) {
-        console.error("Symbol not found in available symbols:", {
-          symbolToFind: symbol,
-          availableSymbols: symbols.map((s) => s.name),
-        });
+      // Get symbol data from the store
+      let symbolData = useSymbolStore.getState().getSymbolByName(symbol);
 
-        toast.error("Symbol not found", {
-          description: "Unable to find symbol information. Please try again.",
-        });
-        return;
+      if (!symbolData) {
+        // Try to fetch fresh symbols if not found in cache
+        await useSymbolStore.getState().fetchSymbolsForce();
+        symbolData = useSymbolStore.getState().getSymbolByName(symbol);
+
+        if (!symbolData) {
+          console.error("Symbol not found in available symbols:", {
+            symbolToFind: symbol,
+            availableSymbols: symbols.map((s) => s.name),
+          });
+
+          toast.error("Symbol not found", {
+            description: "Unable to find symbol information. Please try again.",
+          });
+          return;
+        }
       }
 
       // Use the symbol data for the rest of the function
@@ -191,6 +199,10 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
 
       setIsSubmitting(true);
 
+      // Convert values to numbers first
+      const priceValue = parseFloat(price);
+      const quantityValue = parseFloat(quantity);
+
       // Process stop loss and take profit
       // These variables are used for validation only
       let tempStopLossValue: number | undefined = undefined;
@@ -204,55 +216,44 @@ export function OrderForm({ symbol, className = "" }: OrderFormProps) {
         tempTakeProfitValue = Number(takeProfit);
       }
 
-      // Convert price to number for consistent comparison
-      const priceValue = Number(price);
-
-      // Validate stop loss and take profit based on order side
-      if (orderSide === "BUY") {
-        if (tempStopLossValue && tempStopLossValue >= priceValue) {
-          toast.error(
-            "Stop loss must be lower than the entry price for buy orders"
-          );
-          setIsSubmitting(false);
+      // Validate stop loss and take profit
+      if (tempStopLossValue !== undefined) {
+        if (orderSide === "BUY" && tempStopLossValue >= priceValue) {
+          toast.error("Invalid stop loss", {
+            description:
+              "Stop loss must be below the entry price for buy orders",
+          });
           return;
         }
-
-        if (tempTakeProfitValue && tempTakeProfitValue <= priceValue) {
-          toast.error(
-            "Take profit must be higher than the entry price for buy orders"
-          );
-          setIsSubmitting(false);
-          return;
-        }
-      } else {
-        // SELL order
-        if (tempStopLossValue && tempStopLossValue <= priceValue) {
-          toast.error(
-            "Stop loss must be higher than the entry price for sell orders"
-          );
-          setIsSubmitting(false);
-          return;
-        }
-
-        if (tempTakeProfitValue && tempTakeProfitValue >= priceValue) {
-          toast.error(
-            "Take profit must be lower than the entry price for sell orders"
-          );
-          setIsSubmitting(false);
+        if (orderSide === "SELL" && tempStopLossValue <= priceValue) {
+          toast.error("Invalid stop loss", {
+            description:
+              "Stop loss must be above the entry price for sell orders",
+          });
           return;
         }
       }
 
-      // Parse values once for reuse and ensure they are valid numbers
-      const quantityValue = Number(quantity);
+      if (tempTakeProfitValue !== undefined) {
+        if (orderSide === "BUY" && tempTakeProfitValue <= priceValue) {
+          toast.error("Invalid take profit", {
+            description:
+              "Take profit must be above the entry price for buy orders",
+          });
+          return;
+        }
+        if (orderSide === "SELL" && tempTakeProfitValue >= priceValue) {
+          toast.error("Invalid take profit", {
+            description:
+              "Take profit must be below the entry price for sell orders",
+          });
+          return;
+        }
+      }
 
-      // Pass through the values directly - no conversion needed
-      // The backend will divide by 10000 on its own (eg 85865 → 8.59)
-      const stopLossValue =
-        stopLoss && stopLoss.trim() !== "" ? Number(stopLoss) : undefined;
-
-      const takeProfitValue =
-        takeProfit && takeProfit.trim() !== "" ? Number(takeProfit) : undefined;
+      // Use the already converted values
+      const stopLossValue = tempStopLossValue;
+      const takeProfitValue = tempTakeProfitValue;
 
       console.log("Order submission values:", {
         symbolId: symbolId,

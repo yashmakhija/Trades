@@ -858,65 +858,63 @@ export function PriceChart({
       return;
     }
 
-    // Get current symbols from store
-    const currentSymbols = useSymbolStore.getState().symbols;
+    // Get symbol data from the store - this is instant
+    const symbolData = useSymbolStore
+      .getState()
+      .getSymbolByName(normalizedSymbol);
 
-    // Only force refresh if necessary (no symbols or outdated cache)
-    let symbolsToUse = currentSymbols;
-    if (currentSymbols.length === 0) {
-      console.log("No symbols in store, fetching before order");
-      symbolsToUse = await useSymbolStore.getState().fetchSymbolsForce();
-    } else {
-      // Check if cache is stale (more than 5 minutes old)
-      const lastFetched = useSymbolStore.getState().lastFetched || 0;
-      const cacheAge = Date.now() - lastFetched;
-      const FIVE_MINUTES = 5 * 60 * 1000;
-
-      if (cacheAge > FIVE_MINUTES) {
-        console.log(
-          `Symbol cache is ${Math.round(
-            cacheAge / 1000 / 60
-          )} minutes old, refreshing before order`
-        );
-        symbolsToUse = await useSymbolStore.getState().fetchSymbolsForce();
-      } else {
-        console.log(
-          `Using symbol cache (${Math.round(cacheAge / 1000)} seconds old)`
-        );
-      }
-    }
-
-    // Find the exact symbol match by standardizing both strings for comparison
-    const symbolKey = normalizedSymbol.toLowerCase().trim();
-
-    // Find with exact matching using symbols
-    const symbolData = symbolsToUse.find(
-      (s) => s.name.toLowerCase().trim() === symbolKey
-    );
-
+    // If symbol not found, try to fetch it in the background without blocking
     if (!symbolData) {
-      console.error("Symbol lookup error:", {
-        lookingFor: symbolKey,
-        availableSymbols: symbolsToUse.map(
-          (s) => `${s.name.toLowerCase().trim()} (${s.id})`
-        ),
-      });
+      console.log("Symbol not found in cache, fetching in background");
+      // Start fetching symbols in the background
+      useSymbolStore
+        .getState()
+        .fetchSymbolsForce()
+        .then(() => {
+          // After fetching, try to place the order again
+          const updatedSymbolData = useSymbolStore
+            .getState()
+            .getSymbolByName(normalizedSymbol);
+          if (updatedSymbolData) {
+            console.log("Symbol found after background fetch, placing order");
+            placeOrder(updatedSymbolData.id, side);
+          } else {
+            console.error("Symbol still not found after background fetch");
+            toast.error("Symbol not found", {
+              description:
+                "Unable to find symbol information. Please try again.",
+            });
+          }
+        })
+        .catch((error) => {
+          console.error("Error fetching symbols:", error);
+          toast.error("Error fetching symbol data", {
+            description: "Please try again in a moment.",
+          });
+        });
 
-      toast.error("Symbol not found", {
-        description: `Unable to find symbol '${symbolKey}' in available symbols. Please refresh the page.`,
+      // Show a loading message to the user
+      toast.info("Fetching symbol data...", {
+        description: "Please wait a moment while we prepare your order.",
       });
       return;
     }
 
-    console.log("Symbol found for order:", {
-      name: symbolData.name,
-      id: symbolData.id,
-      symbolKey,
-    });
+    // If we have the symbol data, place the order immediately
+    placeOrder(symbolData.id, side);
+  };
 
+  // Helper function to place the order
+  const placeOrder = async (symbolId: string, side: "BUY" | "SELL") => {
     try {
       setIsSubmitting(true);
       const quantityValue = parseFloat(quantity);
+
+      // We've already checked that currentPrice is not null in handleQuickOrder
+      // But TypeScript doesn't know that, so we need to assert it
+      if (!currentPrice) {
+        throw new Error("Current price is not available");
+      }
 
       // Apply spread fee to price based on order side
       const spreadAmount = currentPrice * SPREAD_FEE_PERCENTAGE;
@@ -927,7 +925,7 @@ export function PriceChart({
 
       // Ensure the request data format matches exactly what the API expects
       const orderData = {
-        symbolId: symbolData.id,
+        symbolId: symbolId,
         type: side,
         price: priceWithSpread,
         quantity: quantityValue,

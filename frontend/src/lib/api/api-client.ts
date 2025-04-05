@@ -96,6 +96,12 @@ async function fetchApi<T>(
         throw new Error("Your session has expired. Please log in again.");
       }
 
+      // Handle empty response
+      if (response.status === 0 || !response.body) {
+        console.error(`Empty response received for ${endpoint}`);
+        throw new Error("Server returned an empty response. Please try again.");
+      }
+
       try {
         const errorData = await response.json();
         console.error(`API Error response body:`, errorData);

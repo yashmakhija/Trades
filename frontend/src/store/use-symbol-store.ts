@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { devtools, persist } from "zustand/middleware";
 import { fetchSymbols as apiFetchSymbols } from "@/services/symbols";
+import { useWebSocketStore } from "@/services/websocket";
 
 export interface TradingSymbol {
   id: string;
@@ -15,9 +16,13 @@ interface SymbolState {
   symbols: TradingSymbol[];
   lastFetched: number | null;
   isLoading: boolean;
+  selectedSymbol: TradingSymbol | null;
   fetchSymbols: () => Promise<TradingSymbol[]>;
   fetchSymbolsForce: () => Promise<TradingSymbol[]>;
   setSymbols: (symbols: TradingSymbol[]) => void;
+  setSelectedSymbol: (symbol: TradingSymbol | null) => void;
+  getSymbolById: (id: string) => TradingSymbol | undefined;
+  getSymbolByName: (name: string) => TradingSymbol | undefined;
   reset: () => void;
 }
 
@@ -25,6 +30,7 @@ const initialState = {
   symbols: [],
   lastFetched: null,
   isLoading: false,
+  selectedSymbol: null,
 };
 
 // Cache validity duration - 1 hour in milliseconds
@@ -128,6 +134,31 @@ export const useSymbolStore = create<SymbolState>()(
           }
         },
         setSymbols: (symbols) => set({ symbols, lastFetched: Date.now() }),
+        setSelectedSymbol: (symbol) => {
+          const { subscribeToSymbol, unsubscribeFromSymbol } =
+            useWebSocketStore.getState();
+          const currentSymbol = get().selectedSymbol;
+
+          // Unsubscribe from previous symbol if it exists
+          if (currentSymbol) {
+            unsubscribeFromSymbol(currentSymbol.name);
+          }
+
+          // Subscribe to new symbol if it exists
+          if (symbol) {
+            subscribeToSymbol(symbol.name);
+          }
+
+          set({ selectedSymbol: symbol });
+        },
+        getSymbolById: (id) => {
+          return get().symbols.find((s) => s.id === id);
+        },
+        getSymbolByName: (name) => {
+          return get().symbols.find(
+            (s) => s.name.toLowerCase() === name.toLowerCase()
+          );
+        },
         reset: () => set(initialState),
       }),
       {
