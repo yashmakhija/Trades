@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { authenticate } from "../middlewares/auth";
 import { balanceManager } from "../services/balanceManager";
-import { prisma } from "../server";
+import { prisma } from "../lib/prisma";
 
 const router = Router();
 

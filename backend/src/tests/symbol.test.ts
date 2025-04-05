@@ -4,8 +4,8 @@
  * Tests for symbol retrieval and price updates.
  */
 import { describe, it, expect, beforeAll } from "bun:test";
-import { app } from "../index";
-import { prisma } from "../server";
+import { app } from "../server";
+import { prisma } from "../lib/prisma";
 import supertest from "supertest";
 
 const request = supertest(app);

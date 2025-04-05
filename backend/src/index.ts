@@ -2,11 +2,9 @@ import express from "express";
 import cors from "cors";
 import path from "path";
 import { initRoutes } from "./routes";
-import { startServer } from "./server";
+import { startServer, app } from "./server";
 import { PrismaClient } from "@prisma/client";
 
-// Create Express application
-const app = express();
 const prisma = new PrismaClient();
 
 // Apply middleware with specific CORS configuration
@@ -81,4 +79,5 @@ app.get("/health", (req, res) => {
   res.json({ status: "ok" });
 });
 
-startServer(app);
+// Start the server
+startServer();
