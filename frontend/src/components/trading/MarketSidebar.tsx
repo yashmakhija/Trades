@@ -215,11 +215,24 @@ function SortableMarketItem({
           100
       );
 
+      // Convert quantity to smallest unit (e.g., satoshis for BTC)
+      // For BTC: 1 BTC = 100,000,000 satoshis
+      // For ETH: 1 ETH = 1,000,000,000 wei
+      // For USDT: 1 USDT = 100 cents
+      const quantityInSmallestUnit = Math.round(
+        parseFloat(quantity) *
+          (symbol.name.toLowerCase().includes("btc")
+            ? 100000000
+            : symbol.name.toLowerCase().includes("eth")
+            ? 1000000000
+            : 100)
+      );
+
       const orderData = {
         symbolId: apiSymbol.id,
         type: tradeType,
         price: priceInCents,
-        quantity: parseFloat(quantity),
+        quantity: quantityInSmallestUnit,
         isShort: tradeType === "SELL",
         stopLoss: stopLoss ? Math.round(parseFloat(stopLoss) * 100) : undefined,
         takeProfit: takeProfit
@@ -698,11 +711,24 @@ export function MarketSidebar({ className }: MarketSidebarProps) {
           : selectedSymbol.bidPrice || 0) * 100
       );
 
+      // Convert quantity to smallest unit (e.g., satoshis for BTC)
+      // For BTC: 1 BTC = 100,000,000 satoshis
+      // For ETH: 1 ETH = 1,000,000,000 wei
+      // For USDT: 1 USDT = 100 cents
+      const quantityInSmallestUnit = Math.round(
+        parseFloat(quantity) *
+          (selectedSymbol.name.toLowerCase().includes("btc")
+            ? 100000000
+            : selectedSymbol.name.toLowerCase().includes("eth")
+            ? 1000000000
+            : 100)
+      );
+
       const orderData = {
         symbolId: apiSymbol.id,
         type: tradeType,
         price: priceInCents,
-        quantity: parseFloat(quantity),
+        quantity: quantityInSmallestUnit,
         isShort: tradeType === "SELL",
         stopLoss: stopLoss ? Math.round(parseFloat(stopLoss) * 100) : undefined,
         takeProfit: takeProfit
