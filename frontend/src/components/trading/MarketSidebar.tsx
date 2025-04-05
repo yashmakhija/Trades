@@ -212,6 +212,8 @@ function SortableMarketItem({
         takeProfit: takeProfit ? parseFloat(takeProfit) : undefined,
       };
 
+      console.log("Submitting order with symbolId:", orderData.symbolId);
+
       const newOrder = await createOrder(orderData);
 
       if (newOrder) {
@@ -665,6 +667,8 @@ export function MarketSidebar({ className }: MarketSidebarProps) {
         stopLoss: stopLoss ? parseFloat(stopLoss) : undefined,
         takeProfit: takeProfit ? parseFloat(takeProfit) : undefined,
       };
+
+      console.log("Submitting order with symbolId:", orderData.symbolId);
 
       const newOrder = await createOrder(orderData);
 

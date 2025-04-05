@@ -932,7 +932,7 @@ export function PriceChart({
         isShort: side === "SELL",
       };
 
-      console.log("Submitting order:", orderData);
+      console.log("Submitting order with symbolId:", orderData.symbolId);
 
       const response = await createOrder(orderData);
 
