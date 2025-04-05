@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { devtools, persist } from "zustand/middleware";
+import { useAuthStore } from "./use-auth-store";
 
 export interface Balance {
   total: number;
@@ -60,6 +61,8 @@ const initialState = {
   isLoading: false,
   error: null,
 };
+
+const token = useAuthStore.getState().token;
 
 export const useOrderStore = create<OrderState>()(
   devtools(
@@ -123,10 +126,13 @@ export const useOrderStore = create<OrderState>()(
         createOrder: async (orderData) => {
           set({ isLoading: true, error: null });
           try {
-            const response = await fetch("/api/orders", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
+            const response = await fetch(
+              `${process.env.NEXT_PUBLIC_API_URL}/api/orders`,
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${token}`,
               },
               body: JSON.stringify(orderData),
             });

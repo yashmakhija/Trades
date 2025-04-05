@@ -209,18 +209,26 @@ function SortableMarketItem({
     setIsSubmitting(true);
 
     try {
+      // Get the price in cents (multiply by 100 to match the format used in PriceChart)
+      const priceInCents = Math.round(
+        (tradeType === "BUY" ? symbol.askPrice || 0 : symbol.bidPrice || 0) *
+          100
+      );
+
       const orderData = {
         symbolId: apiSymbol.id,
         type: tradeType,
-        price:
-          tradeType === "BUY" ? symbol.askPrice || 0 : symbol.bidPrice || 0,
+        price: priceInCents,
         quantity: parseFloat(quantity),
         isShort: tradeType === "SELL",
-        stopLoss: stopLoss ? parseFloat(stopLoss) : undefined,
-        takeProfit: takeProfit ? parseFloat(takeProfit) : undefined,
+        stopLoss: stopLoss ? Math.round(parseFloat(stopLoss) * 100) : undefined,
+        takeProfit: takeProfit
+          ? Math.round(parseFloat(takeProfit) * 100)
+          : undefined,
       };
 
       console.log("Submitting order with symbolId:", orderData.symbolId);
+      console.log("Order data:", orderData);
 
       const newOrder = await createOrder(orderData);
 
@@ -683,20 +691,27 @@ export function MarketSidebar({ className }: MarketSidebarProps) {
         return;
       }
 
+      // Get the price in cents (multiply by 100 to match the format used in PriceChart)
+      const priceInCents = Math.round(
+        (tradeType === "BUY"
+          ? selectedSymbol.askPrice || 0
+          : selectedSymbol.bidPrice || 0) * 100
+      );
+
       const orderData = {
         symbolId: apiSymbol.id,
         type: tradeType,
-        price:
-          tradeType === "BUY"
-            ? selectedSymbol.askPrice || 0
-            : selectedSymbol.bidPrice || 0,
+        price: priceInCents,
         quantity: parseFloat(quantity),
         isShort: tradeType === "SELL",
-        stopLoss: stopLoss ? parseFloat(stopLoss) : undefined,
-        takeProfit: takeProfit ? parseFloat(takeProfit) : undefined,
+        stopLoss: stopLoss ? Math.round(parseFloat(stopLoss) * 100) : undefined,
+        takeProfit: takeProfit
+          ? Math.round(parseFloat(takeProfit) * 100)
+          : undefined,
       };
 
       console.log("Submitting order with symbolId:", orderData.symbolId);
+      console.log("Order data:", orderData);
 
       const newOrder = await createOrder(orderData);
 
