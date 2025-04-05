@@ -654,7 +654,7 @@ export function MarketSidebar({ className }: MarketSidebarProps) {
 
     try {
       const orderData = {
-        symbolId: selectedSymbol.name.toLowerCase(),
+        symbolId: selectedSymbol.id,
         type: tradeType,
         price:
           tradeType === "BUY"
