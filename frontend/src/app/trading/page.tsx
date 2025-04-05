@@ -18,6 +18,7 @@ import { useBalanceStore, useBalanceSync } from "@/store/use-balance-store";
 import { useAuthStore } from "@/store/use-auth-store";
 import { useWebSocketMarketSync } from "@/services/websocket-sync";
 import { MarketSidebar } from "@/components/trading/MarketSidebar";
+import { LiveBalanceDisplay } from "@/components/trading/LiveBalanceDisplay";
 
 function TradingPageContent() {
   const searchParams = useSearchParams();
@@ -219,6 +220,9 @@ function TradingPageContent() {
       <main className="container mx-auto px-4 py-4">
         <div className="flex flex-col lg:flex-row gap-4">
           <aside className="w-full lg:w-80 shrink-0 h-[calc(100vh-120px)]  top-[73px]">
+            <div className="mb-4">
+              <LiveBalanceDisplay />
+            </div>
             <MarketSidebar />
           </aside>
 
