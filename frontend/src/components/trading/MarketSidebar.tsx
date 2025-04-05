@@ -25,6 +25,7 @@ import { cn } from "@/lib/utils";
 import { useWebSocketStore } from "@/services/websocket";
 import { useMarketDataStore } from "@/store/use-market-data-store";
 import { MarketSymbol } from "@/store/use-market-data-store";
+import { useSymbolStore, TradingSymbol } from "@/store/use-symbol-store";
 import { DEFAULT_SYMBOLS } from "@/config";
 import {
   DndContext,
@@ -109,8 +110,8 @@ interface SortableMarketItemProps {
     type: "bid" | "ask",
     currentPrice: number
   ) => string;
-  attributes?: any;
-  listeners?: any;
+  attributes?: Record<string, unknown>;
+  listeners?: Record<string, unknown>;
   isDragging?: boolean;
 }
 
@@ -138,6 +139,13 @@ function SortableMarketItem({
 
   const { favoriteSymbols, addToFavorites, removeFromFavorites } =
     useMarketDataStore();
+
+  const { symbols: apiSymbols } = useSymbolStore();
+
+  // Get the API symbol with UUID
+  const apiSymbol = apiSymbols.find(
+    (s) => s.name.toLowerCase() === symbol.name.toLowerCase()
+  );
 
   const toggleFavorite = (e: React.MouseEvent, symbolName: string) => {
     e.stopPropagation();
@@ -193,7 +201,7 @@ function SortableMarketItem({
 
   // Handle order submission
   const handleSubmitOrder = async () => {
-    if (!isAuthenticated || !symbol) {
+    if (!isAuthenticated || !symbol || !apiSymbol) {
       toast.error("Authentication required");
       return;
     }
@@ -202,7 +210,7 @@ function SortableMarketItem({
 
     try {
       const orderData = {
-        symbolId: symbol.id,
+        symbolId: apiSymbol.id,
         type: tradeType,
         price:
           tradeType === "BUY" ? symbol.askPrice || 0 : symbol.bidPrice || 0,
@@ -483,6 +491,7 @@ export function MarketSidebar({ className }: MarketSidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const { symbols: apiSymbols, fetchSymbols } = useSymbolStore();
 
   const currentSymbol =
     searchParams.get("symbol")?.toLowerCase() || DEFAULT_SYMBOLS[0];
@@ -513,6 +522,17 @@ export function MarketSidebar({ className }: MarketSidebarProps) {
     updateSymbol,
     reorderFavorites,
   } = useMarketDataStore();
+
+  // Fetch symbols from API on component mount
+  useEffect(() => {
+    fetchSymbols();
+  }, [fetchSymbols]);
+
+  // Map API symbols to market symbols
+  const symbolMap = new Map<string, TradingSymbol>();
+  apiSymbols.forEach((symbol) => {
+    symbolMap.set(symbol.name.toLowerCase(), symbol);
+  });
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -655,8 +675,16 @@ export function MarketSidebar({ className }: MarketSidebarProps) {
     setIsSubmitting(true);
 
     try {
+      // Get the API symbol with UUID
+      const apiSymbol = symbolMap.get(selectedSymbol.name.toLowerCase());
+
+      if (!apiSymbol) {
+        toast.error("Symbol not found in API");
+        return;
+      }
+
       const orderData = {
-        symbolId: selectedSymbol.id,
+        symbolId: apiSymbol.id,
         type: tradeType,
         price:
           tradeType === "BUY"
