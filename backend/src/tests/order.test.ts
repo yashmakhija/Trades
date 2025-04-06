@@ -11,8 +11,8 @@ import {
   afterAll,
   beforeEach,
 } from "bun:test";
-import { app } from "../index";
-import { prisma } from "../server";
+import { app } from "../server";
+import { prisma } from "../lib/prisma";
 import { OrderStatus, OrderType } from "@prisma/client";
 import supertest from "supertest";
 

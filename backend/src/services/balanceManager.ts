@@ -1,6 +1,6 @@
 import { EventEmitter } from "events";
 import { broadcastBalanceUpdate } from "./webSocketService";
-import { prisma } from "../server";
+import { prisma } from "../lib/prisma";
 import { OrderType, OrderStatus } from "@prisma/client";
 
 interface Position {

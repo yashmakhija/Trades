@@ -6,7 +6,7 @@ import {
   broadcastOrderUpdate,
   broadcastBalanceUpdate,
 } from "../services/webSocketService";
-import { prisma } from "../server";
+import { prisma } from "../lib/prisma";
 
 export async function placeOrder(req: Request, res: Response): Promise<void> {
   try {
